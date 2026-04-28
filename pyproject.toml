@@ -60,3 +60,10 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 addopts = "-ra -q"
 asyncio_mode = "auto"
+filterwarnings = [
+    # oletools (olevba) の依存 pyparsing が古いAPIを使っており騒がしい. 我々の責任ではないので抑止.
+    "ignore::DeprecationWarning:pyparsing.*",
+    "ignore::DeprecationWarning:oletools.*",
+    "ignore:.*PyparsingDeprecationWarning.*",
+    "ignore::pyparsing.exceptions.PyparsingDeprecationWarning",
+]
