@@ -99,3 +99,15 @@ class JobMeta(BaseModel):
     filename: str
     created_at: str
     status: Literal["uploaded", "extracted", "analyzed", "failed"]
+
+
+class ChatMessage(BaseModel):
+    """チャット履歴の1メッセージ. chat_history.jsonl の1行に対応.
+
+    SPEC.md §3 にはこのモデルは明記されていないが、§5.4 のチャット仕様で
+    必要なため追加する (実装の細部).
+    """
+
+    role: Literal["user", "assistant", "system"]
+    content: str
+    timestamp: str
