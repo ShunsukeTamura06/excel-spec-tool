@@ -23,6 +23,34 @@ def _set_current_job(job_id: str) -> None:
     st.session_state["job_id"] = job_id
 
 
+@st.dialog("削除の確認")
+def _confirm_delete_dialog(
+    client: BackendClient, job_id: str, filename: str, is_current: bool
+) -> None:
+    """ジョブ削除の確認モーダル. はいで削除、キャンセルでモーダルを閉じる."""
+    st.warning(f"**{filename}** を削除します。")
+    st.caption(f"`{job_id}`")
+    st.write("この操作は取り消せません。よろしいですか？")
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button(
+            "はい、削除する",
+            type="primary",
+            use_container_width=True,
+            key="confirm_delete_yes",
+        ):
+            try:
+                client.delete_job(job_id)
+                if is_current:
+                    st.session_state.pop("job_id", None)
+                st.rerun()
+            except BackendError as e:
+                st.error(f"削除失敗: {e}")
+    with cols[1]:
+        if st.button("キャンセル", use_container_width=True, key="confirm_delete_no"):
+            st.rerun()
+
+
 def _do_analysis(client: BackendClient, filename: str, data: bytes) -> str | None:
     """Upload → extract → analyze を 1 操作で完了させる.
 
@@ -92,13 +120,8 @@ if current_job:
         if st.button("💬 チャットする", use_container_width=True):
             st.switch_page("views/chat.py")
     with cols[2]:
-        if st.button("🗑️ 削除", use_container_width=True):
-            try:
-                client.delete_job(current_job_id)
-                st.session_state.pop("job_id", None)
-                st.rerun()
-            except BackendError as e:
-                st.error(f"削除失敗: {e}")
+        if st.button("🗑️ 削除", use_container_width=True, key="delete_current"):
+            _confirm_delete_dialog(client, current_job_id, current_job["filename"], is_current=True)
 
     st.divider()
 
@@ -156,10 +179,6 @@ else:
                         st.rerun()
             with cols[4]:
                 if st.button("削除", key=f"del_{job['job_id']}", use_container_width=True):
-                    try:
-                        client.delete_job(job["job_id"])
-                        if is_current:
-                            st.session_state.pop("job_id", None)
-                        st.rerun()
-                    except BackendError as e:
-                        st.error(f"削除失敗: {e}")
+                    _confirm_delete_dialog(
+                        client, job["job_id"], job["filename"], is_current=is_current
+                    )

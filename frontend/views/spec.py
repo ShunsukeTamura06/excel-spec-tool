@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
 from frontend._sidebar import render_job_sidebar
@@ -13,6 +15,25 @@ def _client() -> BackendClient:
         st.session_state["_backend_client"] = BackendClient()
     client: BackendClient = st.session_state["_backend_client"]
     return client
+
+
+def _render_download_button(spec_md: str, source_filename: str, key: str) -> None:
+    """設計書 Markdown のダウンロードボタンを描画する.
+
+    Args:
+        spec_md: 設計書本文 (Markdown)
+        source_filename: 元 Excel のファイル名 (例: "銘柄管理.xlsm")
+        key: Streamlit ウィジェットキー (top/bottom で重複させない)
+    """
+    base = Path(source_filename or "spec").stem or "spec"
+    st.download_button(
+        label="📥 設計書をダウンロード (Markdown)",
+        data=spec_md.encode("utf-8"),
+        file_name=f"{base}_spec.md",
+        mime="text/markdown",
+        key=key,
+        use_container_width=False,
+    )
 
 
 st.title("📑 設計書")
@@ -38,15 +59,22 @@ except BackendError as e:
     st.stop()
 
 meta = body.get("meta", {})
+spec_md = body.get("spec_md", "")
+filename = meta.get("filename", "spec")
+
 st.caption(
-    f"**{meta.get('filename', '?')}** / "
-    f"状態: `{meta.get('status', '?')}` / "
-    f"作成: {meta.get('created_at', '?')[:19]}"
+    f"**{filename}** / 状態: `{meta.get('status', '?')}` / 作成: {meta.get('created_at', '?')[:19]}"
 )
 
-spec_md = body.get("spec_md", "")
+# 先頭ダウンロードボタン
+_render_download_button(spec_md, filename, key="download_spec_top")
+
 st.divider()
 st.markdown(spec_md, unsafe_allow_html=True)
+st.divider()
+
+# 末尾ダウンロードボタン
+_render_download_button(spec_md, filename, key="download_spec_bottom")
 
 st.divider()
 st.subheader("🔍 参照逆引き検索")
