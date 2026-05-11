@@ -51,6 +51,18 @@ class ConditionalFormat(BaseModel):
     rule: str
 
 
+class ExcelTable(BaseModel):
+    """Excel テーブル機能 (ListObject) で明示的に定義された表.
+
+    `openpyxl.worksheet.table.Table` から取得する確定情報。
+    ヒューリスティック検出ではない。
+    """
+
+    name: str
+    ref: str
+    header_row_count: int = 1
+
+
 class SheetInfo(BaseModel):
     """シート 1枚の情報."""
 
@@ -60,6 +72,12 @@ class SheetInfo(BaseModel):
     formulas: list[CellFormula] = Field(default_factory=list)
     named_ranges: list[NamedRange] = Field(default_factory=list)
     conditional_formats: list[ConditionalFormat] = Field(default_factory=list)
+    tables: list[ExcelTable] = Field(default_factory=list)
+    merged_ranges: list[str] = Field(default_factory=list)
+    # 先頭 N 行 × M 列の literal プレビュー (解釈なしの生値).
+    # 各行は等長で、空セルは None.
+    preview_rows: list[list[str | None]] = Field(default_factory=list)
+    preview_origin: str = ""  # "A1" 等. 何処を起点に取ったかの記録
     purpose: str = ""
 
 

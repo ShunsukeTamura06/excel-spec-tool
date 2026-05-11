@@ -16,10 +16,15 @@ from core.exceptions import ExtractionError
 from core.models import (
     CellFormula,
     ConditionalFormat,
+    ExcelTable,
     NamedRange,
     SheetInfo,
     Workbook,
 )
+
+# プレビュー範囲（先頭 N 行 × M 列）. 解釈は加えず literal に出力するだけ.
+PREVIEW_MAX_ROWS = 20
+PREVIEW_MAX_COLS = 20
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +172,93 @@ def _attach_named_ranges(wb: object, sheets_by_name: dict[str, SheetInfo]) -> No
             target_sheet.named_ranges.append(NamedRange(name=name, refers_to=refers_to))
 
 
+def _extract_excel_tables(ws: object) -> list[ExcelTable]:
+    """ws.tables から Excel テーブル (ListObject) を抽出する.
+
+    `ws.tables` は openpyxl が解釈した確定情報なのでヒューリスティック不要。
+    """
+    result: list[ExcelTable] = []
+    tables_attr = getattr(ws, "tables", None)
+    if tables_attr is None:
+        return result
+    try:
+        # openpyxl 3.1 の TableList:
+        # - keys() / __iter__ で table 名一覧
+        # - items() は (name, ref_str) を返す (Table オブジェクト本体ではない)
+        # - get(name) で Table オブジェクト本体を取れる
+        names: list[str]
+        if hasattr(tables_attr, "keys"):
+            names = list(tables_attr.keys())
+        else:
+            names = [getattr(t, "name", "") for t in tables_attr]
+        for name in names:
+            table = tables_attr.get(name) if hasattr(tables_attr, "get") else None
+            if table is None:
+                continue
+            display_name = (
+                getattr(table, "displayName", None) or getattr(table, "name", None) or name
+            )
+            ref = getattr(table, "ref", "") or ""
+            header_row_count = getattr(table, "headerRowCount", 1) or 1
+            if not display_name or not ref:
+                continue
+            result.append(
+                ExcelTable(
+                    name=str(display_name),
+                    ref=str(ref),
+                    header_row_count=int(header_row_count),
+                )
+            )
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to enumerate tables on sheet")
+    return result
+
+
+def _extract_merged_ranges(ws: object) -> list[str]:
+    """シートのマージ範囲を文字列リストで返す."""
+    result: list[str] = []
+    merged_attr = getattr(ws, "merged_cells", None)
+    if merged_attr is None:
+        return result
+    try:
+        for rng in merged_attr.ranges:
+            result.append(str(rng))
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to enumerate merged_cells")
+    return result
+
+
+def _extract_preview(ws: object) -> tuple[list[list[str | None]], str]:
+    """シート冒頭の N 行 × M 列を literal に取得する.
+
+    Returns:
+        (preview_rows, origin) のタプル. preview_rows は等長の2次元リスト、
+        各要素は文字列化したセル値か None (空セル). origin は "A1" 等の起点座標.
+    """
+    from openpyxl.utils import get_column_letter
+
+    max_row = min(getattr(ws, "max_row", 0) or 0, PREVIEW_MAX_ROWS)
+    max_col = min(getattr(ws, "max_column", 0) or 0, PREVIEW_MAX_COLS)
+    if max_row == 0 or max_col == 0:
+        return [], ""
+
+    rows: list[list[str | None]] = []
+    try:
+        for raw_row in ws.iter_rows(  # type: ignore[attr-defined]
+            min_row=1, max_row=max_row, min_col=1, max_col=max_col, values_only=True
+        ):
+            row_vals: list[str | None] = []
+            for v in raw_row:
+                row_vals.append(None if v is None else str(v))
+            rows.append(row_vals)
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to extract preview rows")
+        return [], ""
+
+    origin = f"A1:{get_column_letter(max_col)}{max_row}"
+    return rows, origin
+
+
 def extract_workbook(file_path: Path) -> Workbook:
     """Excelファイルからシート構造を抽出する.
 
@@ -202,12 +294,17 @@ def extract_workbook(file_path: Path) -> Workbook:
     sheets_by_name: dict[str, SheetInfo] = {}
     for sn in wb.sheetnames:
         ws = wb[sn]
+        preview_rows, preview_origin = _extract_preview(ws)
         info = SheetInfo(
             name=sn,
             rows=ws.max_row or 0,
             cols=ws.max_column or 0,
             formulas=_extract_formulas(ws),
             conditional_formats=_extract_conditional_formats(ws),
+            tables=_extract_excel_tables(ws),
+            merged_ranges=_extract_merged_ranges(ws),
+            preview_rows=preview_rows,
+            preview_origin=preview_origin,
         )
         sheets.append(info)
         sheets_by_name[sn] = info

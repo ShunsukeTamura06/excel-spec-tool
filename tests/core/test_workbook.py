@@ -216,3 +216,104 @@ class TestEmptyWorkbook:
         assert sheet.formulas == []
         assert sheet.named_ranges == []
         assert sheet.conditional_formats == []
+
+
+# ---------- 新規: Excel テーブル / マージ / プレビュー ----------
+
+
+@pytest.fixture
+def table_xlsx(tmp_path: Path) -> Path:
+    """Excel テーブル (ListObject) を含む xlsx."""
+    from openpyxl.worksheet.table import Table
+
+    wb = OpyWorkbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Portfolio"
+    ws["A1"] = "銘柄コード"
+    ws["B1"] = "銘柄名"
+    ws["A2"] = "ABC"
+    ws["B2"] = "株式会社A"
+    ws["A3"] = "DEF"
+    ws["B3"] = "株式会社D"
+    tbl = Table(displayName="PortfolioTable", ref="A1:B3")
+    ws.add_table(tbl)
+
+    out = tmp_path / "tbl.xlsx"
+    wb.save(out)
+    return out
+
+
+@pytest.fixture
+def merged_xlsx(tmp_path: Path) -> Path:
+    wb = OpyWorkbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "S"
+    ws["A1"] = "タイトル"
+    ws.merge_cells("A1:C1")
+    out = tmp_path / "merged.xlsx"
+    wb.save(out)
+    return out
+
+
+class TestExcelTables:
+    def test_table_extracted(self, table_xlsx: Path) -> None:
+        wb = extract_workbook(table_xlsx)
+        sheet = wb.sheets[0]
+        assert len(sheet.tables) == 1
+        t = sheet.tables[0]
+        assert t.name == "PortfolioTable"
+        assert t.ref == "A1:B3"
+        assert t.header_row_count == 1
+
+    def test_no_table_returns_empty(self, simple_xlsx: Path) -> None:
+        wb = extract_workbook(simple_xlsx)
+        assert wb.sheets[0].tables == []
+
+
+class TestMergedRanges:
+    def test_extracted(self, merged_xlsx: Path) -> None:
+        wb = extract_workbook(merged_xlsx)
+        sheet = wb.sheets[0]
+        assert "A1:C1" in sheet.merged_ranges
+
+
+class TestPreview:
+    def test_preview_includes_first_rows(self, table_xlsx: Path) -> None:
+        wb = extract_workbook(table_xlsx)
+        sheet = wb.sheets[0]
+        assert sheet.preview_rows
+        first_row = sheet.preview_rows[0]
+        assert "銘柄コード" in first_row
+        assert "銘柄名" in first_row
+
+    def test_preview_origin_recorded(self, table_xlsx: Path) -> None:
+        wb = extract_workbook(table_xlsx)
+        assert wb.sheets[0].preview_origin.startswith("A1:")
+
+    def test_preview_truncated_at_limits(self, tmp_path: Path) -> None:
+        # 30行 × 30列の xlsx で preview が 20×20 に絞られること
+        wb = OpyWorkbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "Big"
+        for r in range(1, 31):
+            for c in range(1, 31):
+                ws.cell(row=r, column=c, value=f"r{r}c{c}")
+        out = tmp_path / "big.xlsx"
+        wb.save(out)
+
+        from core.extractors.workbook import PREVIEW_MAX_COLS, PREVIEW_MAX_ROWS
+
+        wb_extracted = extract_workbook(out)
+        preview = wb_extracted.sheets[0].preview_rows
+        assert len(preview) == PREVIEW_MAX_ROWS
+        assert all(len(row) == PREVIEW_MAX_COLS for row in preview)
+
+    def test_empty_workbook_has_preview_at_least_one_cell(self, empty_xlsx: Path) -> None:
+        wb = extract_workbook(empty_xlsx)
+        sheet = wb.sheets[0]
+        # empty_xlsx の A1 に "hello" が入っているので最低限1セル
+        assert sheet.preview_rows
+        assert sheet.preview_rows[0][0] == "hello"

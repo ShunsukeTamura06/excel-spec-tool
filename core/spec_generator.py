@@ -127,7 +127,64 @@ def _section_sheet_details(wb: Workbook) -> str:
             for cf in s.conditional_formats:
                 lines.append(f"| `{_md_escape(cf.range)}` | {_md_escape(cf.rule)} |")
 
+        # Excel テーブル (ListObject) — ユーザーが明示的に定義したテーブルのみ
+        lines += ["", "#### Excel テーブル（明示的に定義されているもの）"]
+        if not s.tables:
+            lines += ["", "_(なし)_"]
+        else:
+            lines += ["", "| 名前 | 範囲 | ヘッダ行数 |", "|---|---|---:|"]
+            for t in s.tables:
+                lines.append(
+                    f"| `{_md_escape(t.name)}` | `{_md_escape(t.ref)}` | {t.header_row_count} |"
+                )
+
+        # マージセル — 件数が多い場合は先頭のみ
+        if s.merged_ranges:
+            shown = s.merged_ranges[:10]
+            extra = len(s.merged_ranges) - len(shown)
+            lines += ["", "#### マージセル"]
+            lines += ["", ", ".join(f"`{_md_escape(m)}`" for m in shown)]
+            if extra > 0:
+                lines.append(f"(他 {extra} 件)")
+
+        # 冒頭プレビュー (literal, 解釈なし)
+        lines += _render_preview_block(s)
+
     return "\n".join(lines)
+
+
+def _render_preview_block(sheet: object) -> list[str]:
+    """シート冒頭プレビューを Markdown テーブルとして描画する.
+
+    解釈は一切加えない。生のセル値をそのまま並べるだけ。
+    """
+    rows = getattr(sheet, "preview_rows", []) or []
+    origin = getattr(sheet, "preview_origin", "") or ""
+    if not rows:
+        return []
+
+    from openpyxl.utils import get_column_letter
+
+    n_cols = max(len(r) for r in rows)
+    header = ["行"] + [get_column_letter(c + 1) for c in range(n_cols)]
+    sep = ["---"] + ["---"] * n_cols
+
+    out: list[str] = [
+        "",
+        f"#### 冒頭プレビュー (`{origin}`)",
+        "",
+        "_解釈は加えていません。シートの先頭領域に literal に並んでいる値です。_",
+        "",
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(sep) + " |",
+    ]
+    for row_idx, row in enumerate(rows, start=1):
+        cells = []
+        for c in range(n_cols):
+            v = row[c] if c < len(row) else None
+            cells.append(_md_escape(v) if v is not None else "")
+        out.append(f"| {row_idx} | " + " | ".join(cells) + " |")
+    return out
 
 
 def _section_vba_modules(wb: Workbook) -> str:

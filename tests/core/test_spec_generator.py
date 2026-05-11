@@ -281,3 +281,93 @@ class TestEscaping:
         md = generate_spec(wb, _empty_index())
         # エスケープされたパイプが現れる
         assert "\\|" in md
+
+
+# ---------- 新規セクション: Excel テーブル / マージ / プレビュー ----------
+
+
+class TestExcelTablesSection:
+    def test_renders_when_present(self) -> None:
+        from core.models import ExcelTable
+
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[
+                SheetInfo(
+                    name="P",
+                    rows=10,
+                    cols=5,
+                    tables=[ExcelTable(name="PortfolioTable", ref="A6:F206")],
+                )
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "Excel テーブル" in md
+        assert "PortfolioTable" in md
+        assert "A6:F206" in md
+
+    def test_renders_none_when_absent(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[SheetInfo(name="S", rows=1, cols=1)],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "Excel テーブル" in md
+        assert "_(なし)_" in md
+
+
+class TestMergedRangesSection:
+    def test_renders_merged_ranges(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[
+                SheetInfo(
+                    name="S",
+                    rows=1,
+                    cols=1,
+                    merged_ranges=["A1:C1", "D2:F4"],
+                )
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "マージセル" in md
+        assert "A1:C1" in md
+        assert "D2:F4" in md
+
+    def test_truncates_long_list(self) -> None:
+        merged = [f"A{i}:B{i}" for i in range(1, 21)]
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[SheetInfo(name="S", rows=20, cols=2, merged_ranges=merged)],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "他 10 件" in md
+
+
+class TestPreviewSection:
+    def test_renders_preview_table(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[
+                SheetInfo(
+                    name="S",
+                    rows=2,
+                    cols=2,
+                    preview_rows=[["a", "b"], ["1", "2"]],
+                    preview_origin="A1:B2",
+                )
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "冒頭プレビュー" in md
+        assert "A1:B2" in md
+        assert "a" in md
+        assert "1" in md
+
+    def test_no_preview_when_empty(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[SheetInfo(name="S", rows=0, cols=0)],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "冒頭プレビュー" not in md
