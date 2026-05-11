@@ -13,6 +13,12 @@ SPEC.md §5.3 に基づき、OpenAI 互換 API を想定したインターフェ
 - モジュールレベル `chat_completion()` / `annotate_text()` は SPEC §5.3 の公開
   シグネチャ。内部でデフォルトクライアントに委譲
 
+Function calling:
+- `chat_completion_with_tools(messages, tools, model)` で tool 呼び出し可能。
+  応答は `LLMResponse(content, tool_calls)`. content だけなら完了、
+  tool_calls があれば呼び出し側でツールを実行し結果を message に追記して再度
+  呼ぶループを構成する。
+
 外部クラウドへのデータ送信は SPEC.md §1.3 で禁止されているため、実クライアントは
 社内 LLM (プロキシ経由 / ホワイトリスト URL) のみを叩く前提。
 """
@@ -21,14 +27,39 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Protocol, runtime_checkable
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
 
-# ChatGPT 互換 API のメッセージ型. dict のままだが、最低限のキーだけドキュメント化:
-#   {"role": "user" | "assistant" | "system", "content": "..."}
-ChatMessageDict = dict[str, str]
+# ChatGPT 互換 API のメッセージ型. 単純な dict.
+# {"role": "user"|"assistant"|"system"|"tool", "content": "..."} + 必要なら
+# "tool_calls" や "tool_call_id" 等を含む
+ChatMessageDict = dict[str, Any]
+
+
+@dataclass
+class LLMToolCall:
+    """LLM が要求した tool 呼び出し 1 件."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
+class LLMResponse:
+    """tool calling 対応の応答.
+
+    content と tool_calls は同時に空でないこともあり得る (OpenAI 仕様)。
+    content のみ → 通常応答
+    tool_calls のみ → tool 実行を要求している
+    """
+
+    content: str | None = None
+    tool_calls: list[LLMToolCall] = field(default_factory=list)
 
 
 @runtime_checkable
@@ -40,19 +71,36 @@ class LLMClient(Protocol):
         messages: list[ChatMessageDict],
         model: str | None = None,
     ) -> str:
-        """チャット補完. 最終アシスタント応答 (テキスト) を返す."""
+        """チャット補完 (SPEC §5.3). 最終アシスタント応答テキストを返す."""
         ...
 
     def annotate_text(self, prompt: str, content: str) -> str:
-        """注釈用ユーティリティ. 与えた content を prompt に従って解釈した結果を返す."""
+        """注釈用ユーティリティ."""
+        ...
+
+    def chat_completion_with_tools(
+        self,
+        messages: list[ChatMessageDict],
+        tools: list[dict[str, Any]],
+        model: str | None = None,
+    ) -> LLMResponse:
+        """tool 呼び出し可能なチャット補完."""
         ...
 
 
 class MockLLMClient:
     """テスト/開発用の決定的なクライアント.
 
-    実 API は叩かず、入力に基づいた合成応答を返す。
+    通常呼び出しはエコー風の応答を返す。
+    tool calling 用には `queue_response()` で次に返す応答を予約できる。
     """
+
+    def __init__(self) -> None:
+        self._queue: deque[LLMResponse] = deque()
+
+    def queue_response(self, response: LLMResponse) -> None:
+        """次回 chat_completion_with_tools 呼び出しに返す応答を予約する."""
+        self._queue.append(response)
 
     def chat_completion(
         self,
@@ -62,24 +110,34 @@ class MockLLMClient:
         last_user = ""
         for m in reversed(messages):
             if m.get("role") == "user":
-                last_user = m.get("content", "")
+                last_user = str(m.get("content", ""))
                 break
         model_label = model or "mock"
         return f"[mock:{model_label}] received: {last_user}"
 
     def annotate_text(self, prompt: str, content: str) -> str:
-        # content が長すぎる場合は冒頭だけ要約に使う
         head = content.strip().splitlines()[0] if content.strip() else ""
         head = head[:80]
         return f"[mock annotation] prompt={prompt!r} head={head!r}"
+
+    def chat_completion_with_tools(
+        self,
+        messages: list[ChatMessageDict],
+        tools: list[dict[str, Any]],
+        model: str | None = None,
+    ) -> LLMResponse:
+        # 予約済み応答があればそれを返す
+        if self._queue:
+            return self._queue.popleft()
+        # デフォルト: tool は呼ばずに通常応答
+        return LLMResponse(content=self.chat_completion(messages, model=model))
 
 
 class OpenAICompatibleLLMClient:
     """OpenAI 互換 API への HTTP クライアント (プレースホルダ).
 
     `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` を読んで `httpx.post` する想定。
-    社内仕様確定後に実装する。現状はモック以外を選んだことを検出するため、
-    呼び出し時に NotImplementedError を投げる。
+    社内仕様確定後に実装する。現状は呼び出し時に NotImplementedError を投げる。
     """
 
     def __init__(self, base_url: str, api_key: str, default_model: str) -> None:
@@ -94,13 +152,23 @@ class OpenAICompatibleLLMClient:
     ) -> str:
         # TODO(Shun): 社内 LLM の仕様確定後、httpx で /chat/completions を叩く実装に差し替える。
         raise NotImplementedError(
-            "OpenAICompatibleLLMClient.chat_completion is not implemented yet. "
-            "Replace with internal LLM HTTP call."
+            "OpenAICompatibleLLMClient.chat_completion is not implemented yet."
         )
 
     def annotate_text(self, prompt: str, content: str) -> str:
-        # TODO(Shun): 同上。chat_completion を組み立てて呼ぶ薄いラッパで足りる想定。
         raise NotImplementedError("OpenAICompatibleLLMClient.annotate_text is not implemented yet.")
+
+    def chat_completion_with_tools(
+        self,
+        messages: list[ChatMessageDict],
+        tools: list[dict[str, Any]],
+        model: str | None = None,
+    ) -> LLMResponse:
+        # TODO(Shun): tools 配列を payload に含めて社内 LLM を呼び、
+        # 応答の choices[0].message.tool_calls を LLMToolCall に詰めて返す。
+        raise NotImplementedError(
+            "OpenAICompatibleLLMClient.chat_completion_with_tools is not implemented yet."
+        )
 
 
 def _read_env() -> tuple[str | None, str | None, str | None]:

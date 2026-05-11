@@ -170,3 +170,43 @@ class TestModuleSurface:
         # SPEC §5.3 が要求する公開関数
         assert callable(llm_client.chat_completion)
         assert callable(llm_client.annotate_text)
+
+
+# ---------- function calling 拡張 ----------
+
+
+from backend.llm_client import LLMResponse, LLMToolCall  # noqa: E402
+
+
+class TestMockToolCalling:
+    def test_default_returns_content_only(self) -> None:
+        c = MockLLMClient()
+        resp = c.chat_completion_with_tools([{"role": "user", "content": "hi"}], tools=[])
+        assert isinstance(resp, LLMResponse)
+        assert resp.content is not None
+        assert resp.tool_calls == []
+
+    def test_queued_response_with_tool_call(self) -> None:
+        c = MockLLMClient()
+        c.queue_response(
+            LLMResponse(
+                content=None,
+                tool_calls=[LLMToolCall(id="t1", name="get_cells_range", arguments={"sheet": "S"})],
+            )
+        )
+        c.queue_response(LLMResponse(content="final answer"))
+
+        first = c.chat_completion_with_tools([{"role": "user", "content": "x"}], tools=[])
+        assert first.tool_calls
+        assert first.tool_calls[0].name == "get_cells_range"
+
+        second = c.chat_completion_with_tools([{"role": "user", "content": "x"}], tools=[])
+        assert second.content == "final answer"
+        assert second.tool_calls == []
+
+
+class TestOpenAICompatibleToolCalling:
+    def test_raises_not_implemented(self) -> None:
+        c = OpenAICompatibleLLMClient(base_url="http://x", api_key="k", default_model="m")
+        with pytest.raises(NotImplementedError):
+            c.chat_completion_with_tools([{"role": "user", "content": "x"}], tools=[])
