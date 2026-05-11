@@ -10,7 +10,7 @@ import logging
 
 from fastapi import FastAPI
 
-from backend.routes import analyze, chat, extract, jobs, references, spec
+from backend.routes import analyze, cells, chat, extract, jobs, references, spec
 
 logging.basicConfig(level=logging.INFO)
 
@@ -28,6 +28,7 @@ def create_app() -> FastAPI:
     app.include_router(spec.router)
     app.include_router(references.router)
     app.include_router(chat.router)
+    app.include_router(cells.router)
     app.include_router(jobs.router)
 
     @app.get("/health")

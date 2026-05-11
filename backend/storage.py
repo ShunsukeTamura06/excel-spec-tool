@@ -234,6 +234,137 @@ class Storage:
                     logger.warning("Skipping malformed chat line in %s", path)
         return msgs
 
+    # ------------------------------------------------------------ cells
+
+    def cells_db_path(self, job_id: str) -> Path:
+        """cells.db のパス. 物理的に存在するかは別途確認."""
+        return self._job_dir(job_id) / "cells.db"
+
+    def has_cells_db(self, job_id: str) -> bool:
+        """cells.db が生成済みかどうか."""
+        try:
+            return self.cells_db_path(job_id).is_file()
+        except ValueError:
+            return False
+
+    def get_cells_range(
+        self,
+        job_id: str,
+        sheet: str,
+        range_str: str,
+    ) -> dict[str, object]:
+        """指定範囲のセルを 2D 配列で返す.
+
+        Args:
+            job_id: ジョブ ID
+            sheet: シート名
+            range_str: "A6:F10" 形式. 単一セル "A6" でも可
+
+        Returns:
+            {"sheet": ..., "range": ..., "origin_row": int, "origin_col": int,
+             "rows": [[...], ...]} の dict.
+            空セルは null. value (計算結果) と formula (数式テキスト) を別フィールドで返す.
+        """
+        import sqlite3
+
+        from openpyxl.utils.cell import range_boundaries
+
+        path = self.cells_db_path(job_id)
+        if not path.is_file():
+            raise FileNotFoundError(f"cells.db not built for job {job_id}")
+
+        try:
+            min_col, min_row, max_col, max_row = range_boundaries(range_str)
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f"invalid range: {range_str!r}: {e}") from e
+        if None in (min_col, min_row, max_col, max_row):
+            raise ValueError(f"invalid range (open-ended not supported here): {range_str!r}")
+
+        conn = sqlite3.connect(str(path))
+        try:
+            cur = conn.execute(
+                "SELECT row, col, value, formula, data_type FROM cells "
+                "WHERE sheet=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ?",
+                (sheet, min_row, max_row, min_col, max_col),
+            )
+            n_rows = max_row - min_row + 1
+            n_cols = max_col - min_col + 1
+            grid: list[list[dict[str, object] | None]] = [
+                [None for _ in range(n_cols)] for _ in range(n_rows)
+            ]
+            for row, col, value, formula, data_type in cur.fetchall():
+                ri = row - min_row
+                ci = col - min_col
+                if 0 <= ri < n_rows and 0 <= ci < n_cols:
+                    grid[ri][ci] = {
+                        "value": value,
+                        "formula": formula,
+                        "data_type": data_type,
+                    }
+        finally:
+            conn.close()
+
+        return {
+            "sheet": sheet,
+            "range": range_str,
+            "origin_row": min_row,
+            "origin_col": min_col,
+            "rows": grid,
+        }
+
+    def find_cells(
+        self,
+        job_id: str,
+        query: str,
+        sheet: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, object]]:
+        """セルの value を部分一致検索する.
+
+        Args:
+            job_id: ジョブ ID
+            query: 検索文字列 (LIKE '%query%' 相当). 空文字列なら空配列を返す.
+            sheet: シート名で絞る (None なら全シート)
+            limit: 最大件数 (1〜200 にクランプ)
+
+        Returns:
+            [{"sheet", "row", "col", "coord", "value", "formula"}, ...]
+        """
+        import sqlite3
+
+        if not query:
+            return []
+        path = self.cells_db_path(job_id)
+        if not path.is_file():
+            raise FileNotFoundError(f"cells.db not built for job {job_id}")
+
+        limit = max(1, min(200, int(limit)))
+        conn = sqlite3.connect(str(path))
+        try:
+            sql = "SELECT sheet, row, col, coord, value, formula FROM cells WHERE value LIKE ?"
+            params: list[object] = [f"%{query}%"]
+            if sheet:
+                sql += " AND sheet = ?"
+                params.append(sheet)
+            sql += " LIMIT ?"
+            params.append(limit)
+            cur = conn.execute(sql, params)
+            results: list[dict[str, object]] = []
+            for s, r, c, coord, value, formula in cur.fetchall():
+                results.append(
+                    {
+                        "sheet": s,
+                        "row": r,
+                        "col": c,
+                        "coord": coord,
+                        "value": value,
+                        "formula": formula,
+                    }
+                )
+            return results
+        finally:
+            conn.close()
+
     # ----------------------------------------------------------- internals
 
     @staticmethod
