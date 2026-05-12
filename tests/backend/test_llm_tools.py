@@ -13,7 +13,15 @@ from backend.llm_tools import (
 )
 from backend.storage import Storage
 from core.extractors.cells import extract_cells_to_sqlite
-from core.models import Reference, ReferenceIndex
+from core.models import (
+    CellFormula,
+    Reference,
+    ReferenceIndex,
+    SheetInfo,
+    VbaModule,
+    VbaProcedure,
+    Workbook,
+)
 
 
 @pytest.fixture
@@ -48,9 +56,16 @@ def job_with_cells(tmp_path: Path) -> tuple[Storage, str]:
 
 
 class TestToolDefinitions:
-    def test_three_tools_defined(self) -> None:
+    def test_all_tools_defined(self) -> None:
         names = {t["function"]["name"] for t in TOOL_DEFINITIONS}
-        assert names == {"get_cells_range", "find_cells", "lookup_references"}
+        assert names == {
+            "get_cells_range",
+            "find_cells",
+            "lookup_references",
+            "list_vba_modules",
+            "get_vba_procedure",
+            "list_sheet_formulas",
+        }
 
     def test_build_returns_list(self) -> None:
         tools = build_tool_definitions()
@@ -158,4 +173,195 @@ class TestExecuteUnknownTool:
     def test_returns_error(self, job_with_cells: tuple[Storage, str]) -> None:
         storage, job_id = job_with_cells
         result = json.loads(execute_tool_call(storage, job_id, "no_such", {}))
+        assert "error" in result
+
+
+# ---------- VBA / formula 系ツール ----------
+
+
+_VBA_CODE = (
+    "Sub UpdateDaily()\n"
+    '    Worksheets("Calc").Range("H2") = 1\n'
+    "End Sub\n"
+    "\n"
+    "Function CalcTotal(x As Double) As Double\n"
+    "    CalcTotal = x * 2\n"
+    "End Function\n"
+)
+
+
+@pytest.fixture
+def job_with_workbook(tmp_path: Path) -> tuple[Storage, str]:
+    """extracted.json (Workbook) を埋めたジョブを用意する."""
+    storage = Storage(tmp_path / "jobs")
+    meta = storage.create_job("dummy.xlsm", b"x")
+
+    wb = Workbook(
+        filename="dummy.xlsm",
+        sheets=[
+            SheetInfo(
+                name="Calc",
+                rows=10,
+                cols=10,
+                formulas=[
+                    CellFormula(coord="Calc!A1", formula="=SUM(B1:B10)", refs=["B1:B10"]),
+                    CellFormula(
+                        coord="Calc!A2",
+                        formula="=SUMIF(Input!A:A, B2, Input!E:E)",
+                        refs=["Input!A:A", "B2", "Input!E:E"],
+                    ),
+                    CellFormula(coord="Calc!A3", formula="=B1+B2", refs=["B1", "B2"]),
+                ],
+            ),
+            SheetInfo(name="Input", rows=5, cols=5),
+        ],
+        vba_modules=[
+            VbaModule(
+                name="Module1",
+                type="Module",
+                code=_VBA_CODE,
+                procedures=[
+                    VbaProcedure(
+                        name="UpdateDaily",
+                        kind="Sub",
+                        start_line=1,
+                        end_line=3,
+                        code="",
+                    ),
+                    VbaProcedure(
+                        name="CalcTotal",
+                        kind="Function",
+                        start_line=5,
+                        end_line=7,
+                        code="",
+                    ),
+                ],
+            )
+        ],
+    )
+    storage.save_workbook(meta.job_id, wb)
+    return storage, meta.job_id
+
+
+class TestExecuteListVbaModules:
+    def test_returns_modules(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(execute_tool_call(storage, job_id, "list_vba_modules", {}))
+        assert result["count"] == 1
+        m = result["modules"][0]
+        assert m["name"] == "Module1"
+        assert m["type"] == "Module"
+        names = {p["name"] for p in m["procedures"]}
+        assert names == {"UpdateDaily", "CalcTotal"}
+        # コード本体は含まない
+        assert "code" not in m
+        assert "code" not in m["procedures"][0]
+
+    def test_empty_when_no_vba(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "jobs")
+        meta = storage.create_job("empty.xlsm", b"x")
+        storage.save_workbook(meta.job_id, Workbook(filename="empty.xlsm"))
+        result = json.loads(execute_tool_call(storage, meta.job_id, "list_vba_modules", {}))
+        assert result == {"modules": [], "count": 0}
+
+    def test_missing_workbook_returns_error(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "jobs")
+        meta = storage.create_job("nx.xlsm", b"x")
+        # extracted.json を保存していない状態
+        result = json.loads(execute_tool_call(storage, meta.job_id, "list_vba_modules", {}))
+        assert "error" in result
+
+
+class TestExecuteGetVbaProcedure:
+    def test_returns_code_from_module_lines(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "get_vba_procedure",
+                {"module": "Module1", "name": "CalcTotal"},
+            )
+        )
+        assert result["module"] == "Module1"
+        assert result["name"] == "CalcTotal"
+        assert result["kind"] == "Function"
+        # 行範囲 5-7 のコードが切り出されている
+        assert "Function CalcTotal" in result["code"]
+        assert "End Function" in result["code"]
+        # 別プロシージャは含まれない
+        assert "Sub UpdateDaily" not in result["code"]
+
+    def test_unknown_module(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(storage, job_id, "get_vba_procedure", {"module": "Nope", "name": "X"})
+        )
+        assert "error" in result
+        assert "module not found" in result["error"]
+
+    def test_unknown_procedure(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "get_vba_procedure",
+                {"module": "Module1", "name": "Missing"},
+            )
+        )
+        assert "error" in result
+        assert "procedure not found" in result["error"]
+
+    def test_missing_args(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(execute_tool_call(storage, job_id, "get_vba_procedure", {}))
+        assert "error" in result
+
+
+class TestExecuteListSheetFormulas:
+    def test_all_formulas(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(storage, job_id, "list_sheet_formulas", {"sheet": "Calc"})
+        )
+        assert result["sheet"] == "Calc"
+        assert result["total"] == 3
+        assert result["returned"] == 3
+        assert result["truncated"] is False
+        coords = [f["coord"] for f in result["formulas"]]
+        assert coords == ["Calc!A1", "Calc!A2", "Calc!A3"]
+
+    def test_pattern_filter_case_insensitive(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "list_sheet_formulas",
+                {"sheet": "Calc", "pattern": "sumif"},
+            )
+        )
+        assert result["total"] == 1
+        assert result["formulas"][0]["coord"] == "Calc!A2"
+
+    def test_limit_truncates(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(storage, job_id, "list_sheet_formulas", {"sheet": "Calc", "limit": 2})
+        )
+        assert result["total"] == 3
+        assert result["returned"] == 2
+        assert result["truncated"] is True
+
+    def test_unknown_sheet(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(storage, job_id, "list_sheet_formulas", {"sheet": "NoSuch"})
+        )
+        assert "error" in result
+
+    def test_missing_sheet_arg(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(execute_tool_call(storage, job_id, "list_sheet_formulas", {}))
         assert "error" in result

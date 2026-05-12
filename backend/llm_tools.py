@@ -6,7 +6,10 @@ LLM に渡す `tools` 配列を取得、`execute_tool_call()` で実行する。
 提供するツール:
 - get_cells_range: 指定範囲のセル値を 2D 配列で取得
 - find_cells: 値の部分一致でセルを検索
-- lookup_references: 既存の参照逆引きインデックスを引く
+- lookup_references: 既存の参照逆引きインデックスを引く (範囲交差)
+- list_vba_modules: VBA モジュールとプロシージャのメタ情報一覧
+- get_vba_procedure: 指定プロシージャのソースコード本体を取得
+- list_sheet_formulas: シート内の数式一覧 (オプションでテキストフィルタ)
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import logging
 from typing import Any
 
 from backend.storage import JobNotFoundError, Storage
+from core.reference_index import find_overlapping
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +76,83 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "list_vba_modules",
+            "description": (
+                "VBA モジュールとそれに含まれるプロシージャの一覧 (名前・種別・行範囲) を返す。"
+                "コード本体は含まず軽量。"
+                "ユーザーの要望に関係しそうなプロシージャを特定する起点として使う。"
+                "本体を読みたい場合はその後 `get_vba_procedure` を呼ぶ。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_vba_procedure",
+            "description": (
+                "指定した VBA モジュール内の指定プロシージャ (Sub/Function/Property) の "
+                "ソースコード本体を返す。"
+                "プロシージャ名は `list_vba_modules` で確認した正確な名前を渡すこと。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "description": "モジュール名 (例: 'Module1')",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "プロシージャ名 (例: 'UpdateDaily')",
+                    },
+                },
+                "required": ["module", "name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_sheet_formulas",
+            "description": (
+                "指定シートの数式一覧を返す。"
+                "設計書には参照数が多い上位 10 件しか載らないので、"
+                "それ以外の数式や特定関数を使っている数式を探したい時に使う。"
+                "`pattern` を渡すと数式テキストの部分一致 (大文字小文字無視) で絞り込める。"
+                "例: pattern='SUMIF' で SUMIF を使っている数式だけ返す。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sheet": {"type": "string", "description": "シート名"},
+                    "pattern": {
+                        "type": "string",
+                        "description": "数式テキストの部分一致フィルタ (任意, 大文字小文字無視)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "最大件数 (デフォルト 100, 上限 500)",
+                    },
+                },
+                "required": ["sheet"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "lookup_references",
             "description": (
                 "あるセルまたは範囲を参照している箇所 (数式 / VBA) を返す。"
                 "改修の波及範囲を調べるときに使う。"
+                "完全一致だけでなく範囲交差でヒットする (例: target='Input!A5' は "
+                "'Input!A:A' を参照している数式も返す)。"
+                "シート修飾を付けて呼ぶこと (例: 'Calc!H2')。"
             ),
             "parameters": {
                 "type": "object",
@@ -120,6 +197,12 @@ def execute_tool_call(
             return _exec_find_cells(storage, job_id, arguments)
         if name == "lookup_references":
             return _exec_lookup_references(storage, job_id, arguments)
+        if name == "list_vba_modules":
+            return _exec_list_vba_modules(storage, job_id, arguments)
+        if name == "get_vba_procedure":
+            return _exec_get_vba_procedure(storage, job_id, arguments)
+        if name == "list_sheet_formulas":
+            return _exec_list_sheet_formulas(storage, job_id, arguments)
         return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001 - tool ループは壊さない
         logger.warning("Tool %s failed: %s", name, e)
@@ -160,6 +243,120 @@ def _exec_find_cells(storage: Storage, job_id: str, args: dict[str, Any]) -> str
     return json.dumps({"matches": matches, "count": len(matches)}, ensure_ascii=False)
 
 
+def _exec_list_vba_modules(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
+    """VBA モジュールとプロシージャのメタ情報のみ返す (コード本体は含まない)."""
+    try:
+        wb = storage.load_workbook(job_id)
+    except JobNotFoundError as e:
+        raise ToolExecutionError(f"job not found: {e}") from e
+    except FileNotFoundError as e:
+        raise ToolExecutionError(f"workbook not extracted: {e}") from e
+    modules = [
+        {
+            "name": m.name,
+            "type": m.type,
+            "procedures": [
+                {
+                    "name": p.name,
+                    "kind": p.kind,
+                    "start_line": p.start_line,
+                    "end_line": p.end_line,
+                }
+                for p in m.procedures
+            ],
+        }
+        for m in wb.vba_modules
+    ]
+    return json.dumps({"modules": modules, "count": len(modules)}, ensure_ascii=False)
+
+
+def _exec_get_vba_procedure(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
+    """指定モジュール内の指定プロシージャのソースを返す."""
+    module_name = args.get("module")
+    proc_name = args.get("name")
+    if not module_name or not proc_name:
+        raise ToolExecutionError("module and name are required")
+    try:
+        wb = storage.load_workbook(job_id)
+    except JobNotFoundError as e:
+        raise ToolExecutionError(f"job not found: {e}") from e
+    except FileNotFoundError as e:
+        raise ToolExecutionError(f"workbook not extracted: {e}") from e
+
+    module = next((m for m in wb.vba_modules if m.name == str(module_name)), None)
+    if module is None:
+        raise ToolExecutionError(f"module not found: {module_name}")
+    proc = next((p for p in module.procedures if p.name == str(proc_name)), None)
+    if proc is None:
+        raise ToolExecutionError(f"procedure not found in {module_name}: {proc_name}")
+
+    # 抽出時にプロシージャ単位の code が空でも、モジュール全体コードから行範囲で切り出す
+    code = proc.code
+    if not code and module.code:
+        lines = module.code.splitlines()
+        # start_line / end_line は 1-origin
+        start = max(1, proc.start_line) - 1
+        end = max(proc.end_line, proc.start_line)
+        code = "\n".join(lines[start:end])
+
+    return json.dumps(
+        {
+            "module": module.name,
+            "name": proc.name,
+            "kind": proc.kind,
+            "start_line": proc.start_line,
+            "end_line": proc.end_line,
+            "code": code,
+            "annotation": proc.annotation,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _exec_list_sheet_formulas(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
+    """シートの数式一覧を返す (オプションでテキストフィルタ)."""
+    sheet_name = args.get("sheet")
+    if not sheet_name:
+        raise ToolExecutionError("sheet is required")
+    pattern_raw = args.get("pattern")
+    pattern = str(pattern_raw).lower() if pattern_raw else None
+    limit_raw = args.get("limit", 100)
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(500, limit))
+
+    try:
+        wb = storage.load_workbook(job_id)
+    except JobNotFoundError as e:
+        raise ToolExecutionError(f"job not found: {e}") from e
+    except FileNotFoundError as e:
+        raise ToolExecutionError(f"workbook not extracted: {e}") from e
+
+    sheet = next((s for s in wb.sheets if s.name == str(sheet_name)), None)
+    if sheet is None:
+        raise ToolExecutionError(f"sheet not found: {sheet_name}")
+
+    if pattern:
+        matched = [f for f in sheet.formulas if pattern in f.formula.lower()]
+    else:
+        matched = list(sheet.formulas)
+
+    total = len(matched)
+    sliced = matched[:limit]
+    return json.dumps(
+        {
+            "sheet": sheet.name,
+            "total": total,
+            "returned": len(sliced),
+            "truncated": total > limit,
+            "formulas": [{"coord": f.coord, "formula": f.formula, "refs": f.refs} for f in sliced],
+        },
+        ensure_ascii=False,
+    )
+
+
 def _exec_lookup_references(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
     target = args.get("target")
     if not target:
@@ -170,7 +367,8 @@ def _exec_lookup_references(storage: Storage, job_id: str, args: dict[str, Any])
         raise ToolExecutionError(f"job not found: {e}") from e
     except FileNotFoundError as e:
         raise ToolExecutionError(f"references not built: {e}") from e
-    refs = idx.refs.get(str(target), [])
+    # 範囲交差で検索. `Calc!H2` で `Calc!A1:J100` のような上位範囲もヒットさせる.
+    refs = find_overlapping(idx, str(target))
     return json.dumps(
         {"refs": [r.model_dump(by_alias=True) for r in refs], "count": len(refs)},
         ensure_ascii=False,

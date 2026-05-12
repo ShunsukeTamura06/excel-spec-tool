@@ -80,8 +80,8 @@ class TestExtract:
         assert wb.filename == "sample.xlsx"
         assert any(f.coord == "Calc!A3" for f in wb.sheets[0].formulas)
         idx = backend_storage.load_references(job_id)
-        # =SUM(A1:A2) が逆引きインデックスに登場する
-        assert "A1:A2" in idx.refs
+        # =SUM(A1:A2) が逆引きインデックスに登場する. キーはオーナーシート修飾済み.
+        assert "Calc!A1:A2" in idx.refs
 
 
 # ---------- /analyze ----------

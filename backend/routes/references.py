@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.dependencies import get_storage
 from backend.storage import JobNotFoundError, Storage
+from core.reference_index import find_overlapping
 
 router = APIRouter()
 
@@ -31,5 +32,6 @@ async def get_references(
             detail="references not built yet; call /extract first",
         ) from e
 
-    refs = idx.refs.get(target, []) if target else []
+    # 範囲交差で検索. 完全一致だけでなく、target が含まれる範囲も返す。
+    refs = find_overlapping(idx, target) if target else []
     return {"refs": [r.model_dump(by_alias=True) for r in refs]}

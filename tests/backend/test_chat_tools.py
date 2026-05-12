@@ -204,3 +204,217 @@ class TestToolLoop:
         r = app_client.post(f"/chat/{job_id}", json={"message": "x"})
         assert r.status_code == 200
         assert r.json()["reply"] == "recovered"
+
+    def test_chat_always_pro(
+        self,
+        app_client: TestClient,
+        xlsx_bytes: bytes,
+        scripted_llm: MockLLMClient,
+    ) -> None:
+        """チャットツールループは prompt caching を活かすため tier=pro 固定."""
+        scripted_llm.queue_response(
+            LLMResponse(
+                content=None,
+                tool_calls=[LLMToolCall(id="t1", name="find_cells", arguments={"query": "x"})],
+            )
+        )
+        scripted_llm.queue_response(
+            LLMResponse(
+                content=None,
+                tool_calls=[
+                    LLMToolCall(
+                        id="t2",
+                        name="get_cells_range",
+                        arguments={"sheet": "Portfolio", "range": "A1:B1"},
+                    )
+                ],
+            )
+        )
+        scripted_llm.queue_response(LLMResponse(content="done"))
+
+        job_id = _setup_job(app_client, xlsx_bytes)
+        r = app_client.post(f"/chat/{job_id}", json={"message": "q"})
+        assert r.status_code == 200
+
+        tiers = [c["tier"] for c in scripted_llm.calls]
+        assert tiers == ["pro", "pro", "pro"]
+        models = [c["model"] for c in scripted_llm.calls]
+        assert all(m == "mock-pro" for m in models)
+
+    def test_simple_question_also_pro(
+        self,
+        app_client: TestClient,
+        xlsx_bytes: bytes,
+        scripted_llm: MockLLMClient,
+    ) -> None:
+        """単純な質問 (1 反復) も pro で完結する."""
+        scripted_llm.queue_response(LLMResponse(content="simple answer"))
+
+        job_id = _setup_job(app_client, xlsx_bytes)
+        r = app_client.post(f"/chat/{job_id}", json={"message": "q"})
+        assert r.status_code == 200
+        tiers = [c["tier"] for c in scripted_llm.calls]
+        assert tiers == ["pro"]
+
+    def test_history_trimmed_when_over_limit(
+        self,
+        app_client: TestClient,
+        xlsx_bytes: bytes,
+        scripted_llm: MockLLMClient,
+        storage: Storage,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Phase B-2: 履歴が制限を超えると古い分は summary system message に集約される."""
+        from core.models import ChatMessage
+
+        # 上限を 2 ペアに絞ってテストしやすくする
+        monkeypatch.setenv("CHAT_HISTORY_LIMIT_PAIRS", "2")
+
+        scripted_llm.queue_response(LLMResponse(content="latest answer"))
+
+        job_id = _setup_job(app_client, xlsx_bytes)
+        # 5 ペア分の古い履歴を仕込む (10 メッセージ)
+        ts = "2026-01-01T00:00:00Z"
+        for i in range(5):
+            storage.append_chat_message(
+                job_id,
+                ChatMessage(role="user", content=f"old question {i}", timestamp=ts),
+            )
+            storage.append_chat_message(
+                job_id,
+                ChatMessage(role="assistant", content=f"old answer {i}", timestamp=ts),
+            )
+
+        r = app_client.post(f"/chat/{job_id}", json={"message": "new question"})
+        assert r.status_code == 200
+        assert r.json()["reply"] == "latest answer"
+
+        # MockLLMClient に渡された messages を検証
+        sent_messages = scripted_llm.calls[-1]["messages"]
+        # 構成: [system(spec), system(summary), recent 2 ペア = 4 msgs, user(new) ] = 7
+        assert len(sent_messages) == 7
+        # 最初の system は spec を含む大きいやつ
+        assert sent_messages[0]["role"] == "system"
+        # 2 つ目の system が summary
+        assert sent_messages[1]["role"] == "system"
+        assert "過去のやりとり概要" in sent_messages[1]["content"]
+        # 古い質問は summary に入っている (recent には入っていない)
+        assert "old question 0" in sent_messages[1]["content"]
+        # 直近 2 ペアのみが messages に並ぶ
+        kept = [m for m in sent_messages if m["role"] in ("user", "assistant")]
+        assert [m["content"] for m in kept] == [
+            "old question 3",
+            "old answer 3",
+            "old question 4",
+            "old answer 4",
+            "new question",
+        ]
+
+    def test_short_history_no_summary(
+        self,
+        app_client: TestClient,
+        xlsx_bytes: bytes,
+        scripted_llm: MockLLMClient,
+        storage: Storage,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """履歴が短ければ summary は付与されない."""
+        from core.models import ChatMessage
+
+        monkeypatch.setenv("CHAT_HISTORY_LIMIT_PAIRS", "5")
+        scripted_llm.queue_response(LLMResponse(content="ok"))
+
+        job_id = _setup_job(app_client, xlsx_bytes)
+        storage.append_chat_message(job_id, ChatMessage(role="user", content="q1", timestamp="t1"))
+        storage.append_chat_message(
+            job_id, ChatMessage(role="assistant", content="a1", timestamp="t1")
+        )
+
+        r = app_client.post(f"/chat/{job_id}", json={"message": "q2"})
+        assert r.status_code == 200
+        sent_messages = scripted_llm.calls[-1]["messages"]
+        # system 1 個のみ (summary は付かない)
+        system_msgs = [m for m in sent_messages if m["role"] == "system"]
+        assert len(system_msgs) == 1
+        assert "過去のやりとり概要" not in system_msgs[0]["content"]
+
+    def test_second_chat_call_hits_cache(
+        self,
+        app_client: TestClient,
+        xlsx_bytes: bytes,
+        scripted_llm: MockLLMClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Phase B-3: 同じジョブで 2 回チャットすると 2 回目は cache 命中."""
+        scripted_llm.queue_response(LLMResponse(content="first"))
+        scripted_llm.queue_response(LLMResponse(content="second"))
+
+        job_id = _setup_job(app_client, xlsx_bytes)
+        with caplog.at_level("INFO", logger="backend.routes.chat"):
+            r1 = app_client.post(f"/chat/{job_id}", json={"message": "q1"})
+            r2 = app_client.post(f"/chat/{job_id}", json={"message": "q2"})
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+
+        # 両方とも cache_prefix=1 で呼ばれている
+        assert scripted_llm.calls[0]["cache_prefix"] == 1
+        assert scripted_llm.calls[1]["cache_prefix"] == 1
+
+        # ログを解析: llm usage の cached=N を順に取り出す
+        usage_logs = [r.message for r in caplog.records if "llm usage iter=" in r.message]
+        assert len(usage_logs) == 2
+
+        def _cached(log: str) -> int:
+            # "...cached=N" を抽出
+            for tok in log.split():
+                if tok.startswith("cached="):
+                    return int(tok.split("=", 1)[1])
+            return -1
+
+        assert _cached(usage_logs[0]) == 0  # 初回は miss
+        assert _cached(usage_logs[1]) > 0  # 2 回目は hit
+
+    def test_cumulative_usage_logged(
+        self,
+        app_client: TestClient,
+        xlsx_bytes: bytes,
+        scripted_llm: MockLLMClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """tool ループ完了時に累計トークンがサマリログに出力される."""
+        from backend.llm_client import Usage
+
+        scripted_llm.queue_response(
+            LLMResponse(
+                content=None,
+                tool_calls=[LLMToolCall(id="t1", name="find_cells", arguments={"query": "x"})],
+                usage=Usage(prompt_tokens=100, completion_tokens=20, total_tokens=120),
+                model="fast",
+            )
+        )
+        scripted_llm.queue_response(
+            LLMResponse(
+                content="done",
+                usage=Usage(prompt_tokens=180, completion_tokens=10, total_tokens=190),
+                model="pro",
+            )
+        )
+
+        job_id = _setup_job(app_client, xlsx_bytes)
+        with caplog.at_level("INFO", logger="backend.routes.chat"):
+            r = app_client.post(f"/chat/{job_id}", json={"message": "q"})
+        assert r.status_code == 200
+
+        # 各イテレーションの usage ログが出ている
+        usage_logs = [rec.message for rec in caplog.records if "llm usage iter=" in rec.message]
+        assert len(usage_logs) == 2
+        assert "model=fast" in usage_logs[0]
+        assert "model=pro" in usage_logs[1]
+
+        # 最終サマリに累計が乗っている
+        summary = [rec.message for rec in caplog.records if "llm final response:" in rec.message]
+        assert len(summary) == 1
+        # 100 + 180 = 280, 20 + 10 = 30, 120 + 190 = 310
+        assert "cumulative_prompt=280" in summary[0]
+        assert "completion=30" in summary[0]
+        assert "total=310" in summary[0]

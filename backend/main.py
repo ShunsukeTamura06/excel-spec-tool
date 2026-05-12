@@ -6,22 +6,24 @@
 
 from __future__ import annotations
 
-import logging
-
 from fastapi import FastAPI
 
+from backend.logging_config import JobIdLoggingMiddleware, configure_logging
 from backend.routes import analyze, cells, chat, extract, jobs, references, spec
-
-logging.basicConfig(level=logging.INFO)
 
 
 def create_app() -> FastAPI:
     """FastAPI アプリを構築して返す."""
+    configure_logging()
+
     app = FastAPI(
         title="Excel改修支援ツール Backend",
         version="0.1.0",
         description="VBA/数式/参照を含むExcelの統合設計書生成 + 改修対話を提供する.",
     )
+
+    # path から job_id を抽出して相関 ID をログに乗せる
+    app.add_middleware(JobIdLoggingMiddleware)
 
     app.include_router(extract.router)
     app.include_router(analyze.router)

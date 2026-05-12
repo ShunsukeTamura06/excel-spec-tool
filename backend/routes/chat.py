@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from backend.dependencies import get_llm_client, get_storage
-from backend.llm_client import LLMClient, LLMResponse
+from backend.llm_client import LLMClient, LLMResponse, Usage
 from backend.llm_tools import build_tool_definitions, execute_tool_call
 from backend.storage import JobNotFoundError, Storage
 from core.models import ChatMessage
@@ -30,6 +31,70 @@ logger = logging.getLogger(__name__)
 
 # tool ループの最大反復回数. これを超えたら強制的に終了する。
 MAX_TOOL_ITERATIONS = 8
+
+# LLM に送る履歴の上限ペア数 (Phase B-2). user/assistant の 1 往復 = 1 ペア.
+# これを超えた古いペアは「過去のやりとり概要」として 1 つの system message に集約する。
+# 履歴ファイル (chat_history.jsonl) 自体は完全保存される。LLM 文脈窓だけ絞る。
+_DEFAULT_HISTORY_PAIRS = 10
+# 古い履歴を要約する際の、1 メッセージあたりの最大文字数 (それ以上は切り詰める)
+_SUMMARY_MESSAGE_MAX_CHARS = 120
+
+
+def _get_history_pairs_limit() -> int:
+    """環境変数 CHAT_HISTORY_LIMIT_PAIRS で上書き可能. 0 以下なら制限なし扱い."""
+    raw = os.environ.get("CHAT_HISTORY_LIMIT_PAIRS")
+    if not raw:
+        return _DEFAULT_HISTORY_PAIRS
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning(
+            "invalid CHAT_HISTORY_LIMIT_PAIRS=%r; using default %d",
+            raw,
+            _DEFAULT_HISTORY_PAIRS,
+        )
+        return _DEFAULT_HISTORY_PAIRS
+
+
+def _summarize_old_turns(old: list[ChatMessage]) -> str:
+    """古いメッセージ列を 1 つの system テキストに圧縮する.
+
+    LLM を呼ばずに機械的に圧縮する: 各メッセージを冒頭 N 文字に切り詰めて箇条書きにする。
+    情報ロスはあるが、コスト 0 / 遅延 0 で履歴の大筋を残せる。
+    """
+    if not old:
+        return ""
+    lines = [f"# 過去のやりとり概要 ({len(old)} メッセージ, 古い順)"]
+    for m in old:
+        content = (m.content or "").strip().replace("\n", " ")
+        if len(content) > _SUMMARY_MESSAGE_MAX_CHARS:
+            content = content[: _SUMMARY_MESSAGE_MAX_CHARS - 1] + "…"
+        lines.append(f"- {m.role}: {content}")
+    return "\n".join(lines)
+
+
+def _trim_history(
+    history: list[ChatMessage],
+    max_pairs: int,
+) -> tuple[list[ChatMessage], str | None]:
+    """履歴を直近 `max_pairs` ペア分に絞り込む.
+
+    Args:
+        history: 全履歴 (jsonl から読んだもの).
+        max_pairs: 保持する直近ペア数. 0 以下なら全件保持 (トリムしない).
+
+    Returns:
+        (recent_messages, summary_text_or_none)
+        トリムが発生しなかった場合 summary は None.
+    """
+    if max_pairs <= 0:
+        return list(history), None
+    max_msgs = max_pairs * 2
+    if len(history) <= max_msgs:
+        return list(history), None
+    old = history[:-max_msgs]
+    recent = history[-max_msgs:]
+    return recent, _summarize_old_turns(old)
 
 
 class ChatRequest(BaseModel):
@@ -100,9 +165,10 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "# 使えるツール",
         "",
         "設計書には Excel の概観 "
-        "(シート一覧 / 先頭 20 行 × 20 列のプレビュー / 表構造 / VBA 抽出結果 / "
-        "名前付き範囲 / 主要数式 TOP10) のみ載っています。",
-        "詳細な値・行内容・参照関係を確認したい時は、以下のツールを必ず呼んでください:",
+        "(シート一覧 / 先頭 20 行 × 20 列のプレビュー / 表構造 / "
+        "VBA モジュール・プロシージャの目録 / 名前付き範囲 / 主要数式 TOP10) のみ載っています。",
+        "VBA のソースコード本体や TOP10 から漏れた数式は設計書に含まれません。"
+        "詳細な値・行内容・参照関係・VBA コードを確認したい時は、以下のツールを必ず呼んでください:",
         "",
         "- `get_cells_range(sheet, range)`:",
         '    例: get_cells_range("Portfolio", "A6:Z6")',
@@ -112,7 +178,19 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "    値の部分一致でセルを検索する。ユーザーが言った項目名がどこにあるか分からない時はこれ",
         "- `lookup_references(target)`:",
         '    例: lookup_references("Calc!H2")',
-        "    あるセル/範囲を参照している箇所 (数式・VBA) を返す。波及範囲調査ではこれを必ず使う",
+        "    あるセル/範囲を参照している箇所 (数式・VBA) を返す。波及範囲調査ではこれを必ず使う。",
+        "    完全一致だけでなく範囲交差でヒットする (`Input!A5` で `Input!A:A` 参照もヒット)。",
+        "    target はシート修飾付きで指定する (例: 'Calc!H2', 'Input!A:A')。",
+        "- `list_vba_modules()`:",
+        "    VBA モジュールとプロシージャの一覧 (名前・種別・行範囲) を軽量に返す。",
+        "    どのプロシージャが該当しそうかを最初に絞り込むときに使う。",
+        "- `get_vba_procedure(module, name)`:",
+        '    例: get_vba_procedure("Module1", "UpdateDaily")',
+        "    指定したプロシージャのソースコード本体を返す。",
+        "    設計書には VBA 全コードを載せていないので、ロジックを確認したい時はこれを呼ぶ。",
+        "- `list_sheet_formulas(sheet, pattern?, limit?)`:",
+        '    例: list_sheet_formulas("Calc", pattern="SUMIF")',
+        "    シートの数式一覧 (設計書 TOP10 から漏れた数式や特定関数の検索) を返す。",
         "",
         "ツールの呼び出しに上限はありません。確実性を優先して、必要な回数呼んでください。",
     ]
@@ -165,18 +243,59 @@ def _run_tool_loop(
     tools = build_tool_definitions()
     messages = list(base_messages)
     tool_trace: list[dict[str, Any]] = []
+    total_usage = Usage()
 
-    for _iteration in range(MAX_TOOL_ITERATIONS):
-        resp = llm.chat_completion_with_tools(messages, tools=tools)
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        # チャット中は tier 固定 (= pro). 理由:
+        # ツールループ内で pro/fast を切り替えると、prompt caching が
+        # モデル単位で分離されているため、切替時点でキャッシュが失効してしまう。
+        # 入力 ≫ 出力 のチャットでは、caching を活かす方がトータル安い。
+        # fast tier は LLM 注釈バッチ (Phase C) など、キャッシュ恩恵が薄い大量呼び出しで使う。
+        #
+        # cache_prefix=1: 先頭 1 メッセージ (system: 行動指針 + 設計書) を
+        # キャッシュ対象として LLM に伝える (Phase B-3)。
+        # 履歴トリムの summary は 2 つ目以降に置いてあるので、トリムが起きてもプレフィックスは
+        # 安定し、キャッシュは効き続ける。
+        logger.info("llm iteration=%d tier=pro messages=%d", iteration + 1, len(messages))
+        resp = llm.chat_completion_with_tools(messages, tools=tools, tier="pro", cache_prefix=1)
+
+        if resp.usage is not None:
+            total_usage = total_usage + resp.usage
+            logger.info(
+                "llm usage iter=%d model=%s prompt=%d completion=%d total=%d cached=%d",
+                iteration + 1,
+                resp.model or "?",
+                resp.usage.prompt_tokens,
+                resp.usage.completion_tokens,
+                resp.usage.total_tokens,
+                resp.usage.cached_tokens,
+            )
 
         if not resp.tool_calls:
-            # 最終応答
+            logger.info(
+                "llm final response: iterations=%d tool_calls_total=%d reply_chars=%d "
+                "cumulative_prompt=%d completion=%d total=%d cached=%d",
+                iteration + 1,
+                len(tool_trace),
+                len(resp.content or ""),
+                total_usage.prompt_tokens,
+                total_usage.completion_tokens,
+                total_usage.total_tokens,
+                total_usage.cached_tokens,
+            )
             return (resp.content or "", tool_trace)
 
         # tool 呼び出しを実行し、結果を tool role メッセージで追加
         messages.append(_tool_call_to_assistant_message(resp))
         for tc in resp.tool_calls:
+            logger.info("tool call: name=%s args=%s", tc.name, tc.arguments)
             result_str = execute_tool_call(storage, job_id, tc.name, tc.arguments)
+            logger.info(
+                "tool result: name=%s result_chars=%d preview=%s",
+                tc.name,
+                len(result_str),
+                result_str[:120].replace("\n", " "),
+            )
             tool_trace.append(
                 {"name": tc.name, "arguments": tc.arguments, "result_preview": result_str[:200]}
             )
@@ -190,7 +309,16 @@ def _run_tool_loop(
             )
 
     # 上限到達: 最後の応答を返す。content が空の場合は注意書きを付与。
-    logger.warning("Tool loop hit MAX_TOOL_ITERATIONS=%d for job %s", MAX_TOOL_ITERATIONS, job_id)
+    logger.warning(
+        "tool loop hit MAX_TOOL_ITERATIONS=%d tool_calls_total=%d "
+        "cumulative_prompt=%d completion=%d total=%d cached=%d",
+        MAX_TOOL_ITERATIONS,
+        len(tool_trace),
+        total_usage.prompt_tokens,
+        total_usage.completion_tokens,
+        total_usage.total_tokens,
+        total_usage.cached_tokens,
+    )
     return (
         (resp.content or "[tool loop max iterations reached; partial result]"),
         tool_trace,
@@ -207,6 +335,7 @@ async def chat(
     """ユーザー発話を受け付け、LLM 応答を返す. 履歴は jsonl に追記する."""
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
+    logger.info("chat request: message_chars=%d", len(body.message))
 
     try:
         try:
@@ -220,10 +349,25 @@ async def chat(
     except JobNotFoundError as e:
         raise HTTPException(status_code=404, detail="job not found") from e
 
+    # 履歴を直近 N ペアに絞り、古い分は summary に集約 (Phase B-2)
+    max_pairs = _get_history_pairs_limit()
+    recent, summary = _trim_history(history, max_pairs=max_pairs)
+    if summary:
+        logger.info(
+            "history trimmed: total=%d kept=%d summarized=%d",
+            len(history),
+            len(recent),
+            len(history) - len(recent),
+        )
+
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": _build_system_prompt(spec_md)},
     ]
-    messages.extend({"role": m.role, "content": m.content} for m in history)
+    if summary:
+        # system 直後に置く. 設計書 (大プレフィックス) のキャッシュ性を壊さないよう、
+        # main system prompt とは別メッセージにする。
+        messages.append({"role": "system", "content": summary})
+    messages.extend({"role": m.role, "content": m.content} for m in recent)
     messages.append({"role": "user", "content": body.message})
 
     reply, tool_trace = _run_tool_loop(llm, storage, job_id, messages)

@@ -188,16 +188,29 @@ def _render_preview_block(sheet: object) -> list[str]:
 
 
 def _section_vba_modules(wb: Workbook) -> str:
-    """## 4. VBAモジュール."""
+    """## 4. VBAモジュール.
+
+    プロシージャの目録のみを載せ、ソースコード本体は載せない。
+    本体が必要な場合は LLM 側の `get_vba_procedure(module, name)` ツールを使う
+    (設計書のサイズ削減 = Phase B-1)。
+    """
     lines = ["## 4. VBAモジュール"]
     if not wb.vba_modules:
         lines += ["", "_(VBAモジュールなし)_"]
         return "\n".join(lines)
 
+    total_lines = 0
     for m in wb.vba_modules:
-        lines += ["", f"### {m.name} ({m.type})"]
+        module_line_count = len(m.code.splitlines()) if m.code else 0
+        total_lines += module_line_count
+        lines += [
+            "",
+            f"### {m.name} ({m.type})",
+            "",
+            f"- 行数: {module_line_count}",
+            f"- プロシージャ数: {len(m.procedures)}",
+        ]
 
-        # プロシージャ一覧
         lines += ["", "#### プロシージャ一覧"]
         if not m.procedures:
             lines += ["", "_(なし)_"]
@@ -213,17 +226,11 @@ def _section_vba_modules(wb: Workbook) -> str:
                     f"| {p.kind} | `{_md_escape(p.name)}` | {p.start_line}-{p.end_line} | {annot} |"
                 )
 
-        # ソースコード (折りたたみ)
-        lines += [
-            "",
-            "<details><summary>ソースコード</summary>",
-            "",
-            "```vba",
-            m.code if m.code else "",
-            "```",
-            "",
-            "</details>",
-        ]
+    lines += [
+        "",
+        "_ソースコード本体は設計書には含まれません。"
+        "LLM が `get_vba_procedure(module, name)` ツールで取得します。_",
+    ]
     return "\n".join(lines)
 
 

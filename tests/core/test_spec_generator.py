@@ -193,8 +193,39 @@ class TestVbaSection:
         assert "### Module1" in md
         assert "UpdateDaily" in md
         assert "日次更新処理" in md
-        assert "<details>" in md  # 折りたたみ
-        assert "```vba" in md
+        # 行数・プロシージャ数のメタ情報
+        assert "行数: 3" in md
+        assert "プロシージャ数: 1" in md
+        # Phase B-1: ソースコード本体は載せない. get_vba_procedure 案内が出る.
+        assert "get_vba_procedure" in md
+
+    def test_source_code_not_included(self) -> None:
+        """Phase B-1: VBA ソースコード本体は設計書に含まれない."""
+        wb = Workbook(
+            filename="t.xlsm",
+            vba_modules=[
+                VbaModule(
+                    name="Module1",
+                    type="Module",
+                    code='Sub Secret()\n    MsgBox "this should not appear in spec"\nEnd Sub',
+                    procedures=[
+                        VbaProcedure(
+                            name="Secret",
+                            kind="Sub",
+                            start_line=1,
+                            end_line=3,
+                            code="",
+                        )
+                    ],
+                )
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        # コード本体に出てくる文字列が spec に漏れていない
+        assert "MsgBox" not in md
+        assert "this should not appear in spec" not in md
+        assert "<details>" not in md
+        assert "```vba" not in md
 
     def test_no_modules(self) -> None:
         wb = Workbook(filename="t.xlsm")
