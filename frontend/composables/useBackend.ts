@@ -12,6 +12,7 @@ import {
   type ChatMessage,
   type ChatReply,
   type DeleteResponse,
+  type DiagramSet,
   type ExtractResponse,
   type JobMeta,
   type ReferenceItem,
@@ -121,6 +122,11 @@ export function useBackend() {
     async deleteJob(jobId: string): Promise<boolean> {
       const res = await call<DeleteResponse>(`/jobs/${jobId}`, { method: 'DELETE' })
       return res.deleted ?? false
+    },
+
+    /** GET /diagrams/{job_id} */
+    async getDiagrams(jobId: string): Promise<DiagramSet> {
+      return await call<DiagramSet>(`/diagrams/${jobId}`)
     },
   }
 }

@@ -12,7 +12,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.logging_config import JobIdLoggingMiddleware, configure_logging
-from backend.routes import analyze, cells, chat, extract, jobs, references, spec
+from backend.routes import (
+    analyze,
+    cells,
+    chat,
+    diagrams,
+    extract,
+    jobs,
+    references,
+    spec,
+)
 
 # Nuxt dev server (default port 3000). 環境変数で上書き可能 (カンマ区切り).
 _DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
@@ -51,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(references.router)
     app.include_router(chat.router)
     app.include_router(cells.router)
+    app.include_router(diagrams.router)
     app.include_router(jobs.router)
 
     @app.get("/health")

@@ -50,6 +50,36 @@ export interface DeleteResponse {
   deleted: boolean
 }
 
+// ---------- diagrams ----------
+
+export type DiagramNodeKind = 'sheet' | 'module' | 'procedure'
+export type DiagramEdgeKind = 'formula' | 'call'
+
+export interface DiagramNode {
+  id: string
+  label: string
+  kind: DiagramNodeKind
+  meta: Record<string, string | number>
+}
+
+export interface DiagramEdge {
+  src: string
+  dst: string
+  weight: number
+  kind: DiagramEdgeKind
+}
+
+export interface Diagram {
+  kind: 'sheet_deps' | 'vba_calls'
+  nodes: DiagramNode[]
+  edges: DiagramEdge[]
+}
+
+export interface DiagramSet {
+  sheet_deps: Diagram
+  vba_calls: Diagram
+}
+
 /** Backend からの 4xx/5xx を表す. composable 側で投げ直す. */
 export class BackendError extends Error {
   constructor(
