@@ -177,15 +177,7 @@ const errorMsg = computed(() => {
             :initial-target="refTarget"
           />
 
-          <UCard v-else-if="item.value === 'diagrams'">
-            <UAlert
-              icon="i-lucide-construction"
-              color="warning"
-              variant="subtle"
-              title="ダイアグラム描画は次のコミットで実装します"
-              description="シート依存グラフと VBA コールグラフを Vue Flow でインタラクティブ表示する予定."
-            />
-          </UCard>
+          <DiagramsPanel v-else-if="item.value === 'diagrams'" :job-id="jobId" />
         </div>
       </template>
     </UTabs>
