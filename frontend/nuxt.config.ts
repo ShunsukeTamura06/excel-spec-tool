@@ -22,8 +22,13 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     public: {
-      backendUrl: process.env.NUXT_PUBLIC_BACKEND_URL || 'http://localhost:8000',
+      backendUrl: process.env.NUXT_PUBLIC_BACKEND_URL || 'http://localhost:8001',
     },
+  },
+
+  // 開発サーバの待受ポート. NUXT_PORT 環境変数で上書き可能.
+  devServer: {
+    port: Number(process.env.NUXT_PORT ?? 3001),
   },
 
   // Nuxt UI v3 ではデフォルトで color mode / icon が同梱される.

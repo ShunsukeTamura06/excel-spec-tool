@@ -26,11 +26,11 @@ uv add --group dev <pkg>  # 開発用
 ## 起動 (開発時)
 
 ```bash
-# Backend
-uv run uvicorn backend.main:app --reload --port 8000
+# Backend (http://localhost:8001)
+uv run uvicorn backend.main:app --reload --port 8001
 
-# Frontend (別ターミナル) — Nuxt 3
-cd frontend && pnpm install && pnpm dev   # http://localhost:3000
+# Frontend (別ターミナル) — Nuxt 3 (http://localhost:3001)
+cd frontend && pnpm install && pnpm dev
 ```
 
 ## 開発コマンド

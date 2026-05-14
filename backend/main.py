@@ -1,7 +1,7 @@
 """FastAPI アプリケーションのエントリポイント.
 
 起動例:
-    uvicorn backend.main:app --reload --port 8000
+    uvicorn backend.main:app --reload --port 8001
 """
 
 from __future__ import annotations
@@ -24,8 +24,16 @@ from backend.routes import (
     workbook,
 )
 
-# Nuxt dev server (default port 3000). 環境変数で上書き可能 (カンマ区切り).
-_DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+# Nuxt dev server (default port 3001). 環境変数 CORS_ALLOW_ORIGINS で上書き可能
+# (カンマ区切り). 3000 番も互換性のために残しておく.
+_DEFAULT_CORS_ORIGINS = ",".join(
+    [
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+)
 
 
 def _cors_origins() -> list[str]:

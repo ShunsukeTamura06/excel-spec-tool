@@ -11,17 +11,18 @@ corepack enable
 # 依存インストール + Nuxt 準備
 pnpm install
 
-# 開発サーバ起動 (http://localhost:3000)
+# 開発サーバ起動 (http://localhost:3001)
 pnpm dev
 ```
 
-Backend (FastAPI) は別ターミナルで `uv run uvicorn backend.main:app --reload --port 8000` を起動しておくこと。
+Backend (FastAPI) は別ターミナルで `uv run uvicorn backend.main:app --reload --port 8001` を起動しておくこと。
 
 ## 環境変数
 
 | 変数 | 既定 | 用途 |
 |---|---|---|
-| `NUXT_PUBLIC_BACKEND_URL` | `http://localhost:8000` | Backend ベース URL |
+| `NUXT_PUBLIC_BACKEND_URL` | `http://localhost:8001` | Backend ベース URL |
+| `NUXT_PORT` | `3001` | dev サーバの待受ポート |
 
 ## ビルド
 

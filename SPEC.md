@@ -354,9 +354,9 @@ def annotate_text(prompt: str, content: str) -> str
 ### 6.4 API 呼び出し (composables/useBackend.ts)
 
 Nuxt の `$fetch` を typed client にラップ。Backend URL は `runtimeConfig.public.backendUrl`
-（環境変数 `NUXT_PUBLIC_BACKEND_URL` 由来、デフォルト `http://localhost:8000`）。
+（環境変数 `NUXT_PUBLIC_BACKEND_URL` 由来、デフォルト `http://localhost:8001`）。
 
-開発時の CORS: Backend は `http://localhost:3000` (Nuxt dev server) を許可する
+開発時の CORS: Backend は `http://localhost:3001` (Nuxt dev server) を許可する
 `CORSMiddleware` を設定する。本番ではフロントを backend と同一オリジンにデプロイ
 する想定 (静的書き出しを backend が配信、または同一ホストの reverse proxy 配下)。
 
@@ -401,10 +401,10 @@ pinia             ^2
 
 ```bash
 # Backend
-uv run uvicorn backend.main:app --reload --port 8000
+uv run uvicorn backend.main:app --reload --port 8001
 
 # Frontend (別ターミナル)
-cd frontend && pnpm install && pnpm dev   # http://localhost:3000
+cd frontend && pnpm install && pnpm dev   # http://localhost:3001
 ```
 
 環境変数:
@@ -414,10 +414,11 @@ JOBS_DIR=/var/excel-spec-tool/jobs    # 開発時は ./jobs
 LLM_BASE_URL=http://...
 LLM_API_KEY=...
 LLM_MODEL=gpt-5.2
-CORS_ALLOW_ORIGINS=http://localhost:3000  # カンマ区切り複数可
+CORS_ALLOW_ORIGINS=http://localhost:3001  # カンマ区切り複数可
 
 # Frontend
-NUXT_PUBLIC_BACKEND_URL=http://localhost:8000
+NUXT_PUBLIC_BACKEND_URL=http://localhost:8001
+NUXT_PORT=3001
 ```
 
 ## 9. スコープ外（最初は作らない）
