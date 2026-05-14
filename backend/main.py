@@ -21,6 +21,7 @@ from backend.routes import (
     jobs,
     references,
     spec,
+    workbook,
 )
 
 # Nuxt dev server (default port 3000). 環境変数で上書き可能 (カンマ区切り).
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(cells.router)
     app.include_router(diagrams.router)
+    app.include_router(workbook.router)
     app.include_router(jobs.router)
 
     @app.get("/health")

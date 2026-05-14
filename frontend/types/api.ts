@@ -50,6 +50,68 @@ export interface DeleteResponse {
   deleted: boolean
 }
 
+// ---------- workbook structure ----------
+
+export interface CellFormula {
+  coord: string
+  formula: string
+  refs: string[]
+  annotation: string
+}
+
+export interface NamedRange {
+  name: string
+  refers_to: string
+}
+
+export interface ConditionalFormat {
+  range: string
+  rule: string
+}
+
+export interface ExcelTable {
+  name: string
+  ref: string
+  header_row_count: number
+}
+
+export interface SheetInfo {
+  name: string
+  rows: number
+  cols: number
+  formulas: CellFormula[]
+  named_ranges: NamedRange[]
+  conditional_formats: ConditionalFormat[]
+  tables: ExcelTable[]
+  merged_ranges: string[]
+  preview_rows: (string | null)[][]
+  preview_origin: string
+  purpose: string
+}
+
+export interface VbaProcedure {
+  name: string
+  kind: 'Sub' | 'Function' | 'Property'
+  start_line: number
+  end_line: number
+  code: string
+  annotation: string
+}
+
+export interface VbaModule {
+  name: string
+  type: 'Module' | 'Class' | 'Form' | 'Document'
+  code: string
+  procedures: VbaProcedure[]
+}
+
+export interface WorkbookData {
+  filename: string
+  sheets: SheetInfo[]
+  vba_modules: VbaModule[]
+  external_links: string[]
+}
+
 // ---------- diagrams ----------
 
 export type DiagramNodeKind = 'sheet' | 'module' | 'procedure'

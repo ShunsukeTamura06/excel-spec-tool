@@ -17,6 +17,7 @@ import {
   type JobMeta,
   type ReferenceItem,
   type SpecResponse,
+  type WorkbookData,
 } from '~/types/api'
 
 interface FetchErrorLike {
@@ -127,6 +128,11 @@ export function useBackend() {
     /** GET /diagrams/{job_id} */
     async getDiagrams(jobId: string): Promise<DiagramSet> {
       return await call<DiagramSet>(`/diagrams/${jobId}`)
+    },
+
+    /** GET /workbook/{job_id} — 抽出済み構造 (Sheets/VBA) */
+    async getWorkbook(jobId: string): Promise<WorkbookData> {
+      return await call<WorkbookData>(`/workbook/${jobId}`)
     },
   }
 }
