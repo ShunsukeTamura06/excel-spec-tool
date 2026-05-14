@@ -21,7 +21,7 @@ async function search() {
     results.value = await backend.getReferences(props.jobId, q)
     lastQuery.value = q
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : String(e)
+    errorMsg.value = friendlyMessage(e)
   } finally {
     loading.value = false
   }

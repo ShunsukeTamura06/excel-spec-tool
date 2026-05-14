@@ -19,8 +19,16 @@ interface Step {
 }
 
 const steps: Step[] = [
-  { key: 'extract', title: 'ファイル送信・抽出', hint: 'VBA・数式・参照関係・全セルを抽出' },
-  { key: 'analyze', title: '設計書生成',        hint: 'LLM 注釈 + Markdown 統合設計書を作成' },
+  {
+    key: 'extract',
+    title: 'ファイル送信・抽出',
+    hint: 'VBA・数式・参照関係・全セルを抽出 (大きなファイルでは数分かかる場合があります)',
+  },
+  {
+    key: 'analyze',
+    title: '設計書生成',
+    hint: 'LLM 注釈 + Markdown 統合設計書を作成 (シート/プロシージャ数によっては数分かかります)',
+  },
 ]
 
 function stateOf(key: Step['key']): 'pending' | 'active' | 'done' {

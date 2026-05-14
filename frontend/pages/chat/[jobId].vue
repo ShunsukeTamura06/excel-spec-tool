@@ -35,7 +35,7 @@ async function loadHistory() {
   try {
     history.value = await backend.getChatHistory(jobId.value)
   } catch (e) {
-    loadError.value = e instanceof Error ? e.message : String(e)
+    loadError.value = friendlyMessage(e)
   } finally {
     loading.value = false
   }
@@ -77,7 +77,7 @@ async function send() {
     lastToolTrace.value = r.tool_trace ?? []
     scrollToBottom()
   } catch (e) {
-    sendError.value = e instanceof Error ? e.message : String(e)
+    sendError.value = friendlyMessage(e)
     toast.add({
       title: '応答に失敗しました',
       description: sendError.value,

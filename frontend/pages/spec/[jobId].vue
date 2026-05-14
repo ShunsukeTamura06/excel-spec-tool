@@ -79,8 +79,8 @@ const tabItems = computed(() => [
 ])
 
 const errorMsg = computed(() => {
-  if (specError.value) return `設計書の取得に失敗: ${specError.value.message}`
-  if (wbError.value) return `Workbook 構造の取得に失敗: ${wbError.value.message}`
+  if (specError.value) return friendlyMessage(specError.value)
+  if (wbError.value) return friendlyMessage(wbError.value)
   return null
 })
 </script>

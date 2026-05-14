@@ -19,7 +19,7 @@ async function load() {
   try {
     data.value = await backend.getDiagrams(props.jobId)
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : String(e)
+    errorMsg.value = friendlyMessage(e)
   } finally {
     loading.value = false
   }

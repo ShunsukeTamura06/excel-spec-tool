@@ -49,7 +49,7 @@ export const useJobStore = defineStore('job', () => {
         setCurrentJobId(null)
       }
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
+      error.value = friendlyMessage(e)
     } finally {
       loading.value = false
     }

@@ -44,9 +44,9 @@ async function onSelect(file: File) {
     setTimeout(() => navigateTo(`/spec/${jobId}`), 800)
   } catch (e) {
     phase.value = 'error'
-    errorMessage.value = e instanceof Error ? e.message : String(e)
+    errorMessage.value = friendlyMessage(e)
     toast.add({
-      title: '分析失敗',
+      title: '分析に失敗しました',
       description: errorMessage.value,
       color: 'error',
       icon: 'i-lucide-x-circle',
@@ -74,8 +74,8 @@ async function confirmDelete(job: JobMeta) {
     toast.add({ title: '削除しました', color: 'neutral', icon: 'i-lucide-trash-2' })
   } catch (e) {
     toast.add({
-      title: '削除失敗',
-      description: e instanceof Error ? e.message : String(e),
+      title: '削除に失敗しました',
+      description: friendlyMessage(e),
       color: 'error',
     })
   }
