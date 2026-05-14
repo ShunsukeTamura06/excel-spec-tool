@@ -169,10 +169,34 @@ const stats = computed(() => {
         :error-message="errorMessage"
       />
       <FileDropzone v-else @select="onSelect" />
-      <div v-if="phase === 'error'" class="flex justify-end">
-        <UButton variant="ghost" color="neutral" icon="i-lucide-rotate-ccw" @click="phase = 'idle'">
-          もう一度
-        </UButton>
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <p class="text-xs text-(--ui-text-muted) flex items-center gap-1.5">
+          <UIcon name="i-lucide-info" class="size-3.5" />
+          ファイルが手元にない場合は、デモ用サンプル (3 シート・数式・名前付き範囲・条件付き書式) を使えます。
+        </p>
+        <div class="flex gap-2">
+          <UButton
+            v-if="phase === 'error'"
+            variant="ghost"
+            color="neutral"
+            size="sm"
+            icon="i-lucide-rotate-ccw"
+            @click="phase = 'idle'"
+          >
+            もう一度
+          </UButton>
+          <UButton
+            to="/samples/inventory_sample.xlsx"
+            external
+            download
+            variant="soft"
+            color="primary"
+            size="sm"
+            icon="i-lucide-download"
+          >
+            サンプルをダウンロード
+          </UButton>
+        </div>
       </div>
     </section>
 
