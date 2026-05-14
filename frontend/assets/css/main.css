@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* Vue Flow 既定スタイル. 各図コンポーネントで個別に import するより、
+   グローバルで一度だけ読み込んだほうが扱いやすい. */
+@import "@vue-flow/core/dist/style.css";
+@import "@vue-flow/core/dist/theme-default.css";
+@import "@vue-flow/controls/dist/style.css";
+@import "@vue-flow/minimap/dist/style.css";
+
+/* Nuxt UI のテーマトークン. 業務ツールらしい落ち着いた配色. */
+@theme static {
+  --color-primary-50: #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;
+  --color-primary-600: #4f46e5;
+  --color-primary-700: #4338ca;
+  --color-primary-800: #3730a3;
+  --color-primary-900: #312e81;
+  --color-primary-950: #1e1b4b;
+
+  --font-sans:
+    'Inter', 'Noto Sans JP', system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans',
+    'Yu Gothic UI', sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, 'Liberation Mono',
+    monospace;
+}
+
+/* 設計書 Markdown 用. @nuxtjs/mdc が吐く既定マークアップを多少整える. */
+.spec-prose {
+  @apply text-sm leading-relaxed;
+}
+.spec-prose h1 {
+  @apply text-2xl font-bold mt-6 mb-4 pb-2 border-b border-(--ui-border);
+}
+.spec-prose h2 {
+  @apply text-xl font-semibold mt-6 mb-3;
+}
+.spec-prose h3 {
+  @apply text-lg font-semibold mt-4 mb-2;
+}
+.spec-prose p {
+  @apply my-2;
+}
+.spec-prose ul {
+  @apply list-disc list-inside my-2 space-y-1;
+}
+.spec-prose ol {
+  @apply list-decimal list-inside my-2 space-y-1;
+}
+.spec-prose code:not(pre code) {
+  @apply px-1 py-0.5 rounded bg-(--ui-bg-elevated) text-(--ui-primary) text-xs font-mono;
+}
+.spec-prose pre {
+  @apply p-3 my-3 rounded-md bg-(--ui-bg-elevated) overflow-x-auto text-xs;
+}
+.spec-prose table {
+  @apply my-3 text-xs;
+}
+.spec-prose th,
+.spec-prose td {
+  @apply border border-(--ui-border) px-2 py-1;
+}
+.spec-prose th {
+  @apply bg-(--ui-bg-elevated) font-semibold;
+}
+.spec-prose a {
+  @apply text-(--ui-primary) underline underline-offset-2;
+}
+
+/* Vue Flow ノードのカスタムカラー. */
+.vue-flow__node.node-sheet {
+  @apply !bg-emerald-50 !border-emerald-400 dark:!bg-emerald-950 dark:!border-emerald-700;
+}
+.vue-flow__node.node-module {
+  @apply !bg-indigo-50 !border-indigo-400 dark:!bg-indigo-950 dark:!border-indigo-700;
+}
+.vue-flow__node.node-procedure {
+  @apply !bg-sky-50 !border-sky-400 dark:!bg-sky-950 dark:!border-sky-700;
+}
