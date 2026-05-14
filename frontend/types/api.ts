@@ -33,9 +33,16 @@ export interface ChatMessage {
   timestamp: string
 }
 
+export interface ToolTraceItem {
+  name: string
+  arguments: Record<string, unknown>
+  result_preview: string
+}
+
 export interface ChatReply {
   reply: string
   history: ChatMessage[]
+  tool_trace?: ToolTraceItem[]
 }
 
 export interface ExtractResponse {
