@@ -93,8 +93,6 @@ excel-spec-tool/
 │   ├── stores/                 # Pinia: 現在ジョブ等
 │   └── types/                  # Pydantic と対応する TypeScript 型
 │
-├── frontend_streamlit/         # LEGACY — Nuxt 移行完了後に削除
-│
 ├── tests/
 │   ├── core/
 │   ├── backend/

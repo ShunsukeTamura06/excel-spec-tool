@@ -31,9 +31,6 @@ uv run uvicorn backend.main:app --reload --port 8000
 
 # Frontend (別ターミナル) — Nuxt 3
 cd frontend && pnpm install && pnpm dev   # http://localhost:3000
-
-# (参考) 旧 Streamlit 実装
-uv run streamlit run frontend_streamlit/app.py --server.port 8501
 ```
 
 ## 開発コマンド

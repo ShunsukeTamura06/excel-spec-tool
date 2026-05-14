@@ -180,7 +180,13 @@ def main() -> Path:
     build_output_sheet(wb)
     add_named_range(wb)
 
-    out = Path(__file__).resolve().parents[1] / "frontend" / "public" / "samples" / "inventory_sample.xlsx"
+    out = (
+        Path(__file__).resolve().parents[1]
+        / "frontend"
+        / "public"
+        / "samples"
+        / "inventory_sample.xlsx"
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
     return out

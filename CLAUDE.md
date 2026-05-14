@@ -52,7 +52,7 @@ uv run mypy core
 7. **`backend/storage.py`** — ローカルファイル永続化 + テスト
 8. **`backend/llm_client.py`** — モック実装 + インターフェース
 9. **`backend/main.py` + `backend/routes/`** — FastAPIエンドポイント
-10. **`frontend/api_client.py` + `frontend/app.py`** — Streamlit UI
+10. **`frontend/` (Nuxt 3 SPA)** — TypeScript + Nuxt UI + Vue Flow + Pinia
 
 各ステップの完了基準:
 - 該当機能のpytestが通る
@@ -152,7 +152,7 @@ class UnsupportedFormatError(CoreError): ...
 | `extract_workbook` | `.xls` 非対応 | `Workbook.sheets=[]` で返し、警告ログ |
 | `extract_workbook` | 外部リンク取得 | `wb._external_links` がprivate APIなので `try/except` で包む |
 | `reference_index` | VBA正規表現の捕捉漏れ | 完璧を目指さない。テストで最低限を担保 |
-| `streamlit` UploadedFile → backend | バイナリ送信 | `httpx.post(..., files={"file": (name, bytes, mime)})` |
+| Frontend `File` → backend | バイナリ送信 | `FormData()` に `append("file", file)` → `$fetch` の body に渡す (Nuxt) |
 | 大きなxlsm | メモリ・時間 | 初版は1ファイル50MB、5000行を上限と想定。超えたら警告 |
 
 ## 9. 質問テンプレート
