@@ -6,8 +6,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from frontend._sidebar import render_job_sidebar
-from frontend.api_client import BackendClient, BackendError
+from frontend_streamlit._sidebar import render_job_sidebar
+from frontend_streamlit.api_client import BackendClient, BackendError
 
 
 def _client() -> BackendClient:

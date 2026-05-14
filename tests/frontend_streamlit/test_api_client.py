@@ -1,4 +1,4 @@
-"""frontend.api_client のテスト.
+"""frontend_streamlit.api_client のテスト (LEGACY).
 
 httpx の ASGITransport を使って、Frontend クライアントを実 Backend スタックに
 直結させる。HTTP の往復は経由しないが、FastAPI のルーティング・依存性・
@@ -17,7 +17,7 @@ from backend.dependencies import get_llm_client, get_storage
 from backend.llm_client import MockLLMClient
 from backend.main import create_app
 from backend.storage import Storage
-from frontend.api_client import BackendClient, BackendError
+from frontend_streamlit.api_client import BackendClient, BackendError
 
 
 @pytest.fixture

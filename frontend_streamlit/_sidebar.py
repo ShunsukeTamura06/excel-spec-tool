@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from frontend.api_client import BackendClient, BackendError
+from frontend_streamlit.api_client import BackendClient, BackendError
 
 
 def _client() -> BackendClient:

@@ -1,9 +1,9 @@
-"""Streamlit エントリ. ナビゲーション定義のみ.
+"""Streamlit エントリ (LEGACY).
 
-ページ本体は `frontend/views/` 配下に分離している。
+Nuxt 移行中. このコードは参考用に一時保存. パリティ到達後に削除予定.
 
 起動例:
-    uv run streamlit run frontend/app.py --server.port 8501
+    uv run streamlit run frontend_streamlit/app.py --server.port 8501
 """
 
 from __future__ import annotations

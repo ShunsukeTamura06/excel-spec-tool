@@ -33,5 +33,16 @@ htmlcov/
 jobs/
 /var/
 
-# Streamlit
+# Streamlit (legacy)
 .streamlit/secrets.toml
+
+# Node / Nuxt
+node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/.data/
+frontend/dist/
+frontend/.env
+*.log
+.npm/
+.pnpm-store/

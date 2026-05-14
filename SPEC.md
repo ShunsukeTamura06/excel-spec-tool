@@ -30,11 +30,11 @@
 
 ```
 ┌─────────────────────────┐         ┌─────────────────────────┐
-│  Frontend (Streamlit)   │  HTTP   │  Backend (FastAPI)      │
+│  Frontend (Nuxt 3 SPA)  │  HTTP   │  Backend (FastAPI)      │
 │  - アップロードUI       │ ──────> │  - /extract             │
-│  - 設計書表示           │ <────── │  - /analyze             │
+│  - 設計書表示 + 図解    │ <────── │  - /analyze             │
 │  - チャット画面         │         │  - /spec, /references   │
-│                         │         │  - /chat                │
+│                         │         │  - /chat, /diagrams     │
 └─────────────────────────┘         └─────────────────────────┘
                                               │
                                               ↓
@@ -82,13 +82,18 @@ excel-spec-tool/
 │   ├── storage.py              # ローカルファイル永続化
 │   └── llm_client.py           # 社内LLM API呼び出し
 │
-├── frontend/
-│   ├── app.py                  # Streamlitエントリ
-│   ├── pages/
-│   │   ├── 1_upload.py
-│   │   ├── 2_spec.py
-│   │   └── 3_chat.py
-│   └── api_client.py           # backendを叩くhttpxラッパー
+├── frontend/                   # Nuxt 3 SPA (TypeScript)
+│   ├── nuxt.config.ts
+│   ├── package.json
+│   ├── app.vue
+│   ├── layouts/                # 共通レイアウト (sidebar + content)
+│   ├── pages/                  # ルーティング: /, /spec/[jobId], /chat/[jobId]
+│   ├── components/             # JobCard, DiagramView 等
+│   ├── composables/            # useBackend (typed API client)
+│   ├── stores/                 # Pinia: 現在ジョブ等
+│   └── types/                  # Pydantic と対応する TypeScript 型
+│
+├── frontend_streamlit/         # LEGACY — Nuxt 移行完了後に削除
 │
 ├── tests/
 │   ├── core/
@@ -318,26 +323,48 @@ def annotate_text(prompt: str, content: str) -> str
    - 改修手順（ユーザーの操作レベル）
    - 波及範囲（参照インデックスから引いた、影響を受けるセル/VBA）
 
-## 6. Frontend層の仕様 (Streamlit)
+## 6. Frontend層の仕様 (Nuxt 3 SPA)
 
-### 6.1 画面構成
+### 6.1 技術スタック
 
-- `app.py`: トップ。ファイルアップロード、過去ジョブ一覧
-- `pages/1_upload.py`: アップロード→抽出→解析の進捗表示
-- `pages/2_spec.py`: 設計書のMarkdown表示
-- `pages/3_chat.py`: チャットUI
+- **Nuxt 3** + TypeScript + SPA モード (`ssr: false`)
+- **Nuxt UI v3** (Tailwind v4 ベース) — コンポーネント / ダークモード / アクセシビリティ
+- **Vue Flow** (`@vue-flow/core`) — シート依存・VBA コールグラフのインタラクティブ描画
+- **Pinia** — 状態管理 (現在ジョブ等)
+- **`@nuxtjs/mdc`** + Shiki — 設計書 Markdown 描画
+- HTTP: Nuxt 標準 `$fetch` / `ofetch`
+- パッケージ管理: pnpm (corepack)
 
-### 6.2 状態管理
+### 6.2 画面構成
 
-- `st.session_state.job_id` で現在のjobを追跡
-- ページ間移動でも同じjobを参照
-- リロードで失われるが、トップで「過去のジョブ一覧」から再選択できる
+- `pages/index.vue`: ホーム — ジョブ一覧 + 新規アップロード + analyze 進捗
+- `pages/spec/[jobId].vue`: 設計書ページ。タブ構成:
+  - 概要 (メトリクスダッシュボード)
+  - シート (シート選択 + 数式/名前付き範囲/プレビュー)
+  - VBA (モジュール/プロシージャ詳細)
+  - ダイアグラム (シート依存図 / VBA コールグラフ)
+  - 参照検索 (逆引き)
+- `pages/chat/[jobId].vue`: 改修対話チャット
+- 共通レイアウトに current job indicator + ナビゲーション
 
-### 6.3 API呼び出し (frontend/api_client.py)
+### 6.3 状態管理
 
-すべて `httpx` を使う。Backend URL は環境変数 `BACKEND_URL` から（デフォルト `http://localhost:8000`）。
+- Pinia store `useJobStore` で現在のジョブ ID と job リストを管理
+- リロード耐性: 選択中 jobId を `localStorage` に永続化
+- URL に jobId を含めることでブックマーク可能 (`/spec/<jobId>`)
+
+### 6.4 API 呼び出し (composables/useBackend.ts)
+
+Nuxt の `$fetch` を typed client にラップ。Backend URL は `runtimeConfig.public.backendUrl`
+（環境変数 `NUXT_PUBLIC_BACKEND_URL` 由来、デフォルト `http://localhost:8000`）。
+
+開発時の CORS: Backend は `http://localhost:3000` (Nuxt dev server) を許可する
+`CORSMiddleware` を設定する。本番ではフロントを backend と同一オリジンにデプロイ
+する想定 (静的書き出しを backend が配信、または同一ホストの reverse proxy 配下)。
 
 ## 7. 依存パッケージ
+
+### Python (uv)
 
 ```
 # core
@@ -350,10 +377,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9
 httpx>=0.27
-
-# frontend
-streamlit>=1.32
-httpx>=0.27
+openai>=2.36   # 社内LLM (OpenAI互換)
 
 # dev
 pytest>=8.0
@@ -362,23 +386,40 @@ ruff>=0.4
 mypy>=1.9
 ```
 
+### Frontend (pnpm)
+
+```
+nuxt              ^3
+@nuxt/ui          ^3
+@vue-flow/core    ^1
+@vue-flow/controls
+@vue-flow/background
+@nuxtjs/mdc       ^0
+pinia             ^2
+@pinia/nuxt       ^0
+```
+
 ## 8. 起動方法 (開発時)
 
 ```bash
 # Backend
-uvicorn backend.main:app --reload --port 8000
+uv run uvicorn backend.main:app --reload --port 8000
 
 # Frontend (別ターミナル)
-streamlit run frontend/app.py --server.port 8501
+cd frontend && pnpm install && pnpm dev   # http://localhost:3000
 ```
 
 環境変数:
 ```
+# Backend
 JOBS_DIR=/var/excel-spec-tool/jobs    # 開発時は ./jobs
-BACKEND_URL=http://localhost:8000
 LLM_BASE_URL=http://...
 LLM_API_KEY=...
 LLM_MODEL=gpt-5.2
+CORS_ALLOW_ORIGINS=http://localhost:3000  # カンマ区切り複数可
+
+# Frontend
+NUXT_PUBLIC_BACKEND_URL=http://localhost:8000
 ```
 
 ## 9. スコープ外（最初は作らない）
