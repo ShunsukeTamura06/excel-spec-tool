@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
@@ -18,6 +19,36 @@ from core.reference_index import build_reference_index
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# SPEC.md §8: 1ファイル 50MB を上限の目安として想定。環境変数で上書き可能。
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 50 * 1024 * 1024))
+_UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MiB
+
+
+async def _read_capped(file: UploadFile, limit: int) -> bytes:
+    """UploadFile を limit までチャンク読みする. 超過したら HTTPException(413).
+
+    Content-Length 由来の `file.size` で早期判定し、ヘッダ詐称や chunked 転送に
+    備えて読みながら累積サイズも検証する。
+    """
+    if file.size is not None and file.size > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"file too large (max {limit} bytes, got {file.size})",
+        )
+
+    buf = bytearray()
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if len(buf) > limit:
+            raise HTTPException(
+                status_code=413,
+                detail=f"file too large (max {limit} bytes)",
+            )
+    return bytes(buf)
+
 
 @router.post("/extract")
 async def extract(
@@ -28,7 +59,7 @@ async def extract(
     if not file.filename:
         raise HTTPException(status_code=400, detail="filename is required")
 
-    data = await file.read()
+    data = await _read_capped(file, MAX_UPLOAD_BYTES)
     if not data:
         raise HTTPException(status_code=400, detail="empty file")
 
