@@ -125,8 +125,34 @@ LLM 系の環境変数が未設定の場合、Backend は `MockLLMClient` で起
   シート構造は抽出されない
 - LLM 呼び出しは社内 LLM API (OpenAI 互換) のみ対応。外部クラウドへの
   データ送信は仕様上禁止 (SPEC §1.3)
-- 想定上限: 1 ファイル 50MB / 5000 行程度。それを超える場合は警告ログ
+- 想定上限: 1 ファイル 50MB / 5000 行程度。それを超える場合は警告ログ。
+  上限は `MAX_UPLOAD_BYTES` 環境変数で上書き可能
 - VBA のパスワード保護プロジェクトは抽出不可 (olevba の制約)
+
+## 本番デプロイ (閉鎖ネットワーク向け)
+
+本番環境がインターネットに出られない前提でフロントを構成している:
+
+- **アイコン**: `@iconify-json/lucide` をビルドに焼き込み、`fallbackToApi: false`
+  で `api.iconify.design` への runtime fetch を完全に遮断
+- **フォント**: `@fontsource-variable/inter` / `@fontsource-variable/jetbrains-mono`
+  を `node_modules` から `@import` し、Google Fonts / Bunny / jsDelivr 非依存
+- **テレメトリ**: `NUXT_TELEMETRY_DISABLED=1` を推奨
+
+デプロイ手順 (開発機 → 閉鎖網):
+
+```bash
+# 1. 開発機 (ネット可) でビルド
+cd frontend
+pnpm install
+NUXT_PUBLIC_BACKEND_URL=http://<本番backend>:8001 pnpm generate
+
+# 2. 出力された .output/public/ を閉鎖網ホストへ転送し、
+#    任意の静的配信サーバ (Nginx / IIS / `python -m http.server` 等) で配信
+```
+
+Backend (Python) 側は `uv sync` 済みの環境で `uv run uvicorn backend.main:app`
+を直接起動する。フロントの SPA とは別プロセス。
 
 ## ディレクトリ構成 (概略)
 

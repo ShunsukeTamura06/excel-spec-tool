@@ -1,3 +1,8 @@
+/* フォントは node_modules から直 import (閉鎖網でも CDN 非依存).
+   variable フォントなので 1 ファイルで全ウェイトをカバーする. */
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
 @import "tailwindcss";
 @import "@nuxt/ui";
 

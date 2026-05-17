@@ -2,6 +2,7 @@
 
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.storage import Storage
@@ -64,6 +65,37 @@ class TestExtract:
             files={"file": ("a.xlsx", b"", "application/octet-stream")},
         )
         assert r.status_code == 400
+
+    def test_extract_oversize_file_returns_413(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 上限を 1KB に絞り、2KB のダミーをアップロード
+        from backend.routes import extract as extract_route
+
+        monkeypatch.setattr(extract_route, "MAX_UPLOAD_BYTES", 1024)
+        payload = b"x" * 2048
+        r = client.post(
+            "/extract",
+            files={"file": ("big.xlsx", payload, "application/octet-stream")},
+        )
+        assert r.status_code == 413, r.text
+        assert "too large" in r.json()["detail"]
+
+    def test_extract_just_under_limit_passes_size_check(
+        self,
+        client: TestClient,
+        sample_xlsx_bytes: bytes,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # 実 xlsx で、上限を実サイズより大きく設定すれば 200 が返る
+        from backend.routes import extract as extract_route
+
+        monkeypatch.setattr(extract_route, "MAX_UPLOAD_BYTES", len(sample_xlsx_bytes) + 1024)
+        r = client.post(
+            "/extract",
+            files={"file": ("a.xlsx", sample_xlsx_bytes, "application/octet-stream")},
+        )
+        assert r.status_code == 200, r.text
 
     def test_extract_persists_workbook_and_references(
         self,
