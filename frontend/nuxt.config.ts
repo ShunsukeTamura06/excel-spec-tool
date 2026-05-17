@@ -31,9 +31,26 @@ export default defineNuxtConfig({
     port: Number(process.env.NUXT_PORT ?? 3001),
   },
 
-  // Nuxt UI v3 ではデフォルトで color mode / icon が同梱される.
+  // Nuxt UI v3 ではデフォルトで color mode / icon / fonts が同梱される.
+  // 本番が閉鎖ネットワークのため、外向き通信を伴うものはすべて切る:
+  // - fonts: @nuxt/fonts を無効化 (Google/Bunny CDN への fetch を抑止).
+  //   フォントは `@fontsource-variable/*` を assets/css/main.css で直 import する.
   ui: {
+    fonts: false,
     // Tailwind v4 のテーマトークンは assets/css/main.css 側で定義する.
+  },
+
+  // @nuxt/icon: 使用アイコンを .vue から走査してビルドに焼き込む.
+  // これにより api.iconify.design への runtime fetch を完全に排除する.
+  // `@iconify-json/lucide` がインストール済みであることが前提.
+  // 閉鎖網要件として fallbackToApi: false (走査漏れがあっても API は叩かない).
+  icon: {
+    provider: 'iconify',
+    fallbackToApi: false,
+    clientBundle: {
+      scan: true,
+      includeCustomCollections: true,
+    },
   },
 
   app: {
