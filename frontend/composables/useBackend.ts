@@ -76,7 +76,19 @@ function toBackendError(err: unknown, context: string): BackendError {
     detail = e.data
   } else if (e.data && typeof e.data === 'object' && 'detail' in e.data) {
     const d = (e.data as { detail?: unknown }).detail
-    detail = typeof d === 'string' ? d : ''
+    if (typeof d === 'string') {
+      detail = d
+    } else if (Array.isArray(d) && d.length > 0) {
+      // FastAPI Pydantic バリデーションエラー: detail は
+      // [{ loc: [...], msg: "...", type: "..." }, ...] 形式の配列
+      // 先頭エラーの "loc: msg" を取り出す
+      const first = d[0] as { msg?: unknown; loc?: unknown }
+      const msg = typeof first?.msg === 'string' ? first.msg : ''
+      const loc = Array.isArray(first?.loc) ? first.loc.filter(x => x !== 'body').join('.') : ''
+      if (msg) {
+        detail = loc ? `${loc}: ${msg}` : msg
+      }
+    }
   }
 
   if (!detail) {
@@ -86,6 +98,10 @@ function toBackendError(err: unknown, context: string): BackendError {
       detail = '対象が見つかりませんでした。'
     } else if (status === 409) {
       detail = 'この操作はまだ実行できません。前のステップが完了しているか確認してください。'
+    } else if (status === 413) {
+      detail = 'ファイルが大きすぎます。サイズを確認してください。'
+    } else if (status === 422) {
+      detail = '入力形式に問題があります。'
     } else if (status === 400) {
       detail = '入力に問題があります。'
     } else {

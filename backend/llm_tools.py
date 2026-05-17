@@ -16,12 +16,51 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from backend.storage import JobNotFoundError, Storage
 from core.reference_index import find_overlapping
 
 logger = logging.getLogger(__name__)
+
+
+# tool 1 件あたり LLM に返す結果の最大文字数. 巨大な find_cells / lookup_references
+# 結果でコンテキストを食い潰さないためのセーフティネット.
+# 環境変数 TOOL_RESULT_MAX_CHARS で上書き可能 (最低 1000 にクランプ).
+_DEFAULT_TOOL_RESULT_MAX_CHARS = 20_000
+
+
+def _tool_result_max_chars() -> int:
+    raw = os.environ.get("TOOL_RESULT_MAX_CHARS")
+    if not raw:
+        return _DEFAULT_TOOL_RESULT_MAX_CHARS
+    try:
+        return max(1000, int(raw))
+    except ValueError:
+        logger.warning(
+            "invalid TOOL_RESULT_MAX_CHARS=%r; using default %d",
+            raw,
+            _DEFAULT_TOOL_RESULT_MAX_CHARS,
+        )
+        return _DEFAULT_TOOL_RESULT_MAX_CHARS
+
+
+def _truncate_tool_result(result: str, limit: int) -> str:
+    """tool 結果文字列を limit までに切り詰める.
+
+    切り詰め時はマーカーを末尾に付与するが、limit がマーカーより小さい場合は
+    マーカーを省略し、必ず limit を守る (本番下限 1000 ではほぼ発生しない).
+    """
+    if len(result) <= limit:
+        return result
+    marker = (
+        f"\n... [TRUNCATED: tool result was {len(result)} chars, "
+        f"capped at {limit}. Refine query or use a smaller range.]"
+    )
+    if limit <= len(marker):
+        return result[:limit]
+    return result[: limit - len(marker)] + marker
 
 
 # OpenAI function calling 仕様の tool 定義 (chat completions の `tools` パラメータに渡す形)
@@ -192,21 +231,23 @@ def execute_tool_call(
     """
     try:
         if name == "get_cells_range":
-            return _exec_get_cells_range(storage, job_id, arguments)
-        if name == "find_cells":
-            return _exec_find_cells(storage, job_id, arguments)
-        if name == "lookup_references":
-            return _exec_lookup_references(storage, job_id, arguments)
-        if name == "list_vba_modules":
-            return _exec_list_vba_modules(storage, job_id, arguments)
-        if name == "get_vba_procedure":
-            return _exec_get_vba_procedure(storage, job_id, arguments)
-        if name == "list_sheet_formulas":
-            return _exec_list_sheet_formulas(storage, job_id, arguments)
-        return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
+            result = _exec_get_cells_range(storage, job_id, arguments)
+        elif name == "find_cells":
+            result = _exec_find_cells(storage, job_id, arguments)
+        elif name == "lookup_references":
+            result = _exec_lookup_references(storage, job_id, arguments)
+        elif name == "list_vba_modules":
+            result = _exec_list_vba_modules(storage, job_id, arguments)
+        elif name == "get_vba_procedure":
+            result = _exec_get_vba_procedure(storage, job_id, arguments)
+        elif name == "list_sheet_formulas":
+            result = _exec_list_sheet_formulas(storage, job_id, arguments)
+        else:
+            return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001 - tool ループは壊さない
         logger.warning("Tool %s failed: %s", name, e)
         return json.dumps({"error": str(e), "tool": name}, ensure_ascii=False)
+    return _truncate_tool_result(result, _tool_result_max_chars())
 
 
 def _exec_get_cells_range(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
