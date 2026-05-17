@@ -2,6 +2,10 @@
 /**
  * アップロード→抽出→分析 の進捗をフェーズ表示する.
  * 親が `phase` を切り替えると UI が遷移する.
+ *
+ * 長時間ジョブ対策として、active なフェーズの経過秒数を表示し、
+ * 5 分を超えたら「長くかかっています」バナーを出す (バックエンドの
+ * 10 分タイムアウトに先立ってユーザーに状況を知らせる).
  */
 
 export type AnalyzePhase = 'idle' | 'extracting' | 'analyzing' | 'done' | 'error'
@@ -43,6 +47,61 @@ function stateOf(key: Step['key']): 'pending' | 'active' | 'done' {
   if (props.phase === 'done') return 'done'
   return 'pending'
 }
+
+// --- 経過時間トラッキング ---
+const SLOW_THRESHOLD_SEC = 5 * 60 // 5 分
+
+const elapsedSec = ref(0)
+let phaseStartedAt: number | null = null
+let timer: ReturnType<typeof setInterval> | null = null
+
+function isActivePhase(p: AnalyzePhase): boolean {
+  return p === 'extracting' || p === 'analyzing'
+}
+
+function stopTimer() {
+  if (timer !== null) {
+    clearInterval(timer)
+    timer = null
+  }
+}
+
+watch(
+  () => props.phase,
+  (p, prev) => {
+    if (isActivePhase(p)) {
+      // フェーズ遷移 (extracting → analyzing) では計測継続. idle から入った時だけリセット.
+      if (!isActivePhase(prev ?? 'idle')) {
+        phaseStartedAt = Date.now()
+        elapsedSec.value = 0
+        stopTimer()
+        timer = setInterval(() => {
+          if (phaseStartedAt !== null) {
+            elapsedSec.value = Math.floor((Date.now() - phaseStartedAt) / 1000)
+          }
+        }, 1000)
+      }
+    } else {
+      stopTimer()
+      phaseStartedAt = null
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(stopTimer)
+
+const elapsedLabel = computed(() => {
+  const s = elapsedSec.value
+  if (s < 60) return `${s}秒`
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  return `${m}分${rem.toString().padStart(2, '0')}秒`
+})
+
+const showSlowBanner = computed(
+  () => isActivePhase(props.phase) && elapsedSec.value >= SLOW_THRESHOLD_SEC,
+)
 </script>
 
 <template>
@@ -66,6 +125,12 @@ function stateOf(key: Step['key']): 'pending' | 'active' | 'done' {
           }}
         </span>
         <span v-if="filename" class="text-xs text-(--ui-text-muted) ml-2 truncate">{{ filename }}</span>
+        <span
+          v-if="isActivePhase(phase)"
+          class="text-xs text-(--ui-text-muted) ml-auto tabular-nums shrink-0"
+        >
+          {{ elapsedLabel }}経過
+        </span>
       </div>
     </template>
 
@@ -97,6 +162,16 @@ function stateOf(key: Step['key']): 'pending' | 'active' | 'done' {
         </div>
       </li>
     </ol>
+
+    <UAlert
+      v-if="showSlowBanner"
+      color="warning"
+      variant="subtle"
+      icon="i-lucide-clock"
+      title="長くかかっています"
+      :description="`${elapsedLabel}経過しました。大きなファイルや LLM 応答待ちで時間がかかることがあります。最大 10 分でタイムアウトし、その時点でエラーになります。`"
+      class="mt-3"
+    />
 
     <UAlert
       v-if="phase === 'error' && errorMessage"
