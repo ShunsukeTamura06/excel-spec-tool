@@ -365,3 +365,73 @@ class TestExecuteListSheetFormulas:
         storage, job_id = job_with_workbook
         result = json.loads(execute_tool_call(storage, job_id, "list_sheet_formulas", {}))
         assert "error" in result
+
+
+# ---------- 結果サイズ上限 (TOOL_RESULT_MAX_CHARS) ----------
+
+
+class TestResultTruncation:
+    """巨大な結果がコンテキストを食い潰さないよう、切り詰めが効くことを確認."""
+
+    def test_oversize_result_is_capped(
+        self,
+        job_with_cells: tuple[Storage, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import backend.llm_tools as lt
+
+        storage, job_id = job_with_cells
+        # 関数自体を差し替えて、本番下限 (1000) より小さい値も試せるようにする。
+        # マーカー (~95 字) を載せるためある程度のサイズが必要なので 200 に設定
+        monkeypatch.setattr(lt, "_tool_result_max_chars", lambda: 200)
+        result_str = execute_tool_call(
+            storage, job_id, "get_cells_range", {"sheet": "Portfolio", "range": "A1:E1"}
+        )
+        assert len(result_str) <= 200
+        assert "TRUNCATED" in result_str
+
+    def test_marker_omitted_when_limit_below_marker_size(
+        self,
+        job_with_cells: tuple[Storage, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """limit がマーカーより小さい場合でも、limit は必ず守られる."""
+        import backend.llm_tools as lt
+
+        storage, job_id = job_with_cells
+        monkeypatch.setattr(lt, "_tool_result_max_chars", lambda: 50)
+        result_str = execute_tool_call(
+            storage, job_id, "get_cells_range", {"sheet": "Portfolio", "range": "A1:E1"}
+        )
+        assert len(result_str) <= 50
+
+    def test_under_limit_passes_through(
+        self, job_with_cells: tuple[Storage, str]
+    ) -> None:
+        storage, job_id = job_with_cells
+        # デフォルト上限 (20000) で十分に収まる小さな結果
+        result_str = execute_tool_call(
+            storage, job_id, "get_cells_range", {"sheet": "Portfolio", "range": "A1:E1"}
+        )
+        assert "TRUNCATED" not in result_str
+
+    def test_env_var_overrides_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import backend.llm_tools as lt
+
+        monkeypatch.setenv("TOOL_RESULT_MAX_CHARS", "5000")
+        assert lt._tool_result_max_chars() == 5000
+
+    def test_env_var_below_floor_is_clamped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import backend.llm_tools as lt
+
+        # 1000 未満は本番安全値として 1000 にクランプ
+        monkeypatch.setenv("TOOL_RESULT_MAX_CHARS", "10")
+        assert lt._tool_result_max_chars() == 1000
+
+    def test_env_var_invalid_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import backend.llm_tools as lt
+
+        monkeypatch.setenv("TOOL_RESULT_MAX_CHARS", "not-a-number")
+        assert lt._tool_result_max_chars() == 20_000
