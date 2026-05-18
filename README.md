@@ -72,6 +72,14 @@ cd frontend && pnpm add -D <pkg>  # devDependencies
 
 ## 起動 (開発時)
 
+初回はフロントエンドの `.env` を用意する:
+
+```bash
+cd frontend
+cp .env.example .env
+# 必要に応じて NUXT_PUBLIC_BACKEND_URL 等を編集
+```
+
 ターミナルを 2 つ開く:
 
 ```bash
