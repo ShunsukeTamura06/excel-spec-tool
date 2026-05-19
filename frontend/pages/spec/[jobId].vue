@@ -76,10 +76,11 @@ function downloadSpec() {
 }
 
 const tabItems = computed(() => [
-  { value: 'overview',   label: '概要',       icon: 'i-lucide-file-text' },
-  { value: 'sheets',     label: 'シート',     icon: 'i-lucide-layout-grid' },
-  { value: 'vba',        label: 'VBA',        icon: 'i-lucide-code-2' },
-  { value: 'references', label: '参照検索',   icon: 'i-lucide-search' },
+  { value: 'overview',   label: '概要',         icon: 'i-lucide-file-text' },
+  { value: 'sheets',     label: 'シート',       icon: 'i-lucide-layout-grid' },
+  { value: 'vba',        label: 'VBA',          icon: 'i-lucide-code-2' },
+  { value: 'external',   label: '外部関数',     icon: 'i-lucide-puzzle' },
+  { value: 'references', label: '参照検索',     icon: 'i-lucide-search' },
   { value: 'diagrams',   label: 'ダイアグラム', icon: 'i-lucide-network' },
 ])
 
@@ -169,6 +170,11 @@ const errorMsg = computed(() => {
           />
 
           <VbaExplorer v-else-if="item.value === 'vba'" :modules="workbook.vba_modules" />
+
+          <ExternalFunctionsExplorer
+            v-else-if="item.value === 'external'"
+            :job-id="jobId"
+          />
 
           <ReferenceSearch
             v-else-if="item.value === 'references'"

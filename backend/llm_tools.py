@@ -10,6 +10,8 @@ LLM に渡す `tools` 配列を取得、`execute_tool_call()` で実行する。
 - list_vba_modules: VBA モジュールとプロシージャのメタ情報一覧
 - get_vba_procedure: 指定プロシージャのソースコード本体を取得
 - list_sheet_formulas: シート内の数式一覧 (オプションでテキストフィルタ)
+- lookup_external_function: Bloomberg BDH/BDP/BDS 等の Add-In 関数定義を引く
+- list_external_functions_used: 当該ブックで使われている外部関数とその箇所を列挙
 """
 
 from __future__ import annotations
@@ -17,9 +19,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections import Counter
 from typing import Any
 
 from backend.storage import JobNotFoundError, Storage
+from core.external_functions import get_function, list_functions
 from core.reference_index import find_overlapping
 
 logger = logging.getLogger(__name__)
@@ -185,6 +189,45 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "lookup_external_function",
+            "description": (
+                "Bloomberg / Refinitiv 等の Excel Add-In 関数の定義を引く。"
+                "BDH / BDP / BDS のような非標準関数の引数・返り値・使用例・"
+                "落とし穴を、当ツールのレジストリから事実情報として取得する。"
+                "推測やハルシネーションを避けるため、外部関数の挙動を答える前に必ず呼ぶこと。"
+                "未登録ベンダーや未対応関数の場合は `{\"error\": \"...\"}` を返す。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "関数名 (例: 'BDH', 'BDP', 'BDS'). 大文字小文字無視.",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_external_functions_used",
+            "description": (
+                "当該ワークブックで実際に使われている外部 Add-In 関数を一覧する。"
+                "関数名 / 使用回数 / 主な使用箇所 (シート!セル, 最大 5 件) を返す。"
+                "「このブックは Bloomberg 関数をどこで使っているか」を確認するときに使う。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "lookup_references",
             "description": (
                 "あるセルまたは範囲を参照している箇所 (数式 / VBA) を返す。"
@@ -242,6 +285,10 @@ def execute_tool_call(
             result = _exec_get_vba_procedure(storage, job_id, arguments)
         elif name == "list_sheet_formulas":
             result = _exec_list_sheet_formulas(storage, job_id, arguments)
+        elif name == "lookup_external_function":
+            result = _exec_lookup_external_function(arguments)
+        elif name == "list_external_functions_used":
+            result = _exec_list_external_functions_used(storage, job_id, arguments)
         else:
             return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001 - tool ループは壊さない
@@ -394,6 +441,63 @@ def _exec_list_sheet_formulas(storage: Storage, job_id: str, args: dict[str, Any
             "truncated": total > limit,
             "formulas": [{"coord": f.coord, "formula": f.formula, "refs": f.refs} for f in sliced],
         },
+        ensure_ascii=False,
+    )
+
+
+def _exec_lookup_external_function(args: dict[str, Any]) -> str:
+    """Bloomberg/Refinitiv 等の外部 Add-In 関数の定義をレジストリから引く."""
+    name_raw = args.get("name")
+    if not name_raw:
+        raise ToolExecutionError("name is required")
+    fn = get_function(str(name_raw))
+    if fn is None:
+        known = [f.name for f in list_functions()]
+        return json.dumps(
+            {
+                "error": f"unknown external function: {name_raw}",
+                "known": known,
+            },
+            ensure_ascii=False,
+        )
+    return json.dumps(fn.model_dump(), ensure_ascii=False)
+
+
+def _exec_list_external_functions_used(
+    storage: Storage, job_id: str, args: dict[str, Any]
+) -> str:
+    """このジョブの Workbook で使われている外部関数を集計して返す."""
+    try:
+        wb = storage.load_workbook(job_id)
+    except JobNotFoundError as e:
+        raise ToolExecutionError(f"job not found: {e}") from e
+    except FileNotFoundError as e:
+        raise ToolExecutionError(f"workbook not extracted: {e}") from e
+
+    counts: Counter[str] = Counter()
+    locations: dict[str, list[str]] = {}
+    for sheet in wb.sheets:
+        for f in sheet.formulas:
+            for fn_name in f.external_functions:
+                counts[fn_name] += 1
+                if len(locations.get(fn_name, [])) < 5:
+                    coord_disp = f.coord if "!" in f.coord else f"{sheet.name}!{f.coord}"
+                    locations.setdefault(fn_name, []).append(coord_disp)
+
+    items = []
+    for fn_name, cnt in counts.most_common():
+        registered = get_function(fn_name)
+        items.append(
+            {
+                "name": fn_name,
+                "vendor": registered.vendor if registered else "?",
+                "count": cnt,
+                "top_locations": locations.get(fn_name, []),
+                "short": registered.short if registered else "",
+            }
+        )
+    return json.dumps(
+        {"items": items, "total_kinds": len(items), "total_uses": sum(counts.values())},
         ensure_ascii=False,
     )
 

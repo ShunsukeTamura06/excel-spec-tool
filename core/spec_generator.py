@@ -8,9 +8,11 @@ SPEC.md §4.4 参照。
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 
 from core.diagrams import Diagram, build_diagrams
+from core.external_functions import get_function, list_functions
 from core.models import (
     CellFormula,
     ReferenceIndex,
@@ -364,15 +366,102 @@ def _render_mermaid_graph(diagram: Diagram, direction: str = "LR") -> list[str]:
     return lines
 
 
+def _count_external_functions(wb: Workbook) -> Counter[str]:
+    """Workbook 全体で外部関数の使用回数を集計する."""
+    c: Counter[str] = Counter()
+    for sheet in wb.sheets:
+        for f in sheet.formulas:
+            for name in f.external_functions:
+                c[name] += 1
+    return c
+
+
+def _external_function_top_locations(
+    wb: Workbook, name: str, limit: int = 5
+) -> list[str]:
+    """指定外部関数の使用箇所セル座標を先頭 limit 件返す."""
+    out: list[str] = []
+    for sheet in wb.sheets:
+        for f in sheet.formulas:
+            if name in f.external_functions:
+                out.append(f"{sheet.name}!{f.coord.split('!', 1)[-1]}"
+                           if "!" not in f.coord else f.coord)
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+def _section_external_functions(wb: Workbook) -> str:
+    """## N. 外部関数 (Bloomberg 等) — 検出された外部 Add-In 関数の一覧と定義."""
+    lines: list[str] = ["## 6. 外部関数 (Bloomberg / Refinitiv 等)"]
+    counts = _count_external_functions(wb)
+    if not counts:
+        lines += [
+            "",
+            "_検出された外部 Add-In 関数はありません。_",
+            "",
+            "(対応ベンダー: " + ", ".join(
+                sorted({f.vendor for f in list_functions()})
+            ) + ")",
+        ]
+        return "\n".join(lines)
+
+    # サマリ
+    lines += [
+        "",
+        f"検出された外部関数: **{len(counts)} 種類 / 使用箇所 {sum(counts.values())} 件**",
+        "",
+        "| 関数 | ベンダー | 使用回数 | 主要箇所 (TOP 5) | 概要 |",
+        "|---|---|---:|---|---|",
+    ]
+    for name, cnt in counts.most_common():
+        fn = get_function(name)
+        vendor = fn.vendor if fn else "?"
+        short = _md_escape(fn.short) if fn else "_(レジストリ未登録)_"
+        locs = _external_function_top_locations(wb, name, limit=5)
+        locs_str = ", ".join(f"`{_md_escape(c)}`" for c in locs) if locs else "-"
+        lines.append(f"| `{name}` | {vendor} | {cnt} | {locs_str} | {short} |")
+
+    # 各関数の詳細定義
+    lines += ["", "### 関数定義"]
+    for name, _ in counts.most_common():
+        fn = get_function(name)
+        if fn is None:
+            continue
+        lines += ["", f"#### `{fn.name}` ({fn.vendor})"]
+        lines += ["", fn.long]
+        lines += ["", f"**シグネチャ**: `{fn.signature}`"]
+        if fn.params:
+            lines += ["", "**引数**:", ""]
+            for p in fn.params:
+                req = "必須" if p.required else "任意"
+                type_str = f" ({p.type})" if p.type else ""
+                lines.append(f"- `{p.name}`{type_str} — {req}: {p.description}")
+        if fn.returns:
+            lines += ["", f"**返り値**: {fn.returns}"]
+        if fn.examples:
+            lines += ["", "**使用例**:", "", "```excel"]
+            lines += fn.examples
+            lines += ["```"]
+        if fn.notes:
+            lines += ["", "**注意点**:", ""]
+            for note in fn.notes:
+                lines.append(f"- {note}")
+        if fn.doc_url:
+            lines += ["", f"**公式参考**: {fn.doc_url}"]
+
+    return "\n".join(lines)
+
+
 def _section_diagrams(wb: Workbook) -> str:
-    """## 6. 依存グラフ — シート依存 + VBA コールを mermaid で埋め込む.
+    """## 7. 依存グラフ — シート依存 + VBA コールを mermaid で埋め込む.
 
     GitHub / VSCode / 多くの Markdown ビューアが mermaid を直接描画するため、
     ダウンロード後でも依存関係を視覚的に追える。Web UI には別途インタラクティブな
     Vue Flow タブがある。
     """
     diagrams = build_diagrams(wb)
-    lines: list[str] = ["## 6. 依存グラフ"]
+    lines: list[str] = ["## 7. 依存グラフ"]
     lines += [
         "",
         "_GitHub / VSCode 等の mermaid 対応ビューアで描画されます._"
@@ -380,7 +469,7 @@ def _section_diagrams(wb: Workbook) -> str:
     ]
 
     # シート依存
-    lines += ["", "### 6.1 シート依存"]
+    lines += ["", "### 7.1 シート依存"]
     sd = diagrams.sheet_deps
     if not sd.nodes:
         lines += ["", "_(シートなし)_"]
@@ -397,7 +486,7 @@ def _section_diagrams(wb: Workbook) -> str:
         lines += [_MERMAID_FENCE_CLOSE]
 
     # VBA コール
-    lines += ["", "### 6.2 VBA コール"]
+    lines += ["", "### 7.2 VBA コール"]
     vc = diagrams.vba_calls
     if not vc.nodes:
         lines += ["", "_(VBA プロシージャなし)_"]
@@ -417,7 +506,7 @@ def _section_diagrams(wb: Workbook) -> str:
 
 
 def _section_observations(wb: Workbook) -> str:
-    """## 6. 注意点・観察事項.
+    """## 8. 注意点・観察事項.
 
     現状はプレースホルダ. LLM 注釈ステップで埋める想定。
     SheetInfo.purpose / VbaProcedure.annotation など既に埋まっている注釈の
@@ -428,7 +517,7 @@ def _section_observations(wb: Workbook) -> str:
     formulas_with_annot = sum(1 for s in wb.sheets for f in s.formulas if f.annotation)
 
     lines = [
-        "## 7. 注意点・観察事項",
+        "## 8. 注意点・観察事項",
         "",
         "_LLM注釈ステップで追記される予定。_",
         "",
@@ -464,6 +553,8 @@ def generate_spec(wb: Workbook, ref_index: ReferenceIndex) -> str:
         _section_vba_modules(wb),
         "",
         _section_references(ref_index),
+        "",
+        _section_external_functions(wb),
         "",
         _section_diagrams(wb),
         "",

@@ -65,6 +65,8 @@ class TestToolDefinitions:
             "list_vba_modules",
             "get_vba_procedure",
             "list_sheet_formulas",
+            "lookup_external_function",
+            "list_external_functions_used",
         }
 
     def test_build_returns_list(self) -> None:
@@ -435,3 +437,108 @@ class TestResultTruncation:
 
         monkeypatch.setenv("TOOL_RESULT_MAX_CHARS", "not-a-number")
         assert lt._tool_result_max_chars() == 20_000
+
+
+# ---------- 外部関数 (Bloomberg) tool ----------
+
+
+class TestLookupExternalFunction:
+    def test_known_function(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "jobs")
+        # storage を渡すが arguments のみで判定する
+        out = execute_tool_call(storage, "any", "lookup_external_function", {"name": "BDH"})
+        payload = json.loads(out)
+        assert payload["name"] == "BDH"
+        assert payload["vendor"] == "Bloomberg"
+        assert payload["signature"].startswith("=BDH(")
+        assert any("PX_LAST" in ex for ex in payload["examples"])
+
+    def test_case_insensitive(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "jobs")
+        out = execute_tool_call(storage, "any", "lookup_external_function", {"name": "bdp"})
+        payload = json.loads(out)
+        assert payload["name"] == "BDP"
+
+    def test_unknown_returns_error_with_known_list(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "jobs")
+        out = execute_tool_call(storage, "any", "lookup_external_function", {"name": "UNKNOWN"})
+        payload = json.loads(out)
+        assert "error" in payload
+        assert "BDH" in payload["known"]
+
+    def test_missing_name_returns_error(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "jobs")
+        out = execute_tool_call(storage, "any", "lookup_external_function", {})
+        payload = json.loads(out)
+        assert "error" in payload
+
+
+class TestListExternalFunctionsUsed:
+    def test_returns_used_functions_with_counts(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "jobs")
+        # ジョブを作って Workbook を保存
+        meta = storage.create_job("demo.xlsm", b"d")
+        wb = Workbook(
+            filename="demo.xlsm",
+            sheets=[
+                SheetInfo(
+                    name="Port",
+                    rows=10,
+                    cols=5,
+                    formulas=[
+                        CellFormula(
+                            coord="A2",
+                            formula='=BDP("AAPL US Equity", "PX_LAST")',
+                            external_functions=["BDP"],
+                        ),
+                        CellFormula(
+                            coord="A3",
+                            formula='=BDP("MSFT US Equity", "PX_LAST")',
+                            external_functions=["BDP"],
+                        ),
+                        CellFormula(
+                            coord="B2",
+                            formula='=BDH("AAPL US Equity", "PX_LAST", "-1Y")',
+                            external_functions=["BDH"],
+                        ),
+                    ],
+                )
+            ],
+        )
+        storage.save_workbook(meta.job_id, wb)
+
+        out = execute_tool_call(
+            storage, meta.job_id, "list_external_functions_used", {}
+        )
+        payload = json.loads(out)
+        # 種類数 2, 合計 3 件
+        assert payload["total_kinds"] == 2
+        assert payload["total_uses"] == 3
+        # BDP が先 (使用回数多い)
+        names = [it["name"] for it in payload["items"]]
+        assert names == ["BDP", "BDH"]
+        # 主要箇所が拾えている
+        bdp_item = next(it for it in payload["items"] if it["name"] == "BDP")
+        assert "Port!A2" in bdp_item["top_locations"]
+        assert bdp_item["count"] == 2
+
+    def test_empty_when_no_external_functions(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "jobs")
+        meta = storage.create_job("demo.xlsm", b"d")
+        wb = Workbook(filename="demo.xlsm", sheets=[SheetInfo(name="S", rows=1, cols=1)])
+        storage.save_workbook(meta.job_id, wb)
+
+        out = execute_tool_call(
+            storage, meta.job_id, "list_external_functions_used", {}
+        )
+        payload = json.loads(out)
+        assert payload["items"] == []
+        assert payload["total_kinds"] == 0
+        assert payload["total_uses"] == 0
+
+
+def test_tool_definitions_include_external_function_tools() -> None:
+    """LLM に渡す tools 配列に新ツールが含まれる."""
+    names = {t["function"]["name"] for t in build_tool_definitions()}
+    assert "lookup_external_function" in names
+    assert "list_external_functions_used" in names

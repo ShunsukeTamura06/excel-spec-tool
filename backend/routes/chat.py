@@ -198,6 +198,15 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "- `list_sheet_formulas(sheet, pattern?, limit?)`:",
         '    例: list_sheet_formulas("Calc", pattern="SUMIF")',
         "    シートの数式一覧 (設計書 TOP10 から漏れた数式や特定関数の検索) を返す。",
+        "- `lookup_external_function(name)`:",
+        '    例: lookup_external_function("BDH")',
+        "    Bloomberg / Refinitiv 等の Excel Add-In 関数の定義 "
+        "(引数 / 返り値 / 例 / 落とし穴) を返す。",
+        "    BDH / BDP / BDS のような非標準関数の挙動を答える前に必ず呼ぶこと "
+        "(推測やハルシネーションを避けるため)。",
+        "- `list_external_functions_used()`:",
+        "    このブックで使われている外部 Add-In 関数の一覧 (回数 / 主な使用箇所) を返す。",
+        "    「このブックは Bloomberg をどこで使っている？」のような問いの起点に使う。",
         "",
         "ツールの呼び出しに上限はありません。確実性を優先して、必要な回数呼んでください。",
     ]

@@ -40,6 +40,9 @@ class CellFormula(BaseModel):
     formula: str
     refs: list[str] = Field(default_factory=list)
     annotation: str = ""
+    # 外部 Add-In 関数 (Bloomberg BDH/BDP/BDS, Refinitiv 等) の利用検出.
+    # `core.external_functions.detect_in_formula` の結果. 標準関数 (SUM 等) は含まない.
+    external_functions: list[str] = Field(default_factory=list)
 
 
 class NamedRange(BaseModel):

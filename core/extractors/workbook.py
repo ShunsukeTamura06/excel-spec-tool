@@ -15,6 +15,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from core.exceptions import ExtractionError
+from core.external_functions import detect_in_formula
 from core.models import (
     CellFormula,
     ConditionalFormat,
@@ -89,7 +90,15 @@ def _extract_formulas(ws: object) -> list[CellFormula]:
             formula_str = str(value)
             coord = f"{sheet_title}!{cell.coordinate}"
             refs = _extract_formula_refs(formula_str)
-            formulas.append(CellFormula(coord=coord, formula=formula_str, refs=refs))
+            external_fns = detect_in_formula(formula_str)
+            formulas.append(
+                CellFormula(
+                    coord=coord,
+                    formula=formula_str,
+                    refs=refs,
+                    external_functions=external_fns,
+                )
+            )
     return formulas
 
 

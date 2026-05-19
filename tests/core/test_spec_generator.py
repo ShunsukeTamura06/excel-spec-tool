@@ -81,8 +81,9 @@ class TestGenerateSpecStructure:
         assert "## 3. シート詳細" in md
         assert "## 4. VBAモジュール" in md
         assert "## 5. 参照関係" in md
-        assert "## 6. 依存グラフ" in md
-        assert "## 7. 注意点・観察事項" in md
+        assert "## 6. 外部関数" in md
+        assert "## 7. 依存グラフ" in md
+        assert "## 8. 注意点・観察事項" in md
 
     def test_overview_counts(self) -> None:
         wb = Workbook(
@@ -429,7 +430,7 @@ class TestDiagramSection:
             ],
         )
         md = generate_spec(wb, _empty_index())
-        assert "### 6.1 シート依存" in md
+        assert "### 7.1 シート依存" in md
         assert "```mermaid" in md
         assert "graph LR" in md
         # ノードラベル / エッジが含まれている (順序由来 id + ラベル)
@@ -446,13 +447,13 @@ class TestDiagramSection:
             ],
         )
         md = generate_spec(wb, _empty_index())
-        assert "### 6.1 シート依存" in md
+        assert "### 7.1 シート依存" in md
         assert "シート間の参照なし" in md
 
     def test_no_sheets_message(self) -> None:
         wb = Workbook(filename="t.xlsm")
         md = generate_spec(wb, _empty_index())
-        assert "### 6.1 シート依存" in md
+        assert "### 7.1 シート依存" in md
         # ノードゼロ
         assert "シートなし" in md
 
@@ -484,7 +485,7 @@ class TestDiagramSection:
             ],
         )
         md = generate_spec(wb, _empty_index())
-        assert "### 6.2 VBA コール" in md
+        assert "### 7.2 VBA コール" in md
         # mermaid ブロックが存在し、A→B エッジが描かれる
         assert "```mermaid" in md
         assert '"A"' in md
@@ -537,3 +538,78 @@ class TestDiagramSection:
         md = generate_spec(wb, _empty_index())
         # ダブルクォートはシングルクォートに置換されているのでラベルが壊れない
         assert '"Weird\'Name"' in md or '"Weird/Name"' in md or "'Weird'Name'" not in md
+
+
+# ---------- 外部関数セクション (Bloomberg 等) ----------
+
+
+class TestExternalFunctionsSection:
+    def test_empty_when_no_external_functions_used(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[
+                SheetInfo(
+                    name="S",
+                    rows=1,
+                    cols=1,
+                    formulas=[CellFormula(coord="A1", formula="=SUM(B1:B10)", refs=[])],
+                )
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "## 6. 外部関数" in md
+        assert "検出された外部 Add-In 関数はありません" in md
+        # 対応ベンダーリスト (Bloomberg 含む) が補足表示される
+        assert "Bloomberg" in md
+
+    def test_lists_used_bloomberg_functions(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[
+                SheetInfo(
+                    name="Portfolio",
+                    rows=10,
+                    cols=5,
+                    formulas=[
+                        CellFormula(
+                            coord="B2",
+                            formula='=BDP("AAPL US Equity", "PX_LAST")',
+                            refs=[],
+                            external_functions=["BDP"],
+                        ),
+                        CellFormula(
+                            coord="C2",
+                            formula='=BDH("AAPL US Equity", "PX_LAST", "-1Y")',
+                            refs=[],
+                            external_functions=["BDH"],
+                        ),
+                        CellFormula(
+                            coord="D2",
+                            formula='=BDP("MSFT US Equity", "NAME")',
+                            refs=[],
+                            external_functions=["BDP"],
+                        ),
+                    ],
+                )
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        # サマリ表
+        assert "検出された外部関数" in md
+        assert "`BDP`" in md
+        assert "`BDH`" in md
+        # 使用回数 (BDP は 2 回, BDH は 1 回)
+        # most_common 順なので BDP が先
+        bdp_pos = md.find("`BDP`")
+        bdh_pos = md.find("`BDH`")
+        assert bdp_pos < bdh_pos
+        # 定義セクション
+        assert "### 関数定義" in md
+        assert "#### `BDP` (Bloomberg)" in md
+        assert "#### `BDH` (Bloomberg)" in md
+        # 使用例コードブロック
+        assert "```excel" in md
+        # 引数一覧
+        assert "security" in md
+        # 主要箇所 (TOP 5)
+        assert "Portfolio!B2" in md or "B2" in md

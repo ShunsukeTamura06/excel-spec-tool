@@ -15,6 +15,8 @@ import {
   type ChatReply,
   type DeleteResponse,
   type DiagramSet,
+  type ExternalFunctionRegistry,
+  type ExternalFunctionsUsed,
   type ExtractResponse,
   type JobMeta,
   type ReferenceItem,
@@ -224,6 +226,24 @@ export function useBackend() {
       return await call<WorkbookData>('getWorkbook', `/workbook/${jobId}`, {
         timeout: DEFAULT_TIMEOUT_MS,
       })
+    },
+
+    /** GET /external-functions — 全ベンダーの登録済み関数定義 */
+    async getExternalFunctions(): Promise<ExternalFunctionRegistry> {
+      return await call<ExternalFunctionRegistry>(
+        'getExternalFunctions',
+        '/external-functions',
+        { timeout: DEFAULT_TIMEOUT_MS },
+      )
+    },
+
+    /** GET /external-functions/used/{job_id} — このブックでの使用箇所 */
+    async getExternalFunctionsUsed(jobId: string): Promise<ExternalFunctionsUsed> {
+      return await call<ExternalFunctionsUsed>(
+        'getExternalFunctionsUsed',
+        `/external-functions/used/${jobId}`,
+        { timeout: DEFAULT_TIMEOUT_MS },
+      )
     },
   }
 }

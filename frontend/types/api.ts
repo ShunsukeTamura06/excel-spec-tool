@@ -64,6 +64,7 @@ export interface CellFormula {
   formula: string
   refs: string[]
   annotation: string
+  external_functions: string[]
 }
 
 export interface NamedRange {
@@ -146,6 +147,54 @@ export interface WorkbookData {
   sheets: SheetInfo[]
   vba_modules: VbaModule[]
   external_links: string[]
+}
+
+// ---------- external functions ----------
+
+export interface ExternalFunctionParam {
+  name: string
+  description: string
+  required: boolean
+  type: string
+}
+
+export interface ExternalFunction {
+  name: string
+  vendor: string
+  short: string
+  long: string
+  signature: string
+  params: ExternalFunctionParam[]
+  returns: string
+  examples: string[]
+  notes: string[]
+  doc_url: string
+}
+
+export interface ExternalFunctionRegistry {
+  functions: ExternalFunction[]
+  vendors: string[]
+}
+
+export interface ExternalFunctionUsageLocation {
+  sheet: string
+  coord: string
+  formula: string
+}
+
+export interface ExternalFunctionUsageItem {
+  name: string
+  vendor: string
+  short: string
+  count: number
+  locations: ExternalFunctionUsageLocation[]
+  registered: boolean
+}
+
+export interface ExternalFunctionsUsed {
+  items: ExternalFunctionUsageItem[]
+  total_kinds: number
+  total_uses: number
 }
 
 // ---------- diagrams ----------
