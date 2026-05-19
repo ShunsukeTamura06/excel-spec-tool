@@ -17,7 +17,11 @@ const backend = useBackend()
 const jobStore = useJobStore()
 const toast = useToast()
 
-await jobStore.refreshJobs()
+// 一覧の初期取得はナビゲーションをブロックしないよう onMounted で実行する.
+// jobStore.loading が立っている間はカード下にスケルトンを出す.
+onMounted(() => {
+  void jobStore.refreshJobs()
+})
 
 const phase = ref<AnalyzePhase>('idle')
 const analyzingFilename = ref('')
@@ -40,8 +44,8 @@ async function onSelect(file: File) {
       color: 'success',
       icon: 'i-lucide-check-circle-2',
     })
-    // 自動で設計書ページへ遷移
-    setTimeout(() => navigateTo(`/spec/${jobId}`), 800)
+    // 自動で設計書ページへ遷移. 完了表示を見せる猶予として 200ms だけ待つ.
+    setTimeout(() => navigateTo(`/spec/${jobId}`), 200)
   } catch (e) {
     phase.value = 'error'
     errorMessage.value = friendlyMessage(e)
@@ -225,7 +229,30 @@ const stats = computed(() => {
         :description="jobStore.error"
       />
 
-      <div v-if="jobStore.jobs.length === 0 && !jobStore.loading" class="rounded-2xl border border-dashed border-(--ui-border) p-10 text-center">
+      <!-- 初回ロード中: ジョブカードのスケルトンを 2 枚表示 -->
+      <div
+        v-if="jobStore.loading && jobStore.jobs.length === 0"
+        class="grid grid-cols-1 lg:grid-cols-2 gap-3"
+      >
+        <div
+          v-for="i in 2"
+          :key="i"
+          class="rounded-xl border border-(--ui-border) p-4 animate-pulse"
+        >
+          <div class="flex items-center gap-3">
+            <div class="size-10 rounded-xl bg-(--ui-bg-elevated) shrink-0" />
+            <div class="flex-1 space-y-2">
+              <div class="h-4 w-3/5 rounded bg-(--ui-bg-elevated)" />
+              <div class="h-3 w-2/5 rounded bg-(--ui-bg-elevated)" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-else-if="jobStore.jobs.length === 0"
+        class="rounded-2xl border border-dashed border-(--ui-border) p-10 text-center"
+      >
         <div class="size-12 mx-auto rounded-2xl bg-(--ui-bg-muted) flex items-center justify-center text-(--ui-text-muted) mb-3">
           <UIcon name="i-lucide-inbox" class="size-6" />
         </div>

@@ -19,11 +19,6 @@ const toast = useToast()
 
 const jobId = computed(() => String(route.params.jobId))
 
-onMounted(() => {
-  if (jobStore.currentJobId !== jobId.value) jobStore.setCurrentJobId(jobId.value)
-  void jobStore.refreshJobs()
-})
-
 // 履歴ロード
 const history = ref<ChatMessage[]>([])
 const loading = ref(false)
@@ -40,7 +35,14 @@ async function loadHistory() {
     loading.value = false
   }
 }
-await loadHistory()
+
+// 履歴取得とジョブストア同期はナビゲーションをブロックしないよう onMounted で実行.
+// 取得中は空状態 (もしくは loading 表示) を見せ、終わったら履歴を埋める.
+onMounted(() => {
+  if (jobStore.currentJobId !== jobId.value) jobStore.setCurrentJobId(jobId.value)
+  void jobStore.refreshJobs()
+  void loadHistory()
+})
 
 // 送信
 const input = ref('')
@@ -148,9 +150,18 @@ const examples = [
         ref="scrollContainer"
         class="h-full overflow-y-auto px-4 py-6 space-y-5"
       >
-        <!-- 空状態 -->
+        <!-- 履歴ロード中インジケータ (空状態とは別; ロード完了まで空状態を出さない) -->
         <div
-          v-if="!loading && history.length === 0"
+          v-if="loading && history.length === 0"
+          class="h-full flex items-center justify-center gap-2 text-(--ui-text-muted)"
+        >
+          <UIcon name="i-lucide-loader-2" class="animate-spin size-4" />
+          <span class="text-sm">履歴を読み込み中...</span>
+        </div>
+
+        <!-- 空状態 (履歴ロード完了 & メッセージなし) -->
+        <div
+          v-else-if="!loading && history.length === 0"
           class="h-full flex flex-col items-center justify-center text-center gap-3 py-10"
         >
           <div class="size-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center">

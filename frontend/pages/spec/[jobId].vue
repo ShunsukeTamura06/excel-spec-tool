@@ -24,14 +24,19 @@ onMounted(() => {
   void jobStore.refreshJobs()
 })
 
-// 並行取得: spec.md と workbook 構造
-const { data: spec, error: specError, pending: specPending } = await useAsyncData(
+// spec.md と workbook 構造を並行取得.
+// `lazy: true` でナビゲーションをブロックせず、ページは即座に表示される.
+// データ取得中は data.value が null のままで、テンプレート側は
+// SpecSkeleton でプレースホルダを出す.
+const { data: spec, error: specError, pending: specPending } = useAsyncData(
   () => `spec-${jobId.value}`,
   () => backend.getSpec(jobId.value),
+  { lazy: true },
 )
-const { data: workbook, error: wbError, pending: wbPending } = await useAsyncData(
+const { data: workbook, error: wbError, pending: wbPending } = useAsyncData(
   () => `workbook-${jobId.value}`,
   () => backend.getWorkbook(jobId.value),
+  { lazy: true },
 )
 
 // 参照検索タブから外部ジャンプを受け取るための共有 state
@@ -142,13 +147,8 @@ const errorMsg = computed(() => {
     <!-- メトリクス -->
     <SpecMetrics v-if="workbook" :workbook="workbook" />
 
-    <!-- ローディング (初回) -->
-    <UCard v-if="(specPending || wbPending) && !spec && !workbook">
-      <div class="py-10 flex items-center justify-center gap-2 text-(--ui-text-muted)">
-        <UIcon name="i-lucide-loader-2" class="animate-spin size-5" />
-        <span class="text-sm">読み込み中...</span>
-      </div>
-    </UCard>
+    <!-- 初回ロード中: スケルトン表示 -->
+    <SpecSkeleton v-if="(specPending || wbPending) && (!spec || !workbook)" />
 
     <!-- タブ -->
     <UTabs
