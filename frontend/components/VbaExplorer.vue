@@ -93,11 +93,59 @@ const kindIcon: Record<VbaProcedure['kind'], string> = {
               ({{ selectedProc.end_line - selectedProc.start_line + 1 }} 行)
             </p>
           </div>
-          <UBadge v-if="selectedProc.annotation" color="primary" variant="subtle" icon="i-lucide-sparkles">
+          <UBadge
+            v-if="selectedProc.annotation || selectedProc.side_effects.length || selectedProc.triggers.length || selectedProc.calls.length"
+            color="primary"
+            variant="subtle"
+            icon="i-lucide-sparkles"
+          >
             LLM 注釈
           </UBadge>
         </div>
         <p v-if="selectedProc.annotation" class="mt-2 text-sm">{{ selectedProc.annotation }}</p>
+
+        <!-- 構造化注釈: 副作用 / 起動契機 / 呼出先 -->
+        <div
+          v-if="selectedProc.side_effects.length || selectedProc.triggers.length || selectedProc.calls.length"
+          class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs"
+        >
+          <div v-if="selectedProc.side_effects.length">
+            <p class="text-[10px] uppercase tracking-wide text-(--ui-text-muted) font-semibold mb-1 flex items-center gap-1">
+              <UIcon name="i-lucide-pencil" class="size-3" />副作用
+            </p>
+            <ul class="space-y-0.5">
+              <li
+                v-for="(s, i) in selectedProc.side_effects"
+                :key="`se-${i}`"
+                class="font-mono text-[11px] text-(--ui-text)"
+              >
+                {{ s }}
+              </li>
+            </ul>
+          </div>
+          <div v-if="selectedProc.triggers.length">
+            <p class="text-[10px] uppercase tracking-wide text-(--ui-text-muted) font-semibold mb-1 flex items-center gap-1">
+              <UIcon name="i-lucide-mouse-pointer-click" class="size-3" />起動契機
+            </p>
+            <ul class="space-y-0.5">
+              <li v-for="(t, i) in selectedProc.triggers" :key="`tr-${i}`">{{ t }}</li>
+            </ul>
+          </div>
+          <div v-if="selectedProc.calls.length">
+            <p class="text-[10px] uppercase tracking-wide text-(--ui-text-muted) font-semibold mb-1 flex items-center gap-1">
+              <UIcon name="i-lucide-arrow-right-circle" class="size-3" />呼出先
+            </p>
+            <ul class="space-y-0.5">
+              <li
+                v-for="(c, i) in selectedProc.calls"
+                :key="`cl-${i}`"
+                class="font-mono text-[11px]"
+              >
+                {{ c }}
+              </li>
+            </ul>
+          </div>
+        </div>
       </template>
 
       <pre class="text-xs font-mono leading-relaxed p-3 rounded-md bg-(--ui-bg-elevated) overflow-x-auto"><code>{{ selectedProc.code }}</code></pre>

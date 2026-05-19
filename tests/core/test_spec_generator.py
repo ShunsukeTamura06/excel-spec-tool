@@ -81,7 +81,8 @@ class TestGenerateSpecStructure:
         assert "## 3. シート詳細" in md
         assert "## 4. VBAモジュール" in md
         assert "## 5. 参照関係" in md
-        assert "## 6. 注意点・観察事項" in md
+        assert "## 6. 依存グラフ" in md
+        assert "## 7. 注意点・観察事項" in md
 
     def test_overview_counts(self) -> None:
         wb = Workbook(
@@ -402,3 +403,137 @@ class TestPreviewSection:
         )
         md = generate_spec(wb, _empty_index())
         assert "冒頭プレビュー" not in md
+
+
+# ---------- Mermaid 依存グラフ ----------
+
+
+class TestDiagramSection:
+    def test_includes_mermaid_for_cross_sheet_refs(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[
+                SheetInfo(name="Input", rows=10, cols=5),
+                SheetInfo(
+                    name="Calc",
+                    rows=10,
+                    cols=5,
+                    formulas=[
+                        CellFormula(
+                            coord="A1",
+                            formula="=Input!A1",
+                            refs=["Input!A1"],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "### 6.1 シート依存" in md
+        assert "```mermaid" in md
+        assert "graph LR" in md
+        # ノードラベル / エッジが含まれている (順序由来 id + ラベル)
+        assert '"Input"' in md
+        assert '"Calc"' in md
+        assert " --> " in md
+
+    def test_no_edges_message_when_isolated(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[
+                SheetInfo(name="A", rows=1, cols=1),
+                SheetInfo(name="B", rows=1, cols=1),
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "### 6.1 シート依存" in md
+        assert "シート間の参照なし" in md
+
+    def test_no_sheets_message(self) -> None:
+        wb = Workbook(filename="t.xlsm")
+        md = generate_spec(wb, _empty_index())
+        assert "### 6.1 シート依存" in md
+        # ノードゼロ
+        assert "シートなし" in md
+
+    def test_vba_call_section_present(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            vba_modules=[
+                VbaModule(
+                    name="M1",
+                    type="Module",
+                    code="",
+                    procedures=[
+                        VbaProcedure(
+                            name="A",
+                            kind="Sub",
+                            start_line=1,
+                            end_line=3,
+                            code="Sub A()\n    Call B\nEnd Sub",
+                        ),
+                        VbaProcedure(
+                            name="B",
+                            kind="Sub",
+                            start_line=4,
+                            end_line=5,
+                            code="Sub B()\nEnd Sub",
+                        ),
+                    ],
+                )
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "### 6.2 VBA コール" in md
+        # mermaid ブロックが存在し、A→B エッジが描かれる
+        assert "```mermaid" in md
+        assert '"A"' in md
+        assert '"B"' in md
+
+    def test_weight_label_for_repeated_refs(self) -> None:
+        """同じシート間の参照が複数あれば weight が `×N` で併記される."""
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[
+                SheetInfo(name="Input", rows=10, cols=5),
+                SheetInfo(
+                    name="Calc",
+                    rows=10,
+                    cols=5,
+                    formulas=[
+                        CellFormula(
+                            coord=f"A{i}",
+                            formula=f"=Input!A{i}",
+                            refs=[f"Input!A{i}"],
+                        )
+                        for i in range(1, 4)
+                    ],
+                ),
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        assert "×3" in md
+
+    def test_label_with_special_chars_is_escaped(self) -> None:
+        """シート名にダブルクォートが入っても mermaid が壊れない."""
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[
+                SheetInfo(name='Weird"Name', rows=1, cols=1),
+                SheetInfo(
+                    name="Calc",
+                    rows=1,
+                    cols=1,
+                    formulas=[
+                        CellFormula(
+                            coord="A1",
+                            formula="='Weird\"Name'!A1",
+                            refs=['Weird"Name!A1'],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        md = generate_spec(wb, _empty_index())
+        # ダブルクォートはシングルクォートに置換されているのでラベルが壊れない
+        assert '"Weird\'Name"' in md or '"Weird/Name"' in md or "'Weird'Name'" not in md

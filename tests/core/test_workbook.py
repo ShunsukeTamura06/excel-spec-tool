@@ -317,3 +317,162 @@ class TestPreview:
         # empty_xlsx の A1 に "hello" が入っているので最低限1セル
         assert sheet.preview_rows
         assert sheet.preview_rows[0][0] == "hello"
+
+
+# ---------- データ検証 (入力規則) ----------
+
+
+class TestDataValidations:
+    def test_extracts_list_validation(self, tmp_path: Path) -> None:
+        """セルにドロップダウンリストが設定されていれば抽出される."""
+        from openpyxl.worksheet.datavalidation import DataValidation
+
+        wb = OpyWorkbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "Form"
+        dv = DataValidation(
+            type="list",
+            formula1='"Apple,Banana,Cherry"',
+            allow_blank=True,
+            prompt="果物を選択",
+        )
+        dv.add("A2:A10")
+        ws.add_data_validation(dv)
+        out = tmp_path / "dv_list.xlsx"
+        wb.save(out)
+
+        result = extract_workbook(out)
+        sheet = next(s for s in result.sheets if s.name == "Form")
+        assert len(sheet.data_validations) == 1
+        ext = sheet.data_validations[0]
+        assert ext.type == "list"
+        assert "Apple" in ext.formula
+        assert ext.range == "A2:A10"
+        assert ext.prompt == "果物を選択"
+
+    def test_extracts_numeric_validation_with_operator(self, tmp_path: Path) -> None:
+        from openpyxl.worksheet.datavalidation import DataValidation
+
+        wb = OpyWorkbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "Nums"
+        dv = DataValidation(
+            type="whole",
+            operator="between",
+            formula1="1",
+            formula2="100",
+            allow_blank=False,
+        )
+        dv.add("B2:B5")
+        ws.add_data_validation(dv)
+        out = tmp_path / "dv_num.xlsx"
+        wb.save(out)
+
+        result = extract_workbook(out)
+        sheet = next(s for s in result.sheets if s.name == "Nums")
+        assert any(
+            d.type == "whole" and d.operator == "between" and d.range == "B2:B5"
+            for d in sheet.data_validations
+        )
+
+    def test_no_validations_when_none(self, tmp_path: Path) -> None:
+        wb = OpyWorkbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "Empty"
+        out = tmp_path / "no_dv.xlsx"
+        wb.save(out)
+        result = extract_workbook(out)
+        assert result.sheets[0].data_validations == []
+
+
+# ---------- フォームコントロール (VML 抽出) ----------
+
+
+class TestFormControlsParser:
+    def test_parses_button_with_macro_from_vml(self) -> None:
+        """合成 VML から FmlaMacro / ObjectType が拾えること."""
+        from core.extractors.workbook import _parse_vml_form_controls
+
+        vml_str = """<?xml version="1.0" encoding="UTF-8"?>
+<xml xmlns:v="urn:schemas-microsoft-com:vml"
+     xmlns:x="urn:schemas-microsoft-com:office:excel"
+     xmlns:o="urn:schemas-microsoft-com:office:office">
+  <v:shape id="_x0000_s1025" o:spid="_x0000_s1025" type="#_x0000_t201">
+    <v:textbox>
+      <div><font>更新</font></div>
+    </v:textbox>
+    <x:ClientData ObjectType="Button">
+      <x:Anchor>2,12,3,12,5,0,5,0</x:Anchor>
+      <x:FmlaMacro>Module1.UpdateDaily</x:FmlaMacro>
+    </x:ClientData>
+  </v:shape>
+  <v:shape id="_x0000_s1026" o:spid="_x0000_s1026">
+    <x:ClientData ObjectType="Checkbox">
+      <x:FmlaMacro>Module1.ToggleFilter</x:FmlaMacro>
+    </x:ClientData>
+  </v:shape>
+</xml>
+"""
+        vml = vml_str.encode("utf-8")
+        controls = _parse_vml_form_controls(vml)
+        assert len(controls) == 2
+        btn = controls[0]
+        assert btn.kind == "button"
+        assert btn.macro == "Module1.UpdateDaily"
+        assert "更新" in btn.text
+        # アンカー: FromCol=2, FromRow=3 → C4
+        assert btn.anchor == "C4"
+
+        cb = controls[1]
+        assert cb.kind == "checkbox"
+        assert cb.macro == "Module1.ToggleFilter"
+
+    def test_skips_shapes_without_macro_or_text(self) -> None:
+        from core.extractors.workbook import _parse_vml_form_controls
+
+        vml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<xml xmlns:v="urn:schemas-microsoft-com:vml"
+     xmlns:x="urn:schemas-microsoft-com:office:excel">
+  <v:shape>
+    <x:ClientData ObjectType="Button"></x:ClientData>
+  </v:shape>
+</xml>
+"""
+        controls = _parse_vml_form_controls(vml)
+        # macro も text も無いので空
+        assert controls == []
+
+    def test_malformed_vml_returns_empty(self) -> None:
+        from core.extractors.workbook import _parse_vml_form_controls
+
+        assert _parse_vml_form_controls(b"<not xml") == []
+
+    def test_xlsm_without_buttons_returns_empty_map(self, tmp_path: Path) -> None:
+        """ボタン無しの xlsm でも例外を出さず空マップを返す."""
+        from core.extractors.workbook import _extract_form_controls
+
+        wb = OpyWorkbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "S"
+        out = tmp_path / "no_buttons.xlsm"
+        wb.save(out)
+        result = _extract_form_controls(out, ["S"])
+        # キーは作られるが空配列
+        assert result == {"S": []}
+
+    def test_non_xlsm_extension_returns_empty(self, tmp_path: Path) -> None:
+        """.xlsx (マクロなし) では VML 解析自体をスキップ."""
+        from core.extractors.workbook import _extract_form_controls
+
+        wb = OpyWorkbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "S"
+        out = tmp_path / "plain.xlsx"
+        wb.save(out)
+        result = _extract_form_controls(out, ["S"])
+        assert result == {"S": []}

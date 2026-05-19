@@ -16,7 +16,12 @@ class VbaProcedure(BaseModel):
     start_line: int
     end_line: int
     code: str
-    annotation: str = ""
+
+    # ----- LLM 注釈フィールド (P1-2 で構造化) -----
+    annotation: str = ""  # 1 文サマリ
+    side_effects: list[str] = Field(default_factory=list)  # 書き込み先 (セル / シート / 外部)
+    triggers: list[str] = Field(default_factory=list)  # 想定起動契機 (ボタン / イベント / 手動)
+    calls: list[str] = Field(default_factory=list)  # 内部で呼ぶ他プロシージャ名 (LLM が判定)
 
 
 class VbaModule(BaseModel):
@@ -63,6 +68,36 @@ class ExcelTable(BaseModel):
     header_row_count: int = 1
 
 
+class DataValidation(BaseModel):
+    """セルに設定された入力規則 (リスト / 数値範囲 / 日付 等).
+
+    主用途は「このセルにはどんな値が入るか」をチャット LLM が即答できるようにすること.
+    """
+
+    range: str  # 適用範囲 (sqref). 例: "A2:A100", "C5"
+    type: str  # "list" / "whole" / "decimal" / "date" / "time" / "textLength" / "custom"
+    formula: str = ""  # formula1. リストなら値そのもの / セル参照
+    operator: str = ""  # "between" / "greaterThan" 等. リストでは空
+    prompt: str = ""  # 入力時のヒントメッセージ
+    error: str = ""  # 入力エラー時のメッセージ
+    allow_blank: bool = True
+
+
+class FormControl(BaseModel):
+    """シート上のフォームコントロール (ボタン / チェックボックス 等) と VBA の紐付け.
+
+    .xlsm の VML ドローイング (`xl/drawings/vmlDrawing*.vml`) を best-effort で
+    パースして抽出する。OnAction で指定された VBA マクロ名と、可能なら表示テキストや
+    アンカーセルも記録する。
+    """
+
+    kind: str = "button"  # "button" / "checkbox" / "dropdown" / "scrollbar" 等
+    name: str = ""  # コントロール名 (取れる場合)
+    text: str = ""  # ボタン表面の表示テキスト (取れる場合)
+    macro: str = ""  # 紐づけマクロ名 (FmlaMacro)
+    anchor: str = ""  # 配置セル (FromRow,FromCol) を "A1" 形式に変換したもの
+
+
 class SheetInfo(BaseModel):
     """シート 1枚の情報."""
 
@@ -74,11 +109,20 @@ class SheetInfo(BaseModel):
     conditional_formats: list[ConditionalFormat] = Field(default_factory=list)
     tables: list[ExcelTable] = Field(default_factory=list)
     merged_ranges: list[str] = Field(default_factory=list)
+    data_validations: list[DataValidation] = Field(default_factory=list)
+    form_controls: list[FormControl] = Field(default_factory=list)
     # 先頭 N 行 × M 列の literal プレビュー (解釈なしの生値).
     # 各行は等長で、空セルは None.
     preview_rows: list[list[str | None]] = Field(default_factory=list)
     preview_origin: str = ""  # "A1" 等. 何処を起点に取ったかの記録
-    purpose: str = ""
+
+    # ----- LLM 注釈フィールド (P1-2 で構造化) -----
+    # 後方互換: いずれも default は空. 既存ストレージから読み込めるよう default を維持する.
+    purpose: str = ""  # 用途を 1〜2 文で
+    inputs: list[str] = Field(default_factory=list)  # 依存元 (他シート名 / 外部)
+    outputs: list[str] = Field(default_factory=list)  # 出力先
+    main_calculations: list[str] = Field(default_factory=list)  # 主要計算の自然言語説明
+    usage_scenario: str = ""  # 想定利用シーン
 
 
 class Workbook(BaseModel):

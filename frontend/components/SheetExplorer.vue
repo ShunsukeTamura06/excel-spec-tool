@@ -70,11 +70,70 @@ const selected = computed<SheetInfo | null>(
               <span v-if="selected.merged_ranges.length" class="ml-1">・ 結合セル {{ selected.merged_ranges.length }} 件</span>
             </p>
           </div>
-          <UBadge v-if="selected.purpose" color="primary" variant="subtle" icon="i-lucide-sparkles">
+          <UBadge
+            v-if="selected.purpose || selected.usage_scenario || selected.inputs.length || selected.outputs.length || selected.main_calculations.length"
+            color="primary"
+            variant="subtle"
+            icon="i-lucide-sparkles"
+          >
             LLM 推定
           </UBadge>
         </div>
         <p v-if="selected.purpose" class="mt-2 text-sm text-(--ui-text)">{{ selected.purpose }}</p>
+        <p v-if="selected.usage_scenario" class="mt-1 text-xs text-(--ui-text-muted)">
+          <UIcon name="i-lucide-user-check" class="size-3.5 inline align-text-bottom" />
+          想定利用シーン: {{ selected.usage_scenario }}
+        </p>
+
+        <!-- IN / OUT バッジ -->
+        <div
+          v-if="selected.inputs.length || selected.outputs.length"
+          class="mt-3 flex flex-wrap items-start gap-3"
+        >
+          <div v-if="selected.inputs.length" class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-[10px] uppercase tracking-wide text-(--ui-text-muted) font-semibold">IN</span>
+            <UBadge
+              v-for="(it, i) in selected.inputs"
+              :key="`in-${i}`"
+              color="info"
+              variant="subtle"
+              size="sm"
+              icon="i-lucide-log-in"
+            >
+              {{ it }}
+            </UBadge>
+          </div>
+          <div v-if="selected.outputs.length" class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-[10px] uppercase tracking-wide text-(--ui-text-muted) font-semibold">OUT</span>
+            <UBadge
+              v-for="(it, i) in selected.outputs"
+              :key="`out-${i}`"
+              color="success"
+              variant="subtle"
+              size="sm"
+              icon="i-lucide-log-out"
+            >
+              {{ it }}
+            </UBadge>
+          </div>
+        </div>
+
+        <!-- 主要計算 (LLM 説明) -->
+        <div v-if="selected.main_calculations.length" class="mt-3">
+          <p class="text-[10px] uppercase tracking-wide text-(--ui-text-muted) font-semibold mb-1">
+            主要計算
+          </p>
+          <ul class="space-y-0.5 text-xs">
+            <li
+              v-for="(c, i) in selected.main_calculations"
+              :key="`calc-${i}`"
+              class="flex items-start gap-1.5"
+            >
+              <UIcon name="i-lucide-corner-down-right" class="size-3.5 shrink-0 mt-0.5 text-(--ui-text-muted)" />
+              <span>{{ c }}</span>
+            </li>
+          </ul>
+        </div>
       </UCard>
 
       <!-- 数式 -->
@@ -131,6 +190,83 @@ const selected = computed<SheetInfo | null>(
         <p v-if="selected.formulas.length > 200" class="mt-2 text-xs text-(--ui-text-muted) text-center">
           (先頭 200 件のみ表示)
         </p>
+      </UCard>
+
+      <!-- フォームコントロール (ボタン → マクロ) -->
+      <UCard v-if="selected.form_controls.length">
+        <template #header>
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-mouse-pointer-click" class="size-4 text-rose-600" />
+            <span class="font-medium">フォームコントロール ({{ selected.form_controls.length }} 件)</span>
+          </div>
+        </template>
+        <div class="overflow-x-auto -mx-4">
+          <table class="w-full text-xs">
+            <thead class="bg-(--ui-bg-elevated)">
+              <tr>
+                <th class="px-3 py-2 text-left font-semibold w-24">種別</th>
+                <th class="px-3 py-2 text-left font-semibold">表示テキスト</th>
+                <th class="px-3 py-2 text-left font-semibold w-20">配置</th>
+                <th class="px-3 py-2 text-left font-semibold">紐づけマクロ</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(fc, i) in selected.form_controls"
+                :key="`fc-${i}`"
+                class="border-t border-(--ui-border)"
+              >
+                <td class="px-3 py-1.5">
+                  <UBadge color="neutral" variant="subtle" size="sm">{{ fc.kind }}</UBadge>
+                </td>
+                <td class="px-3 py-1.5">{{ fc.text || '-' }}</td>
+                <td class="px-3 py-1.5 font-mono text-[10px]">{{ fc.anchor || '-' }}</td>
+                <td class="px-3 py-1.5 font-mono">
+                  <span v-if="fc.macro">{{ fc.macro }}</span>
+                  <span v-else class="text-(--ui-text-muted)">-</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </UCard>
+
+      <!-- データ検証 (入力規則) -->
+      <UCard v-if="selected.data_validations.length">
+        <template #header>
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-list-checks" class="size-4 text-sky-600" />
+            <span class="font-medium">入力規則 ({{ selected.data_validations.length }} 件)</span>
+          </div>
+        </template>
+        <div class="overflow-x-auto -mx-4">
+          <table class="w-full text-xs">
+            <thead class="bg-(--ui-bg-elevated)">
+              <tr>
+                <th class="px-3 py-2 text-left font-semibold w-32">範囲</th>
+                <th class="px-3 py-2 text-left font-semibold w-20">種別</th>
+                <th class="px-3 py-2 text-left font-semibold">値 / 数式</th>
+                <th class="px-3 py-2 text-left font-semibold">プロンプト</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(dv, i) in selected.data_validations"
+                :key="`dv-${i}`"
+                class="border-t border-(--ui-border)"
+              >
+                <td class="px-3 py-1.5 font-mono">{{ dv.range }}</td>
+                <td class="px-3 py-1.5">
+                  <UBadge color="info" variant="subtle" size="sm">{{ dv.type }}</UBadge>
+                </td>
+                <td class="px-3 py-1.5 font-mono break-all">
+                  {{ dv.formula || '-' }}<span v-if="dv.operator"> ({{ dv.operator }})</span>
+                </td>
+                <td class="px-3 py-1.5">{{ dv.prompt || '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </UCard>
 
       <!-- 名前付き範囲 + 条件付き書式 -->

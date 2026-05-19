@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import logging
 import re
+import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from core.exceptions import ExtractionError
 from core.models import (
     CellFormula,
     ConditionalFormat,
+    DataValidation,
     ExcelTable,
+    FormControl,
     NamedRange,
     SheetInfo,
     Workbook,
@@ -214,6 +218,260 @@ def _extract_excel_tables(ws: object) -> list[ExcelTable]:
     return result
 
 
+def _extract_data_validations(ws: object) -> list[DataValidation]:
+    """openpyxl の data_validations を抽出する.
+
+    各 DataValidation は適用範囲 (sqref) ごとに 1 行 (sqref に複数範囲が
+    含まれていれば、それを space 区切りでまとめて格納). type / formula1 /
+    prompt / error message も拾う.
+    """
+    out: list[DataValidation] = []
+    dv_attr = getattr(ws, "data_validations", None)
+    if dv_attr is None:
+        return out
+    try:
+        items = list(getattr(dv_attr, "dataValidation", []) or [])
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to enumerate data_validations on sheet")
+        return out
+
+    for dv in items:
+        try:
+            sqref = getattr(dv, "sqref", None)
+            range_str = str(sqref) if sqref is not None else ""
+            dv_type = str(getattr(dv, "type", "") or "")
+            formula1 = getattr(dv, "formula1", "") or ""
+            operator = str(getattr(dv, "operator", "") or "")
+            prompt = str(getattr(dv, "prompt", "") or "")
+            error = str(getattr(dv, "error", "") or "")
+            allow_blank = bool(getattr(dv, "allowBlank", True))
+            if not range_str or not dv_type:
+                continue
+            out.append(
+                DataValidation(
+                    range=range_str,
+                    type=dv_type,
+                    formula=str(formula1),
+                    operator=operator,
+                    prompt=prompt,
+                    error=error,
+                    allow_blank=allow_blank,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Skipping malformed data_validation entry")
+            continue
+    return out
+
+
+# ----- フォームコントロール (VML-based) ----------------------------------
+
+# VML 名前空間
+_VML_NS = {
+    "v": "urn:schemas-microsoft-com:vml",
+    "x": "urn:schemas-microsoft-com:office:excel",
+    "o": "urn:schemas-microsoft-com:office:office",
+}
+# rels 名前空間
+_REL_NS = {"r": "http://schemas.openxmlformats.org/package/2006/relationships"}
+
+
+def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, str]:
+    """xlsm zip から「シート名 → vmlDrawing*.vml のフルパス」マップを返す.
+
+    手順:
+      1. xl/workbook.xml で sheet name → r:id を集める
+      2. xl/_rels/workbook.xml.rels で r:id → worksheets/sheet*.xml を解決
+      3. 各 xl/worksheets/_rels/sheet*.xml.rels から vmlDrawing への参照を取得
+
+    rels の解決にコケたら部分結果でも返す (best-effort).
+    """
+    sheet_to_vml: dict[str, str] = {}
+    try:
+        wb_xml = zf.read("xl/workbook.xml")
+        wb_rels = zf.read("xl/_rels/workbook.xml.rels")
+    except KeyError:
+        return sheet_to_vml
+
+    # r:id → sheet file
+    rid_to_target: dict[str, str] = {}
+    try:
+        root = ET.fromstring(wb_rels)
+        for rel in root.iter("{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"):
+            rid_to_target[rel.attrib.get("Id", "")] = rel.attrib.get("Target", "")
+    except ET.ParseError:
+        return sheet_to_vml
+
+    # sheet name → r:id → sheet file path
+    name_to_sheet_path: dict[str, str] = {}
+    try:
+        root = ET.fromstring(wb_xml)
+        for sheet in root.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheet"):
+            name = sheet.attrib.get("name", "")
+            rid_key = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+            rid = sheet.attrib.get(rid_key, "")
+            target = rid_to_target.get(rid, "")
+            if not name or not target:
+                continue
+            # target は通常 "worksheets/sheet1.xml" (xl/ からの相対)
+            sheet_path = f"xl/{target}" if not target.startswith("xl/") else target
+            name_to_sheet_path[name] = sheet_path
+    except ET.ParseError:
+        return sheet_to_vml
+
+    # 各 sheet の _rels を辿って vmlDrawing を見つける
+    for name, sheet_path in name_to_sheet_path.items():
+        # 例: xl/worksheets/sheet1.xml → xl/worksheets/_rels/sheet1.xml.rels
+        if "/" in sheet_path:
+            dir_part, file_part = sheet_path.rsplit("/", 1)
+        else:
+            dir_part, file_part = "", sheet_path
+        rels_path = f"{dir_part}/_rels/{file_part}.rels"
+        try:
+            rels_xml = zf.read(rels_path)
+        except KeyError:
+            continue
+        try:
+            rels_root = ET.fromstring(rels_xml)
+        except ET.ParseError:
+            continue
+        for rel in rels_root.iter(
+            "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+        ):
+            target = rel.attrib.get("Target", "")
+            if "vmlDrawing" in target and target.endswith(".vml"):
+                # 相対パスを正規化: target は "../drawings/vmlDrawing1.vml" 等
+                # dir_part = "xl/worksheets" の前提で 1 階層上に上がる
+                # 雑だが xlsm の構造は固定なので OK
+                if target.startswith("../"):
+                    vml_path = "xl/" + target[len("../"):]
+                else:
+                    vml_path = f"{dir_part}/{target}"
+                sheet_to_vml[name] = vml_path
+                break
+
+    return sheet_to_vml
+
+
+def _parse_vml_form_controls(vml_bytes: bytes) -> list[FormControl]:
+    """VML 1 ファイル分から FormControl を抽出する.
+
+    各 v:shape の中の x:ClientData (type 属性) と x:FmlaMacro を見る:
+      - <x:ClientData ObjectType="Button|Checkbox|Drop|Spin|...">
+      - <x:FmlaMacro>マクロ名</x:FmlaMacro>
+      - <v:textbox> 配下のテキスト = ボタン表面文字
+      - <x:Anchor>FromCol,FromColOff,FromRow,FromRowOff,ToCol,...</x:Anchor>
+    """
+    out: list[FormControl] = []
+    try:
+        root = ET.fromstring(vml_bytes)
+    except ET.ParseError:
+        return out
+
+    # shape 要素は v: 名前空間配下. ET は名前空間付きで {ns}local の形でアクセス.
+    v_shape_tag = f"{{{_VML_NS['v']}}}shape"
+    x_cd_tag = f"{{{_VML_NS['x']}}}ClientData"
+    x_fmla_tag = f"{{{_VML_NS['x']}}}FmlaMacro"
+    x_anchor_tag = f"{{{_VML_NS['x']}}}Anchor"
+    v_textbox_tag = f"{{{_VML_NS['v']}}}textbox"
+
+    object_type_map = {
+        "Button": "button",
+        "Checkbox": "checkbox",
+        "Radio": "radio",
+        "Drop": "dropdown",
+        "List": "listbox",
+        "Spin": "spinner",
+        "Scroll": "scrollbar",
+        "GBox": "groupbox",
+        "Label": "label",
+    }
+
+    for shape in root.iter(v_shape_tag):
+        name = shape.attrib.get(f"{{{_VML_NS['o']}}}spid", "") or shape.attrib.get("id", "")
+        cd = shape.find(x_cd_tag)
+        if cd is None:
+            continue
+        obj_type = cd.attrib.get("ObjectType", "")
+        kind = object_type_map.get(obj_type, obj_type.lower() if obj_type else "control")
+
+        fmla = cd.find(x_fmla_tag)
+        macro = (fmla.text or "").strip() if fmla is not None and fmla.text else ""
+
+        anchor_el = cd.find(x_anchor_tag)
+        anchor_text = ""
+        if anchor_el is not None and anchor_el.text:
+            anchor_text = _anchor_to_cell(anchor_el.text)
+
+        # ボタンの表面テキストを v:textbox から拾う (best-effort)
+        text = ""
+        textbox = shape.find(v_textbox_tag)
+        if textbox is not None:
+            # textbox 配下の全テキストを連結
+            text = "".join(textbox.itertext()).strip()
+            # 改行・余分な空白を 1 つに圧縮
+            text = re.sub(r"\s+", " ", text)[:120]
+
+        # マクロも表示テキストも空のコントロールは情報量が薄いのでスキップ
+        if not macro and not text:
+            continue
+
+        out.append(
+            FormControl(
+                kind=kind or "control",
+                name=name,
+                text=text,
+                macro=macro,
+                anchor=anchor_text,
+            )
+        )
+    return out
+
+
+def _anchor_to_cell(anchor_text: str) -> str:
+    """`x:Anchor` の `FromCol,FromColOff,FromRow,FromRowOff,...` を "A1" 形式へ.
+
+    パース失敗時は空文字を返す.
+    """
+    try:
+        from openpyxl.utils import get_column_letter
+
+        parts = [p.strip() for p in anchor_text.split(",")]
+        if len(parts) < 4:
+            return ""
+        from_col = int(parts[0])
+        from_row = int(parts[2])
+        return f"{get_column_letter(from_col + 1)}{from_row + 1}"
+    except (ValueError, IndexError):
+        return ""
+
+
+def _extract_form_controls(file_path: Path, sheet_names: list[str]) -> dict[str, list[FormControl]]:
+    """xlsm 内の VML ドローイングから (シート名 → フォームコントロール) を抽出.
+
+    .xls / .xlsx は VBA を含まないので空を返す. xlsm でも VML がない (= ボタンが
+    一つも置かれていない) なら空. zipfile / XML パース失敗は警告ログのみで握り潰し
+    結果は best-effort.
+    """
+    out: dict[str, list[FormControl]] = {sn: [] for sn in sheet_names}
+    if file_path.suffix.lower() not in {".xlsm", ".xltm", ".xlsb"}:
+        return out
+    try:
+        with zipfile.ZipFile(file_path) as zf:
+            sheet_to_vml = _xlsm_sheet_to_vml_map(zf)
+            for sheet_name, vml_path in sheet_to_vml.items():
+                try:
+                    vml_bytes = zf.read(vml_path)
+                except KeyError:
+                    continue
+                controls = _parse_vml_form_controls(vml_bytes)
+                if controls and sheet_name in out:
+                    out[sheet_name] = controls
+    except (zipfile.BadZipFile, OSError) as e:
+        logger.warning("failed to read form controls from %s: %s", file_path.name, e)
+    return out
+
+
 def _extract_merged_ranges(ws: object) -> list[str]:
     """シートのマージ範囲を文字列リストで返す."""
     result: list[str] = []
@@ -303,6 +561,7 @@ def extract_workbook(file_path: Path) -> Workbook:
             conditional_formats=_extract_conditional_formats(ws),
             tables=_extract_excel_tables(ws),
             merged_ranges=_extract_merged_ranges(ws),
+            data_validations=_extract_data_validations(ws),
             preview_rows=preview_rows,
             preview_origin=preview_origin,
         )
@@ -310,6 +569,13 @@ def extract_workbook(file_path: Path) -> Workbook:
         sheets_by_name[sn] = info
 
     _attach_named_ranges(wb, sheets_by_name)
+
+    # フォームコントロール (ボタン → マクロ紐付け) は xlsm の VML を直接読む.
+    # openpyxl は VML を解釈しないので zipfile + XML パースで自前抽出.
+    fc_map = _extract_form_controls(file_path, list(sheets_by_name.keys()))
+    for sn, controls in fc_map.items():
+        if sn in sheets_by_name and controls:
+            sheets_by_name[sn].form_controls = controls
 
     return Workbook(
         filename=file_path.name,

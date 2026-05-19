@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from core.diagrams import Diagram, build_diagrams
 from core.models import (
     CellFormula,
     ReferenceIndex,
@@ -86,6 +87,18 @@ def _section_sheet_details(wb: Workbook) -> str:
         else:
             lines += ["", "- 用途（推定）: _未設定_"]
 
+        # 構造化注釈 (LLM が JSON で返した詳細). 各フィールドは任意.
+        if s.usage_scenario:
+            lines += [f"- 想定利用シーン: {s.usage_scenario}"]
+        if s.inputs:
+            lines += [f"- 依存元 (IN): {', '.join(s.inputs)}"]
+        if s.outputs:
+            lines += [f"- 出力先 (OUT): {', '.join(s.outputs)}"]
+        if s.main_calculations:
+            lines += ["", "#### 主要計算 (LLM 説明)"]
+            for c in s.main_calculations:
+                lines.append(f"- {c}")
+
         # 主要数式
         top = _pick_top_formulas(s.formulas, _TOP_FORMULAS_PER_SHEET)
         lines += ["", f"#### 主要数式 (TOP {min(_TOP_FORMULAS_PER_SHEET, len(s.formulas))})"]
@@ -126,6 +139,36 @@ def _section_sheet_details(wb: Workbook) -> str:
             lines += ["", "| 範囲 | ルール |", "|---|---|"]
             for cf in s.conditional_formats:
                 lines.append(f"| `{_md_escape(cf.range)}` | {_md_escape(cf.rule)} |")
+
+        # データ検証 (入力規則)
+        if s.data_validations:
+            lines += ["", "#### 入力規則"]
+            lines += [
+                "",
+                "| 範囲 | 種別 | 値 / 数式 | プロンプト |",
+                "|---|---|---|---|",
+            ]
+            for dv in s.data_validations:
+                op = f" {dv.operator}" if dv.operator else ""
+                value = f"{_md_escape(dv.formula)}{_md_escape(op)}".strip() if dv.formula else "-"
+                lines.append(
+                    f"| `{_md_escape(dv.range)}` | {_md_escape(dv.type)} | "
+                    f"{value} | {_md_escape(dv.prompt) if dv.prompt else '-'} |"
+                )
+
+        # フォームコントロール (ボタン → マクロ)
+        if s.form_controls:
+            lines += ["", "#### フォームコントロール（ボタン等）"]
+            lines += [
+                "",
+                "| 種別 | 表示テキスト | 配置 | 紐づけマクロ |",
+                "|---|---|---|---|",
+            ]
+            for fc in s.form_controls:
+                text = _md_escape(fc.text) if fc.text else "-"
+                anchor = f"`{_md_escape(fc.anchor)}`" if fc.anchor else "-"
+                macro = f"`{_md_escape(fc.macro)}`" if fc.macro else "-"
+                lines.append(f"| {_md_escape(fc.kind)} | {text} | {anchor} | {macro} |")
 
         # Excel テーブル (ListObject) — ユーザーが明示的に定義したテーブルのみ
         lines += ["", "#### Excel テーブル（明示的に定義されているもの）"]
@@ -217,13 +260,18 @@ def _section_vba_modules(wb: Workbook) -> str:
         else:
             lines += [
                 "",
-                "| 種別 | 名前 | 行 | 注釈 |",
-                "|---|---|---|---|",
+                "| 種別 | 名前 | 行 | 注釈 | 副作用 | 起動契機 | 呼出先 |",
+                "|---|---|---|---|---|---|---|",
             ]
             for p in m.procedures:
                 annot = _md_escape(p.annotation) if p.annotation else "-"
+                side = _md_escape(", ".join(p.side_effects)) if p.side_effects else "-"
+                trig = _md_escape(", ".join(p.triggers)) if p.triggers else "-"
+                calls = _md_escape(", ".join(p.calls)) if p.calls else "-"
                 lines.append(
-                    f"| {p.kind} | `{_md_escape(p.name)}` | {p.start_line}-{p.end_line} | {annot} |"
+                    f"| {p.kind} | `{_md_escape(p.name)}` | "
+                    f"{p.start_line}-{p.end_line} | {annot} | "
+                    f"{side} | {trig} | {calls} |"
                 )
 
     lines += [
@@ -266,6 +314,108 @@ def _section_references(ref_index: ReferenceIndex) -> str:
     return "\n".join(lines)
 
 
+def _mermaid_label(s: str) -> str:
+    """Mermaid のノードラベル ["..."] 内で安全な文字列にする.
+
+    ダブルクォート・バックスラッシュ・改行・パイプを除去/置換する。
+    日本語などはそのまま通る。
+    """
+    return (
+        s.replace("\\", "\\\\")
+        .replace('"', "'")
+        .replace("\n", " ")
+        .replace("|", "/")
+    )
+
+
+def _mermaid_id(prefix: str, index: int) -> str:
+    """順序由来の安定 ID. ノード ID にシート名等を直接使うと記号で壊れる."""
+    return f"{prefix}{index}"
+
+
+_MERMAID_FENCE_OPEN = "```mermaid"
+_MERMAID_FENCE_CLOSE = "```"
+
+
+def _render_mermaid_graph(diagram: Diagram, direction: str = "LR") -> list[str]:
+    """Diagram を mermaid `graph` 構文の行リストにして返す.
+
+    ノード ID は順序由来 (n0, n1, ...) で安定化させ、ラベルにオリジナル名を載せる。
+    エッジに weight があれば `|×N|` で併記。
+    """
+    lines: list[str] = [f"graph {direction}"]
+    # node id 解決
+    id_map: dict[str, str] = {}
+    for i, n in enumerate(diagram.nodes):
+        nid = _mermaid_id("n", i)
+        id_map[n.id] = nid
+        label = _mermaid_label(n.label or n.id)
+        lines.append(f'    {nid}["{label}"]')
+
+    for e in diagram.edges:
+        src = id_map.get(e.src)
+        dst = id_map.get(e.dst)
+        if not src or not dst:
+            continue
+        if e.weight >= 2:
+            lines.append(f"    {src} -->|×{e.weight}| {dst}")
+        else:
+            lines.append(f"    {src} --> {dst}")
+    return lines
+
+
+def _section_diagrams(wb: Workbook) -> str:
+    """## 6. 依存グラフ — シート依存 + VBA コールを mermaid で埋め込む.
+
+    GitHub / VSCode / 多くの Markdown ビューアが mermaid を直接描画するため、
+    ダウンロード後でも依存関係を視覚的に追える。Web UI には別途インタラクティブな
+    Vue Flow タブがある。
+    """
+    diagrams = build_diagrams(wb)
+    lines: list[str] = ["## 6. 依存グラフ"]
+    lines += [
+        "",
+        "_GitHub / VSCode 等の mermaid 対応ビューアで描画されます._"
+        " インタラクティブ表示は Web UI の「ダイアグラム」タブを参照してください。",
+    ]
+
+    # シート依存
+    lines += ["", "### 6.1 シート依存"]
+    sd = diagrams.sheet_deps
+    if not sd.nodes:
+        lines += ["", "_(シートなし)_"]
+    elif not sd.edges:
+        lines += ["", "_(シート間の参照なし)_"]
+    else:
+        lines += [
+            "",
+            f"ノード {len(sd.nodes)} 件 / エッジ {len(sd.edges)} 本",
+            "",
+            _MERMAID_FENCE_OPEN,
+        ]
+        lines += _render_mermaid_graph(sd, direction="LR")
+        lines += [_MERMAID_FENCE_CLOSE]
+
+    # VBA コール
+    lines += ["", "### 6.2 VBA コール"]
+    vc = diagrams.vba_calls
+    if not vc.nodes:
+        lines += ["", "_(VBA プロシージャなし)_"]
+    elif not vc.edges:
+        lines += ["", "_(プロシージャ間の呼び出しなし)_"]
+    else:
+        lines += [
+            "",
+            f"ノード {len(vc.nodes)} 件 / エッジ {len(vc.edges)} 本",
+            "",
+            _MERMAID_FENCE_OPEN,
+        ]
+        lines += _render_mermaid_graph(vc, direction="LR")
+        lines += [_MERMAID_FENCE_CLOSE]
+
+    return "\n".join(lines)
+
+
 def _section_observations(wb: Workbook) -> str:
     """## 6. 注意点・観察事項.
 
@@ -278,7 +428,7 @@ def _section_observations(wb: Workbook) -> str:
     formulas_with_annot = sum(1 for s in wb.sheets for f in s.formulas if f.annotation)
 
     lines = [
-        "## 6. 注意点・観察事項",
+        "## 7. 注意点・観察事項",
         "",
         "_LLM注釈ステップで追記される予定。_",
         "",
@@ -314,6 +464,8 @@ def generate_spec(wb: Workbook, ref_index: ReferenceIndex) -> str:
         _section_vba_modules(wb),
         "",
         _section_references(ref_index),
+        "",
+        _section_diagrams(wb),
         "",
         _section_observations(wb),
         "",

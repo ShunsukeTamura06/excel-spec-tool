@@ -1,7 +1,8 @@
-"""backend.annotators のテスト (Phase C)."""
+"""backend.annotators のテスト (Phase C + P1-2 構造化)."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -10,6 +11,9 @@ from backend.annotators import (
     _VBA_CODE_MAX_CHARS,
     _format_procedure_brief,
     _format_sheet_brief,
+    _list_str_field,
+    _parse_llm_json,
+    _str_field,
     annotate_workbook,
 )
 from core.models import (
@@ -23,20 +27,27 @@ from core.models import (
 
 
 class _RecordingLLM:
-    """annotate_text の呼び出し履歴を記録し、決定的な応答を返すスタブ.
+    """annotate_text の呼び出し履歴を記録し、決定的な JSON 応答を返すスタブ.
 
-    LLMClient プロトコル全体は実装しない (annotate_workbook が使うのは annotate_text のみ)。
+    `response` は str (そのまま返す) か dict (JSON にして返す) を受け取る.
+    LLMClient プロトコル全体は実装しない.
     """
 
-    def __init__(self, response: str = "STUB ANNOTATION", raise_on_call: bool = False) -> None:
+    def __init__(
+        self,
+        response: str | dict[str, Any] | None = None,
+        raise_on_call: bool = False,
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
-        self.response = response
+        self.response = response if response is not None else {"purpose": "STUB"}
         self.raise_on_call = raise_on_call
 
     def annotate_text(self, prompt: str, content: str, tier: str = "fast") -> str:
         self.calls.append({"prompt": prompt, "content": content, "tier": tier})
         if self.raise_on_call:
             raise RuntimeError("simulated LLM failure")
+        if isinstance(self.response, dict):
+            return json.dumps(self.response, ensure_ascii=False)
         return self.response
 
 
@@ -128,10 +139,24 @@ class TestAnnotateWorkbook:
                 SheetInfo(name="S2", rows=1, cols=1),
             ],
         )
-        llm = _RecordingLLM(response="日次集計")
+        llm = _RecordingLLM(
+            response={
+                "purpose": "日次集計",
+                "inputs": ["Input"],
+                "outputs": ["Output"],
+                "main_calculations": ["SUMIF で集計"],
+                "usage_scenario": "毎朝担当者が確認",
+            },
+        )
         result = annotate_workbook(wb, llm)  # type: ignore[arg-type]
-        assert result.sheets[0].purpose == "日次集計"
-        assert result.sheets[1].purpose == "日次集計"
+        s1, s2 = result.sheets
+        assert s1.purpose == "日次集計"
+        assert s1.inputs == ["Input"]
+        assert s1.outputs == ["Output"]
+        assert s1.main_calculations == ["SUMIF で集計"]
+        assert s1.usage_scenario == "毎朝担当者が確認"
+        # 2 枚目も同じ JSON を返すので埋まる
+        assert s2.purpose == "日次集計"
         assert len(llm.calls) == 2
 
     def test_skips_already_annotated_sheets(self) -> None:
@@ -142,7 +167,7 @@ class TestAnnotateWorkbook:
                 SheetInfo(name="S2", rows=1, cols=1),
             ],
         )
-        llm = _RecordingLLM(response="new")
+        llm = _RecordingLLM(response={"purpose": "new"})
         result = annotate_workbook(wb, llm)  # type: ignore[arg-type]
         assert result.sheets[0].purpose == "既存"  # 既存は維持
         assert result.sheets[1].purpose == "new"
@@ -176,10 +201,20 @@ class TestAnnotateWorkbook:
                 )
             ],
         )
-        llm = _RecordingLLM(response="日次処理")
+        llm = _RecordingLLM(
+            response={
+                "annotation": "日次処理",
+                "side_effects": ["Calc!A:Z"],
+                "triggers": ["ボタン"],
+                "calls": ["Helper"],
+            },
+        )
         result = annotate_workbook(wb, llm)  # type: ignore[arg-type]
         procs = result.vba_modules[0].procedures
         assert procs[0].annotation == "日次処理"
+        assert procs[0].side_effects == ["Calc!A:Z"]
+        assert procs[0].triggers == ["ボタン"]
+        assert procs[0].calls == ["Helper"]
         assert procs[1].annotation == "日次処理"
         assert len(llm.calls) == 2
 
@@ -205,7 +240,7 @@ class TestAnnotateWorkbook:
                 )
             ],
         )
-        llm = _RecordingLLM(response="new")
+        llm = _RecordingLLM(response={"annotation": "new"})
         result = annotate_workbook(wb, llm)  # type: ignore[arg-type]
         procs = result.vba_modules[0].procedures
         assert procs[0].annotation == "既存"
@@ -228,14 +263,85 @@ class TestAnnotateWorkbook:
     def test_returns_new_workbook_does_not_mutate(self) -> None:
         sheet = SheetInfo(name="S", rows=1, cols=1)
         wb = Workbook(filename="t.xlsm", sheets=[sheet])
-        llm = _RecordingLLM(response="new purpose")
+        llm = _RecordingLLM(response={"purpose": "new purpose"})
         result = annotate_workbook(wb, llm)  # type: ignore[arg-type]
         # 元の SheetInfo は変更されていない
         assert wb.sheets[0].purpose == ""
         assert result.sheets[0].purpose == "new purpose"
 
-    def test_strips_whitespace_from_llm_response(self) -> None:
+    def test_strips_whitespace_within_json_values(self) -> None:
         wb = Workbook(filename="t.xlsm", sheets=[SheetInfo(name="S", rows=1, cols=1)])
-        llm = _RecordingLLM(response="  \n trimmed \n  ")
+        llm = _RecordingLLM(
+            response={"purpose": "  \n trimmed \n  ", "inputs": ["  In  ", ""]},
+        )
         result = annotate_workbook(wb, llm)  # type: ignore[arg-type]
+        # JSON 値内の前後空白は除去される. list 内の空文字は filter される.
         assert result.sheets[0].purpose == "trimmed"
+        assert result.sheets[0].inputs == ["In"]
+
+    def test_malformed_json_leaves_fields_empty(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        wb = Workbook(filename="t.xlsm", sheets=[SheetInfo(name="S", rows=1, cols=1)])
+        llm = _RecordingLLM(response="this is not JSON at all")
+        with caplog.at_level("WARNING", logger="backend.annotators"):
+            result = annotate_workbook(wb, llm)  # type: ignore[arg-type]
+        assert result.sheets[0].purpose == ""
+        assert result.sheets[0].inputs == []
+        assert any("JSON parse failed" in r.message for r in caplog.records)
+
+    def test_json_in_code_fence_is_parsed(self) -> None:
+        """LLM が ```json ... ``` で包んでも拾えること."""
+        wb = Workbook(filename="t.xlsm", sheets=[SheetInfo(name="S", rows=1, cols=1)])
+        llm = _RecordingLLM(
+            response='```json\n{"purpose": "fenced ok"}\n```',
+        )
+        result = annotate_workbook(wb, llm)  # type: ignore[arg-type]
+        assert result.sheets[0].purpose == "fenced ok"
+
+    def test_extracts_json_with_leading_chatter(self) -> None:
+        """LLM が前置きを付けても JSON 部分だけ拾える."""
+        wb = Workbook(filename="t.xlsm", sheets=[SheetInfo(name="S", rows=1, cols=1)])
+        llm = _RecordingLLM(
+            response='了解しました。以下が結果です:\n{"purpose": "extracted"}',
+        )
+        result = annotate_workbook(wb, llm)  # type: ignore[arg-type]
+        assert result.sheets[0].purpose == "extracted"
+
+
+# ---------- JSON パーサ単体 ----------
+
+
+class TestParseLlmJson:
+    def test_plain_json(self) -> None:
+        assert _parse_llm_json('{"a": 1}') == {"a": 1}
+
+    def test_code_fence(self) -> None:
+        assert _parse_llm_json('```json\n{"a": 1}\n```') == {"a": 1}
+
+    def test_with_leading_text(self) -> None:
+        assert _parse_llm_json('blah blah {"a": 1} trailing') == {"a": 1}
+
+    def test_invalid_returns_none(self) -> None:
+        assert _parse_llm_json("not json") is None
+        assert _parse_llm_json("") is None
+
+    def test_array_at_top_level_returns_none(self) -> None:
+        # トップレベル配列は dict ではないので None.
+        assert _parse_llm_json("[1, 2, 3]") is None
+
+
+class TestFieldExtractors:
+    def test_str_field_handles_missing_and_wrong_type(self) -> None:
+        assert _str_field({"x": "hi"}, "x") == "hi"
+        assert _str_field({"x": 1}, "x") == ""
+        assert _str_field({}, "x") == ""
+        assert _str_field({"x": "  spaced  "}, "x") == "spaced"
+
+    def test_list_str_field_filters_non_strings_and_empty(self) -> None:
+        payload: dict[str, Any] = {"xs": ["a", "", "  ", "b", 1, None, "c"]}
+        assert _list_str_field(payload, "xs") == ["a", "b", "c"]
+
+    def test_list_str_field_respects_limit(self) -> None:
+        payload: dict[str, Any] = {"xs": [str(i) for i in range(50)]}
+        assert len(_list_str_field(payload, "xs", limit=5)) == 5

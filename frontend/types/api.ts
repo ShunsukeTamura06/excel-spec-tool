@@ -82,6 +82,24 @@ export interface ExcelTable {
   header_row_count: number
 }
 
+export interface DataValidationItem {
+  range: string
+  type: string
+  formula: string
+  operator: string
+  prompt: string
+  error: string
+  allow_blank: boolean
+}
+
+export interface FormControlItem {
+  kind: string
+  name: string
+  text: string
+  macro: string
+  anchor: string
+}
+
 export interface SheetInfo {
   name: string
   rows: number
@@ -91,9 +109,16 @@ export interface SheetInfo {
   conditional_formats: ConditionalFormat[]
   tables: ExcelTable[]
   merged_ranges: string[]
+  data_validations: DataValidationItem[]
+  form_controls: FormControlItem[]
   preview_rows: (string | null)[][]
   preview_origin: string
+  // 構造化 LLM 注釈 (P1-2). いずれも空可.
   purpose: string
+  inputs: string[]
+  outputs: string[]
+  main_calculations: string[]
+  usage_scenario: string
 }
 
 export interface VbaProcedure {
@@ -102,7 +127,11 @@ export interface VbaProcedure {
   start_line: number
   end_line: number
   code: string
+  // 構造化 LLM 注釈 (P1-2).
   annotation: string
+  side_effects: string[]
+  triggers: string[]
+  calls: string[]
 }
 
 export interface VbaModule {
