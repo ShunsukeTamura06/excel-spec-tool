@@ -1,7 +1,15 @@
-"""POST /extract — アップロード + Core 抽出."""
+"""POST /extract — アップロード + Core 抽出.
+
+並行性メモ:
+  openpyxl / olevba / cells.db 書き出しは数秒〜数分かかる同期処理。`async def`
+  本体で直接呼ぶと event loop が止まり、別ユーザーの軽量リクエスト (/jobs,
+  /health, /spec 等) も巻き添えで遅延する。そのため `_run_extraction` に
+  まとめて切り出し、`asyncio.to_thread` で threadpool に逃がしている。
+"""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -50,30 +58,18 @@ async def _read_capped(file: UploadFile, limit: int) -> bytes:
     return bytes(buf)
 
 
-@router.post("/extract")
-async def extract(
-    file: UploadFile = File(...),
-    storage: Storage = Depends(get_storage),
-) -> dict[str, str]:
-    """ファイルを保存し、Core 抽出を実行して job_id を返す."""
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="filename is required")
+def _run_extraction(storage: Storage, job_id: str, filename: str) -> None:
+    """ジョブの重い抽出処理本体. threadpool で呼ばれる前提.
 
-    data = await _read_capped(file, MAX_UPLOAD_BYTES)
-    if not data:
-        raise HTTPException(status_code=400, detail="empty file")
-
-    meta = storage.create_job(file.filename, data)
-    job_id = meta.job_id
-
-    # 以降のログには job_id を相関 ID として付与する
+    `set_job_id` の ContextVar はこのスレッド内のログにだけ伝播する.
+    本体の HTTP リクエスト処理スレッドとは別だが、ログ相関 ID は維持される.
+    """
     with set_job_id(job_id):
-        logger.info("extract started: filename=%s size=%d bytes", meta.filename, len(data))
         try:
             path = storage.get_original_path(job_id)
             wb = extract_workbook(path)
             # ストレージ上の保存名 (original.xlsx 等) ではなく、ユーザー提供のファイル名を保持する
-            wb.filename = meta.filename
+            wb.filename = filename
             wb.vba_modules = extract_vba(path)
             idx = build_reference_index(wb)
             storage.save_workbook(job_id, wb)
@@ -96,13 +92,44 @@ async def extract(
 
             storage.update_status(job_id, "extracted")
             logger.info("extract completed: status=extracted")
-        except ExtractionError as e:
+        except ExtractionError:
             logger.exception("extract failed (ExtractionError)")
             storage.update_status(job_id, "failed")
-            raise HTTPException(status_code=422, detail=f"extraction failed: {e}") from e
-        except Exception as e:
+            raise
+        except Exception:
             logger.exception("extract failed (unexpected)")
             storage.update_status(job_id, "failed")
-            raise HTTPException(status_code=500, detail=f"internal error: {e}") from e
+            raise
+
+
+@router.post("/extract")
+async def extract(
+    file: UploadFile = File(...),
+    storage: Storage = Depends(get_storage),
+) -> dict[str, str]:
+    """ファイルを保存し、Core 抽出を実行して job_id を返す.
+
+    重い同期処理 (openpyxl / olevba / cells.db) は `asyncio.to_thread` に
+    逃がして event loop を解放する. これにより別ユーザーのリクエストが
+    待たされなくなる.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="filename is required")
+
+    data = await _read_capped(file, MAX_UPLOAD_BYTES)
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+
+    # create_job (ディレクトリ作成 + バイト書き出し) も blocking なので to_thread に逃がす
+    meta = await asyncio.to_thread(storage.create_job, file.filename, data)
+    job_id = meta.job_id
+
+    logger.info("extract started: filename=%s size=%d bytes", meta.filename, len(data))
+    try:
+        await asyncio.to_thread(_run_extraction, storage, job_id, meta.filename)
+    except ExtractionError as e:
+        raise HTTPException(status_code=422, detail=f"extraction failed: {e}") from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"internal error: {e}") from e
 
     return {"job_id": job_id}

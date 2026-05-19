@@ -6,10 +6,17 @@ LLM の function calling ループを実装している:
    メッセージとして追加し、再度 LLM を呼ぶ
 3. tool_calls が無くなったら最終応答テキストを返す
 4. 暴走防止のため最大反復回数を制限する
+
+並行性メモ:
+  LLM クライアントは同期 HTTP. tool ループ全体で数秒〜数分かかるため、
+  `async def` 本体で直接走らせると event loop がブロックされ他リクエストも
+  巻き添えで詰まる. `_run_tool_loop` 全体を `asyncio.to_thread` で threadpool
+  に逃がして event loop を解放する.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -370,16 +377,25 @@ async def chat(
     messages.extend({"role": m.role, "content": m.content} for m in recent)
     messages.append({"role": "user", "content": body.message})
 
-    reply, tool_trace = _run_tool_loop(llm, storage, job_id, messages)
-
-    # 履歴に追記 (user → assistant). tool 呼び出しの中間結果は履歴には残さない
-    now = _utc_now_iso()
-    storage.append_chat_message(
-        job_id, ChatMessage(role="user", content=body.message, timestamp=now)
+    # LLM ループ全体を threadpool に逃がす (event loop を解放).
+    reply, tool_trace = await asyncio.to_thread(
+        _run_tool_loop, llm, storage, job_id, messages
     )
-    storage.append_chat_message(job_id, ChatMessage(role="assistant", content=reply, timestamp=now))
 
-    new_history = storage.load_chat_history(job_id)
+    # 履歴に追記 (user → assistant). tool 呼び出しの中間結果は履歴には残さない.
+    # ファイル書き込みも一応 blocking なので to_thread に逃がす.
+    now = _utc_now_iso()
+
+    def _persist_and_reload() -> list[ChatMessage]:
+        storage.append_chat_message(
+            job_id, ChatMessage(role="user", content=body.message, timestamp=now)
+        )
+        storage.append_chat_message(
+            job_id, ChatMessage(role="assistant", content=reply, timestamp=now)
+        )
+        return storage.load_chat_history(job_id)
+
+    new_history = await asyncio.to_thread(_persist_and_reload)
     return {
         "reply": reply,
         "history": [m.model_dump() for m in new_history],
