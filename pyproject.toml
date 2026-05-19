@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "excel-spec-tool"
 version = "0.1.0"
-description = "Excel改修支援ツール: VBA/数式/参照関係を含む統合設計書を生成し、改修対話を支援する"
+description = "Excelツール改修支援AI: VBA/数式/参照関係を含む統合設計書を生成し、改修対話を支援する"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }

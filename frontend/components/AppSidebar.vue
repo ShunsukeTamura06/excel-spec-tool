@@ -52,8 +52,7 @@ function toggleDark() {
           <UIcon name="i-lucide-table-2" class="size-5" />
         </div>
         <div class="flex flex-col leading-tight">
-          <span class="font-semibold text-sm text-(--ui-text-highlighted)">Excel 改修支援</span>
-          <span class="text-[10px] text-(--ui-text-muted) tracking-wide uppercase">spec tool</span>
+          <span class="font-semibold text-sm text-(--ui-text-highlighted) leading-tight">Excelツール<br>改修支援AI</span>
         </div>
       </NuxtLink>
     </div>

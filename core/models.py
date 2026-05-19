@@ -1,4 +1,4 @@
-"""Excel改修支援ツールのデータモデル定義.
+"""Excelツール改修支援AIのデータモデル定義.
 
 SPEC.md §3 に基づく Pydantic モデル群。Core / Backend / Frontend で共有する。
 """

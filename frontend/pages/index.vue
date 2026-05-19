@@ -11,7 +11,7 @@ import type { JobMeta } from '~/types/api'
 import type { AnalyzePhase } from '~/components/AnalyzeProgress.vue'
 
 definePageMeta({ layout: 'default' })
-useHead({ title: 'Excel 改修支援ツール' })
+useHead({ title: 'Excelツール改修支援AI' })
 
 const backend = useBackend()
 const jobStore = useJobStore()
@@ -104,7 +104,7 @@ const stats = computed(() => {
     <header class="flex items-start justify-between gap-6 flex-wrap">
       <div>
         <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">
-          Excel 改修支援ツール
+          Excelツール改修支援AI
         </h1>
         <p class="mt-2 text-(--ui-text-muted) max-w-2xl">
           VBA / 数式 / 参照関係を含む <code class="text-xs px-1 py-0.5 rounded bg-(--ui-bg-elevated)">.xlsm</code> /

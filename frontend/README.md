@@ -1,4 +1,4 @@
-# Excel 改修支援ツール — Frontend (Nuxt 3)
+# Excelツール改修支援AI — Frontend (Nuxt 3)
 
 Vue 3 / Nuxt 3 / TypeScript / Nuxt UI / Vue Flow / Pinia による SPA。
 

@@ -55,7 +55,7 @@ export default defineNuxtConfig({
 
   app: {
     head: {
-      title: 'Excel 改修支援ツール',
+      title: 'Excelツール改修支援AI',
       htmlAttrs: { lang: 'ja' },
       meta: [
         { charset: 'utf-8' },
