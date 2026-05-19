@@ -29,6 +29,7 @@ from pathlib import Path
 
 from core.models import (
     ChatMessage,
+    Feedback,
     JobMeta,
     ReferenceIndex,
     Workbook,
@@ -233,6 +234,58 @@ class Storage:
                 except Exception:  # noqa: BLE001
                     logger.warning("Skipping malformed chat line in %s", path)
         return msgs
+
+    # ------------------------------------------------------------ feedback
+    # ユーザーからのフィードバックは jobs と独立に永続化する (ジョブ削除でも残す).
+    # 構造: <jobs_dir>/_feedback/<YYYY-MM-DD>.jsonl  (1 日 1 ファイル, 1 行 1 件)
+    # `_` プレフィックスで UUID ベースの job ディレクトリ列挙にひっかからない.
+
+    def _feedback_dir(self) -> Path:
+        d = self.jobs_dir / "_feedback"
+        d.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
+        return d
+
+    def append_feedback(self, item: Feedback) -> None:
+        """フィードバック 1 件を JSONL に追記する.
+
+        ファイル名は item.timestamp の日付部分 (YYYY-MM-DD) から決まる.
+        破損行が混ざってもテキスト追記なので影響範囲は当該行のみ.
+        """
+        d = self._feedback_dir()
+        # timestamp は ISO8601, 先頭 10 字が "YYYY-MM-DD"
+        date_part = (item.timestamp or "")[:10] or "unknown"
+        path = d / f"{date_part}.jsonl"
+        line = json.dumps(item.model_dump(), ensure_ascii=False) + "\n"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(line)
+
+    def list_feedback(self, limit: int = 100) -> list[Feedback]:
+        """全 jsonl を読み、新しい順に最大 limit 件返す.
+
+        現状は管理画面 (将来) 用のシンプル実装. 件数が増えたら集約処理を入れる.
+        """
+        d = self.jobs_dir / "_feedback"
+        if not d.is_dir():
+            return []
+        items: list[Feedback] = []
+        # 日付降順 (ファイル名が YYYY-MM-DD.jsonl なので文字列ソートで OK)
+        for path in sorted(d.glob("*.jsonl"), reverse=True):
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    for raw in f:
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            items.append(Feedback.model_validate_json(raw))
+                        except Exception:  # noqa: BLE001
+                            logger.warning("Skipping malformed feedback line in %s", path)
+            except OSError:
+                logger.warning("Failed to read feedback file %s", path)
+            if len(items) >= limit * 2:  # 早期終了 (時刻ソート前なのでバッファ多めに)
+                break
+        items.sort(key=lambda x: x.timestamp, reverse=True)
+        return items[:limit]
 
     # ------------------------------------------------------------ cells
 

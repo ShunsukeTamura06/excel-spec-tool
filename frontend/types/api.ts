@@ -33,6 +33,30 @@ export interface ChatMessage {
   timestamp: string
 }
 
+// ---------- feedback ----------
+
+export type FeedbackKind =
+  | 'thumbs_up'
+  | 'thumbs_down'
+  | 'improvement'
+  | 'bug'
+  | 'other'
+
+export interface FeedbackInput {
+  kind: FeedbackKind
+  comment?: string
+  page?: string
+  job_id?: string | null
+  target_id?: string | null
+  target_excerpt?: string
+  user_label?: string
+}
+
+export interface FeedbackResponse {
+  ok: boolean
+  id: string
+}
+
 export interface ToolTraceItem {
   name: string
   arguments: Record<string, unknown>

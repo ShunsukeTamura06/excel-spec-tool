@@ -10,5 +10,7 @@
         <slot />
       </div>
     </main>
+    <!-- 全ページ共通: フィードバック FAB (右下固定). -->
+    <FeedbackFab />
   </div>
 </template>

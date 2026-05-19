@@ -18,6 +18,8 @@ import {
   type ExternalFunctionRegistry,
   type ExternalFunctionsUsed,
   type ExtractResponse,
+  type FeedbackInput,
+  type FeedbackResponse,
   type JobMeta,
   type ReferenceItem,
   type SpecResponse,
@@ -244,6 +246,15 @@ export function useBackend() {
         `/external-functions/used/${jobId}`,
         { timeout: DEFAULT_TIMEOUT_MS },
       )
+    },
+
+    /** POST /feedback — フィードバック 1 件を送信. */
+    async submitFeedback(input: FeedbackInput): Promise<FeedbackResponse> {
+      return await call<FeedbackResponse>('submitFeedback', '/feedback', {
+        method: 'POST',
+        body: input,
+        timeout: DEFAULT_TIMEOUT_MS,
+      })
     },
   }
 }

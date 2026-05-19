@@ -194,6 +194,7 @@ const examples = [
           v-for="(m, i) in history"
           :key="i"
           :message="m"
+          :job-id="jobId"
         />
 
         <!-- アシスタント応答中インジケータ -->

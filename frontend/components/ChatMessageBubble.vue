@@ -2,11 +2,18 @@
 /**
  * 1 件のチャットメッセージ. user / assistant / system で出し分け.
  * assistant の content は Markdown としてレンダリングする.
+ *
+ * アシスタント応答には 👍 / 👎 ボタンを併置. 1 クリックでフィードバック送信.
+ * 心理的負担を最小化するため、コメント記入は要求しない (詳細は FAB から).
  */
 
-import type { ChatMessage } from '~/types/api'
+import type { ChatMessage, FeedbackKind } from '~/types/api'
 
-const props = defineProps<{ message: ChatMessage }>()
+const props = defineProps<{
+  message: ChatMessage
+  /** チャットページから現在の job_id を受け取る (フィードバック紐付け用) */
+  jobId?: string
+}>()
 
 const isUser = computed(() => props.message.role === 'user')
 const isAssistant = computed(() => props.message.role === 'assistant')
@@ -15,6 +22,44 @@ const timeLabel = computed(() => {
   const t = props.message.timestamp
   return t ? t.slice(11, 16) : ''
 })
+
+// ---- フィードバック (assistant 応答のみ) ----
+const backend = useBackend()
+const route = useRoute()
+const toast = useToast()
+const voted = ref<FeedbackKind | null>(null)
+const sending = ref(false)
+
+async function sendVote(kind: 'thumbs_up' | 'thumbs_down') {
+  if (sending.value || voted.value) return
+  sending.value = true
+  try {
+    await backend.submitFeedback({
+      kind,
+      page: route.fullPath,
+      job_id: props.jobId ?? null,
+      target_id: props.message.timestamp || undefined,
+      target_excerpt: (props.message.content || '').slice(0, 200),
+    })
+    voted.value = kind
+    toast.add({
+      title: kind === 'thumbs_up' ? '評価ありがとうございます' : '改善のヒントになります',
+      description: kind === 'thumbs_down'
+        ? '詳細を書きたい場合は右下のフィードバックボタンからどうぞ.'
+        : undefined,
+      color: kind === 'thumbs_up' ? 'success' : 'info',
+      icon: kind === 'thumbs_up' ? 'i-lucide-thumbs-up' : 'i-lucide-thumbs-down',
+    })
+  } catch (e) {
+    toast.add({
+      title: '送信に失敗しました',
+      description: friendlyMessage(e),
+      color: 'error',
+    })
+  } finally {
+    sending.value = false
+  }
+}
 </script>
 
 <template>
@@ -58,13 +103,55 @@ const timeLabel = computed(() => {
         </div>
         <p v-else class="whitespace-pre-wrap text-sm leading-relaxed">{{ message.content }}</p>
       </div>
-      <p
-        v-if="timeLabel"
-        class="text-[10px] text-(--ui-text-muted) mt-1 px-1 tabular-nums"
-        :class="isUser ? 'text-right' : 'text-left'"
+      <div
+        class="flex items-center gap-2 mt-1 px-1"
+        :class="isUser ? 'justify-end' : 'justify-start'"
       >
-        {{ timeLabel }}
-      </p>
+        <p v-if="timeLabel" class="text-[10px] text-(--ui-text-muted) tabular-nums">
+          {{ timeLabel }}
+        </p>
+        <!-- アシスタント応答の評価 (1 クリックで送信) -->
+        <div v-if="isAssistant" class="flex items-center gap-1">
+          <button
+            type="button"
+            class="p-1 rounded transition-colors"
+            :class="
+              voted === 'thumbs_up'
+                ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950'
+                : 'text-(--ui-text-muted) hover:text-emerald-600 hover:bg-(--ui-bg-elevated)'
+            "
+            :disabled="sending || voted !== null"
+            :aria-label="voted === 'thumbs_up' ? '良い評価済み' : '良い評価を送る'"
+            :title="voted ? '送信済み' : '良かったらクリック'"
+            @click="sendVote('thumbs_up')"
+          >
+            <UIcon
+              :name="voted === 'thumbs_up' ? 'i-lucide-thumbs-up' : 'i-lucide-thumbs-up'"
+              class="size-3.5"
+              :class="voted === 'thumbs_up' && 'fill-current'"
+            />
+          </button>
+          <button
+            type="button"
+            class="p-1 rounded transition-colors"
+            :class="
+              voted === 'thumbs_down'
+                ? 'text-rose-600 bg-rose-50 dark:bg-rose-950'
+                : 'text-(--ui-text-muted) hover:text-rose-600 hover:bg-(--ui-bg-elevated)'
+            "
+            :disabled="sending || voted !== null"
+            :aria-label="voted === 'thumbs_down' ? 'いまいち評価済み' : 'いまいち評価を送る'"
+            :title="voted ? '送信済み' : '改善が必要ならクリック'"
+            @click="sendVote('thumbs_down')"
+          >
+            <UIcon
+              name="i-lucide-thumbs-down"
+              class="size-3.5"
+              :class="voted === 'thumbs_down' && 'fill-current'"
+            />
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>

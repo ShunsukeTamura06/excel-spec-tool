@@ -176,3 +176,34 @@ class ChatMessage(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
     timestamp: str
+
+
+FeedbackKind = Literal[
+    "thumbs_up",    # チャット応答に良い
+    "thumbs_down",  # チャット応答にダメ
+    "improvement",  # 改善要望
+    "bug",          # 不具合報告
+    "other",        # その他
+]
+
+
+class Feedback(BaseModel):
+    """ユーザーからのフィードバック 1 件.
+
+    永続化先: <jobs_dir>/_feedback/<YYYY-MM-DD>.jsonl
+    UUID + ISO 時刻で 1 件ずつ append-only に書き出す.
+
+    心理的負担を下げるため、`comment` 以外はすべて optional または自動収集.
+    """
+
+    id: str            # UUIDv4
+    timestamp: str     # ISO 8601 (UTC)
+    kind: FeedbackKind
+    comment: str = ""  # 自由記述 (任意)
+
+    # 自動収集コンテキスト (フィードバックを意味付けるための情報)
+    page: str = ""              # ブラウザ URL パス (例: "/spec/abc-...")
+    job_id: str | None = None   # 関連ジョブ
+    target_id: str | None = None  # 対象オブジェクト (例: チャット応答のタイムスタンプ)
+    target_excerpt: str = ""    # 対象の短い抜粋 (例: チャット応答の先頭 200 字)
+    user_label: str = ""        # 任意の自己申告ラベル (匿名 OK)

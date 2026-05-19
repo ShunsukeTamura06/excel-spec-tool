@@ -19,6 +19,7 @@ from backend.routes import (
     diagrams,
     external_functions,
     extract,
+    feedback,
     jobs,
     references,
     spec,
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(diagrams.router)
     app.include_router(workbook.router)
     app.include_router(external_functions.router)
+    app.include_router(feedback.router)
     app.include_router(jobs.router)
 
     @app.get("/health")
