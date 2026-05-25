@@ -7,7 +7,7 @@
  * - 下部: 直近ツール呼び出し + メッセージ入力欄
  */
 
-import type { ChatMessage, ChatSessionMeta, ToolTraceItem } from '~/types/api'
+import type { ChatMessage, ChatProgressEvent, ChatSessionMeta, ToolTraceItem } from '~/types/api'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: 'チャット — Excelツール改修支援AI' })
@@ -192,6 +192,26 @@ const sending = ref(false)
 const sendError = ref('')
 const lastToolTrace = ref<ToolTraceItem[]>([])
 const scrollContainer = ref<HTMLElement | null>(null)
+type ProgressItem = {
+  id: string
+  message: string
+  kind: 'status' | 'tool_start' | 'tool_result'
+}
+const progressItems = ref<ProgressItem[]>([])
+const currentProgress = computed(() => {
+  return progressItems.value.at(-1)?.message ?? '回答準備中'
+})
+
+function addProgress(kind: ProgressItem['kind'], message: string) {
+  if (!message) return
+  const previous = progressItems.value.at(-1)
+  if (previous?.kind === kind && previous.message === message) return
+  progressItems.value = [
+    ...progressItems.value.slice(-5),
+    { id: `${Date.now()}-${progressItems.value.length}`, kind, message },
+  ]
+  scrollToBottom()
+}
 
 function scrollToBottom() {
   nextTick(() => {
@@ -208,6 +228,7 @@ async function send() {
   if (!msg || sending.value) return
   sending.value = true
   sendError.value = ''
+  progressItems.value = [{ id: `${Date.now()}-0`, kind: 'status', message: '回答準備中' }]
 
   const now = new Date().toISOString()
   // optimistic: ユーザー発話を先に表示
@@ -216,7 +237,13 @@ async function send() {
   scrollToBottom()
 
   try {
-    const r = await backend.chat(jobId.value, msg, activeSessionId.value)
+    const r = await backend.chatStream(jobId.value, msg, activeSessionId.value, {
+      onEvent(event, data) {
+        if (event === 'status' || event === 'tool_start' || event === 'tool_result') {
+          addProgress(event, (data as ChatProgressEvent).message)
+        }
+      },
+    })
     history.value = r.history
     lastToolTrace.value = r.tool_trace ?? []
     await refreshSessionsOnly()
@@ -233,6 +260,7 @@ async function send() {
     history.value = history.value.slice(0, -1)
   } finally {
     sending.value = false
+    progressItems.value = []
   }
 }
 
@@ -475,11 +503,24 @@ const examples = [
               <div class="size-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center shrink-0">
                 <UIcon name="i-lucide-sparkles" class="size-4" />
               </div>
-              <div class="rounded-2xl rounded-tl-sm px-4 py-3 bg-(--ui-bg-elevated) flex items-center gap-2">
-                <span class="size-2 rounded-full bg-(--ui-text-muted) animate-pulse" style="animation-delay: 0ms" />
-                <span class="size-2 rounded-full bg-(--ui-text-muted) animate-pulse" style="animation-delay: 150ms" />
-                <span class="size-2 rounded-full bg-(--ui-text-muted) animate-pulse" style="animation-delay: 300ms" />
-                <span class="text-xs text-(--ui-text-muted) ml-1">考え中…</span>
+              <div class="rounded-2xl rounded-tl-sm px-4 py-3 bg-(--ui-bg-elevated) min-w-0 flex-1 max-w-2xl">
+                <div class="flex items-center gap-2 text-sm text-(--ui-text)">
+                  <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin shrink-0" />
+                  <span class="truncate">{{ currentProgress }}</span>
+                </div>
+                <div v-if="progressItems.length > 1" class="mt-2 space-y-1">
+                  <div
+                    v-for="item in progressItems.slice(-3)"
+                    :key="item.id"
+                    class="flex items-center gap-2 text-xs text-(--ui-text-muted)"
+                  >
+                    <UIcon
+                      :name="item.kind === 'tool_result' ? 'i-lucide-check' : 'i-lucide-circle-dot'"
+                      class="size-3 shrink-0"
+                    />
+                    <span class="truncate">{{ item.message }}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -81,6 +81,14 @@ export interface ChatReply {
   tool_trace?: ToolTraceItem[]
 }
 
+export type ChatStreamEventName = 'status' | 'tool_start' | 'tool_result' | 'final' | 'error'
+
+export interface ChatProgressEvent {
+  message: string
+  tool_name?: string
+  iteration?: number
+}
+
 export interface ChatSessionResponse {
   session: ChatSessionMeta
 }

@@ -20,10 +20,12 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.dependencies import get_llm_client, get_storage
@@ -36,8 +38,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# tool ループの最大反復回数. これを超えたら強制的に終了する。
-MAX_TOOL_ITERATIONS = 8
+# tool ループの最大反復回数. 正確性を優先し、複数観点の確認を許容する。
+MAX_TOOL_ITERATIONS = 16
 
 # LLM に送る履歴の上限ペア数 (Phase B-2). user/assistant の 1 往復 = 1 ペア.
 # これを超えた古いペアは「過去のやりとり概要」として 1 つの system message に集約する。
@@ -45,6 +47,23 @@ MAX_TOOL_ITERATIONS = 8
 _DEFAULT_HISTORY_PAIRS = 10
 # 古い履歴を要約する際の、1 メッセージあたりの最大文字数 (それ以上は切り詰める)
 _SUMMARY_MESSAGE_MAX_CHARS = 120
+_TOOL_LOOP_FALLBACK_TEXTS = (
+    "[tool loop max iterations reached; partial result]",
+    "ツール確認が上限に達し、最終回答を生成できませんでした。",
+    "確認できた情報だけでは、この質問に正確に回答できませんでした。",
+)
+ProgressEmitter = Callable[[str, dict[str, Any]], None]
+
+_TOOL_PROGRESS_MESSAGES = {
+    "get_cells_range": "セル範囲を確認中",
+    "find_cells": "セルを検索中",
+    "lookup_references": "参照関係を確認中",
+    "list_vba_modules": "VBAモジュール一覧を確認中",
+    "get_vba_procedure": "VBAコードを確認中",
+    "list_sheet_formulas": "シートの数式を確認中",
+    "lookup_external_function": "外部関数の定義を確認中",
+    "list_external_functions_used": "外部関数の使用箇所を確認中",
+}
 
 
 def _get_history_pairs_limit() -> int:
@@ -102,6 +121,107 @@ def _trim_history(
     old = history[:-max_msgs]
     recent = history[-max_msgs:]
     return recent, _summarize_old_turns(old)
+
+
+def _is_tool_loop_fallback_message(message: ChatMessage) -> bool:
+    """ツールループ上限時の内部フォールバック応答かどうかを返す."""
+    if message.role != "assistant":
+        return False
+    return any(text in message.content for text in _TOOL_LOOP_FALLBACK_TEXTS)
+
+
+def _history_for_llm(history: list[ChatMessage]) -> list[ChatMessage]:
+    """LLM に渡す履歴から、以後の会話を汚す内部エラー応答を除外する."""
+    return [m for m in history if not _is_tool_loop_fallback_message(m)]
+
+
+def _emit_progress(
+    emit_progress: ProgressEmitter | None,
+    event: str,
+    data: dict[str, Any],
+) -> None:
+    """進捗イベントを送信する.
+
+    Args:
+        emit_progress: 進捗イベントの送信先. None の場合は何もしない。
+        event: SSE のイベント名。
+        data: JSON 化するイベント本文。
+    """
+    if emit_progress is not None:
+        emit_progress(event, data)
+
+
+def _tool_progress_message(tool_name: str) -> str:
+    """ツール名をユーザーに見せる短い進捗文言へ変換する.
+
+    Args:
+        tool_name: LLM が要求したツール名。
+
+    Returns:
+        ユーザー向けの進捗メッセージ。
+    """
+    return _TOOL_PROGRESS_MESSAGES.get(tool_name, "設計書情報を確認中")
+
+
+def _tool_signature(name: str, arguments: dict[str, Any]) -> str:
+    """同一ツール呼び出しを判定するための安定したキーを返す.
+
+    Args:
+        name: ツール名。
+        arguments: ツール引数。
+
+    Returns:
+        ツール名と正規化済み引数を含む文字列キー。
+    """
+    return f"{name}:{json.dumps(arguments, ensure_ascii=False, sort_keys=True)}"
+
+
+def _sse_event(event: str, data: dict[str, Any]) -> str:
+    """Server-Sent Events 形式の文字列へ変換する.
+
+    Args:
+        event: イベント名。
+        data: JSON 化するイベント本文。
+
+    Returns:
+        SSE 1 イベント分の文字列。
+    """
+    payload = json.dumps(data, ensure_ascii=False)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _build_unresolved_reply(tool_trace: list[dict[str, Any]]) -> str:
+    """正確な回答を生成できなかった場合の deterministic な応答を作る.
+
+    Args:
+        tool_trace: 実行済みツールの記録。
+
+    Returns:
+        ユーザーに返す明確な限界説明と代替案。
+    """
+    lines = [
+        "確認できた情報だけでは、この質問に正確に回答できませんでした。",
+        "",
+        "確認済みの内容:",
+    ]
+    if tool_trace:
+        for item in tool_trace[-5:]:
+            name = str(item.get("name", "unknown"))
+            args = json.dumps(item.get("arguments", {}), ensure_ascii=False, sort_keys=True)
+            lines.append(f"- {name} {args}")
+    else:
+        lines.append("- 参照できる追加情報を取得できませんでした。")
+    lines.extend(
+        [
+            "",
+            "代替案:",
+            "- 対象のシート名、セル範囲、VBAモジュール名、または知りたい観点を"
+            "もう少し具体化してください。",
+            "- 変更前後の期待動作や、影響を確認したい項目を指定してください。",
+            "- 必要であれば設計書タブや参照検索で対象箇所を先に絞り込んでから質問してください。",
+        ]
+    )
+    return "\n".join(lines)
 
 
 class ChatRequest(BaseModel):
@@ -284,8 +404,16 @@ def _run_tool_loop(
     storage: Storage,
     job_id: str,
     base_messages: list[dict[str, Any]],
+    emit_progress: ProgressEmitter | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """tool 呼び出しを伴うチャット応答ループ.
+
+    Args:
+        llm: LLM クライアント。
+        storage: ジョブ保存先。
+        job_id: 対象ジョブ ID。
+        base_messages: system prompt・履歴・ユーザー発話。
+        emit_progress: 進捗イベント送信コールバック。
 
     Returns:
         (最終アシスタント応答テキスト, ループ中の中間 tool 呼び出し記録).
@@ -295,8 +423,20 @@ def _run_tool_loop(
     messages = list(base_messages)
     tool_trace: list[dict[str, Any]] = []
     total_usage = Usage()
+    tool_result_cache: dict[str, str] = {}
+    repeat_counts: dict[str, int] = {}
 
     for iteration in range(MAX_TOOL_ITERATIONS):
+        _emit_progress(
+            emit_progress,
+            "status",
+            {
+                "message": (
+                    "設計書と質問を照合中" if iteration == 0 else "追加で必要な根拠を確認中"
+                ),
+                "iteration": iteration + 1,
+            },
+        )
         # チャット中は tier 固定 (= pro). 理由:
         # ツールループ内で pro/fast を切り替えると、prompt caching が
         # モデル単位で分離されているため、切替時点でキャッシュが失効してしまう。
@@ -340,7 +480,30 @@ def _run_tool_loop(
         messages.append(_tool_call_to_assistant_message(resp))
         for tc in resp.tool_calls:
             logger.info("tool call: name=%s args=%s", tc.name, tc.arguments)
-            result_str = execute_tool_call(storage, job_id, tc.name, tc.arguments)
+            signature = _tool_signature(tc.name, tc.arguments)
+            repeat_counts[signature] = repeat_counts.get(signature, 0) + 1
+            progress_message = _tool_progress_message(tc.name)
+            _emit_progress(
+                emit_progress,
+                "tool_start",
+                {
+                    "message": progress_message,
+                    "tool_name": tc.name,
+                    "iteration": iteration + 1,
+                },
+            )
+            if signature in tool_result_cache:
+                result_str = tool_result_cache[signature]
+                if repeat_counts[signature] >= 3:
+                    result_str = (
+                        f"{result_str}\n\n"
+                        "[system note] 同じ条件で確認済みです。新しい根拠が必要な場合は"
+                        "別の観点でツールを使ってください。正確に判断できる根拠が不足する場合は、"
+                        "不足している情報と代替案を明示してください。"
+                    )
+            else:
+                result_str = execute_tool_call(storage, job_id, tc.name, tc.arguments)
+                tool_result_cache[signature] = result_str
             logger.info(
                 "tool result: name=%s result_chars=%d preview=%s",
                 tc.name,
@@ -349,6 +512,15 @@ def _run_tool_loop(
             )
             tool_trace.append(
                 {"name": tc.name, "arguments": tc.arguments, "result_preview": result_str[:200]}
+            )
+            _emit_progress(
+                emit_progress,
+                "tool_result",
+                {
+                    "message": f"{progress_message}が完了しました",
+                    "tool_name": tc.name,
+                    "iteration": iteration + 1,
+                },
             )
             messages.append(
                 {
@@ -359,7 +531,8 @@ def _run_tool_loop(
                 }
             )
 
-    # 上限到達: 最後の応答を返す。content が空の場合は注意書きを付与。
+    # 確認継続後も最終回答に至らない場合:
+    # 曖昧に推測せず、正確に判断できるかどうかを LLM に判定させる。
     logger.warning(
         "tool loop hit MAX_TOOL_ITERATIONS=%d tool_calls_total=%d "
         "cumulative_prompt=%d completion=%d total=%d cached=%d",
@@ -370,39 +543,116 @@ def _run_tool_loop(
         total_usage.total_tokens,
         total_usage.cached_tokens,
     )
+    _emit_progress(
+        emit_progress,
+        "status",
+        {"message": "確認済み情報で回答可否を判断中", "iteration": MAX_TOOL_ITERATIONS},
+    )
     messages.append(
         {
             "role": "system",
             "content": (
-                "ツール呼び出しの上限に達しました。追加のツール呼び出しはせず、"
-                "ここまでに得たツール結果と設計書だけを根拠に、分かる範囲で最終回答を"
-                "日本語でまとめてください。不明点は不明として明示してください。"
+                "追加のツール確認は行わず、ここまでに得たツール結果と設計書だけを根拠に"
+                "最終回答を日本語で作成してください。正確に回答できる根拠がある場合だけ"
+                "断定してください。根拠が不足して正確に判断できない場合は、できない理由、"
+                "確認済みの内容、ユーザーが次に取れる代替案を明確に述べてください。"
             ),
         }
     )
-    final_resp = llm.chat_completion_with_tools(
+    reply = llm.chat_completion(
         messages,
-        tools=[],
         tier="pro",
         cache_prefix=1,
     )
-    if final_resp.usage is not None:
-        total_usage = total_usage + final_resp.usage
-        logger.info(
-            "llm forced final usage model=%s prompt=%d completion=%d total=%d cached=%d",
-            final_resp.model or "?",
-            final_resp.usage.prompt_tokens,
-            final_resp.usage.completion_tokens,
-            final_resp.usage.total_tokens,
-            final_resp.usage.cached_tokens,
-        )
-    reply = (final_resp.content or resp.content or "").strip()
+    logger.info("llm forced final response: reply_chars=%d", len(reply or ""))
+    reply = (reply or resp.content or "").strip()
     if not reply:
-        reply = (
-            "ツール確認が上限に達し、最終回答を生成できませんでした。"
-            "質問範囲を少し絞ってもう一度聞いてください。"
-        )
+        reply = _build_unresolved_reply(tool_trace)
     return (reply, tool_trace)
+
+
+def _build_chat_messages(
+    storage: Storage, job_id: str, session_id: str, user_message: str
+) -> list[dict[str, Any]]:
+    """LLM に渡すチャットメッセージ列を構築する.
+
+    Args:
+        storage: ジョブ保存先。
+        job_id: 対象ジョブ ID。
+        session_id: チャットセッション ID。
+        user_message: 今回のユーザー発話。
+
+    Returns:
+        system prompt、履歴、今回発話を含む LLM 入力。
+    """
+    try:
+        try:
+            spec_md = storage.load_spec(job_id)
+        except FileNotFoundError:
+            spec_md = ""
+
+        history = storage.load_chat_history(job_id, session_id=session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid job_id: {e}") from e
+    except JobNotFoundError as e:
+        raise HTTPException(status_code=404, detail="job or chat session not found") from e
+
+    # 履歴を直近 N ペアに絞り、古い分は summary に集約 (Phase B-2)
+    # ツールループ上限時のフォールバック文は、次ターン以降の LLM 文脈から除外する。
+    prompt_history = _history_for_llm(history)
+    max_pairs = _get_history_pairs_limit()
+    recent, summary = _trim_history(prompt_history, max_pairs=max_pairs)
+    if summary:
+        logger.info(
+            "history trimmed: total=%d kept=%d summarized=%d",
+            len(prompt_history),
+            len(recent),
+            len(prompt_history) - len(recent),
+        )
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": _build_system_prompt(spec_md)},
+    ]
+    if summary:
+        # system 直後に置く. 設計書 (大プレフィックス) のキャッシュ性を壊さないよう、
+        # main system prompt とは別メッセージにする。
+        messages.append({"role": "system", "content": summary})
+    messages.extend({"role": m.role, "content": m.content} for m in recent)
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+def _persist_chat_turn(
+    storage: Storage,
+    job_id: str,
+    session_id: str,
+    user_message: str,
+    reply: str,
+) -> list[ChatMessage]:
+    """ユーザー発話とアシスタント応答を履歴に保存して再読込する.
+
+    Args:
+        storage: ジョブ保存先。
+        job_id: 対象ジョブ ID。
+        session_id: チャットセッション ID。
+        user_message: 今回のユーザー発話。
+        reply: アシスタント応答。
+
+    Returns:
+        保存後のチャット履歴。
+    """
+    now = _utc_now_iso()
+    storage.append_chat_message(
+        job_id,
+        ChatMessage(role="user", content=user_message, timestamp=now),
+        session_id=session_id,
+    )
+    storage.append_chat_message(
+        job_id,
+        ChatMessage(role="assistant", content=reply, timestamp=now),
+        session_id=session_id,
+    )
+    return storage.load_chat_history(job_id, session_id=session_id)
 
 
 @router.post("/chat/{job_id}")
@@ -418,65 +668,95 @@ async def chat(
         raise HTTPException(status_code=400, detail="message is required")
     logger.info("chat request: message_chars=%d", len(body.message))
 
-    try:
-        try:
-            spec_md = storage.load_spec(job_id)
-        except FileNotFoundError:
-            spec_md = ""
-
-        history = storage.load_chat_history(job_id, session_id=session_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"invalid job_id: {e}") from e
-    except JobNotFoundError as e:
-        raise HTTPException(status_code=404, detail="job or chat session not found") from e
-
-    # 履歴を直近 N ペアに絞り、古い分は summary に集約 (Phase B-2)
-    max_pairs = _get_history_pairs_limit()
-    recent, summary = _trim_history(history, max_pairs=max_pairs)
-    if summary:
-        logger.info(
-            "history trimmed: total=%d kept=%d summarized=%d",
-            len(history),
-            len(recent),
-            len(history) - len(recent),
-        )
-
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": _build_system_prompt(spec_md)},
-    ]
-    if summary:
-        # system 直後に置く. 設計書 (大プレフィックス) のキャッシュ性を壊さないよう、
-        # main system prompt とは別メッセージにする。
-        messages.append({"role": "system", "content": summary})
-    messages.extend({"role": m.role, "content": m.content} for m in recent)
-    messages.append({"role": "user", "content": body.message})
+    messages = _build_chat_messages(storage, job_id, session_id, body.message)
 
     # LLM ループ全体を threadpool に逃がす (event loop を解放).
     reply, tool_trace = await asyncio.to_thread(_run_tool_loop, llm, storage, job_id, messages)
 
     # 履歴に追記 (user → assistant). tool 呼び出しの中間結果は履歴には残さない.
     # ファイル書き込みも一応 blocking なので to_thread に逃がす.
-    now = _utc_now_iso()
-
-    def _persist_and_reload() -> list[ChatMessage]:
-        storage.append_chat_message(
-            job_id,
-            ChatMessage(role="user", content=body.message, timestamp=now),
-            session_id=session_id,
-        )
-        storage.append_chat_message(
-            job_id,
-            ChatMessage(role="assistant", content=reply, timestamp=now),
-            session_id=session_id,
-        )
-        return storage.load_chat_history(job_id, session_id=session_id)
-
-    new_history = await asyncio.to_thread(_persist_and_reload)
+    new_history = await asyncio.to_thread(
+        _persist_chat_turn,
+        storage,
+        job_id,
+        session_id,
+        body.message,
+        reply,
+    )
     return {
         "reply": reply,
         "history": [m.model_dump() for m in new_history],
         "tool_trace": tool_trace,
     }
+
+
+@router.post("/chat/{job_id}/stream")
+async def chat_stream(
+    job_id: str,
+    body: ChatRequest,
+    session_id: str = Query(default="default"),
+    storage: Storage = Depends(get_storage),
+    llm: LLMClient = Depends(get_llm_client),
+) -> StreamingResponse:
+    """ユーザー発話を受け付け、進捗イベントと最終応答を SSE で返す."""
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+    logger.info("chat stream request: message_chars=%d", len(body.message))
+    messages = _build_chat_messages(storage, job_id, session_id, body.message)
+
+    async def _events() -> AsyncIterator[str]:
+        queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def _emit(event: str, data: dict[str, Any]) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, (event, data))
+
+        def _work() -> None:
+            try:
+                reply, tool_trace = _run_tool_loop(
+                    llm,
+                    storage,
+                    job_id,
+                    messages,
+                    emit_progress=_emit,
+                )
+                new_history = _persist_chat_turn(storage, job_id, session_id, body.message, reply)
+                _emit(
+                    "final",
+                    {
+                        "reply": reply,
+                        "history": [m.model_dump() for m in new_history],
+                        "tool_trace": tool_trace,
+                    },
+                )
+            except Exception:
+                logger.exception("chat stream failed")
+                _emit(
+                    "error",
+                    {
+                        "message": (
+                            "応答生成中にエラーが発生しました。"
+                            "時間を置いて再度試すか、質問範囲を具体化してください。"
+                        )
+                    },
+                )
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        task = asyncio.create_task(asyncio.to_thread(_work))
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            event, data = item
+            yield _sse_event(event, data)
+        await task
+
+    return StreamingResponse(
+        _events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/chat/{job_id}/history")

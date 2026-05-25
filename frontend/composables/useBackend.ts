@@ -12,9 +12,11 @@ import {
   BackendError,
   type AnalyzeResponse,
   type ChatMessage,
+  type ChatProgressEvent,
   type ChatReply,
   type ChatSessionMeta,
   type ChatSessionResponse,
+  type ChatStreamEventName,
   type DeleteResponse,
   type DiagramSet,
   type ExternalFunctionRegistry,
@@ -33,6 +35,10 @@ import {
 // ユーザーは「壊れた」と感じてしまうので寛容に取る.
 const HEAVY_TIMEOUT_MS = 10 * 60 * 1000 // 10 分
 const DEFAULT_TIMEOUT_MS = 60 * 1000 // 1 分
+
+interface ChatStreamHandlers {
+  onEvent?: (event: ChatStreamEventName, data: ChatProgressEvent | ChatReply) => void
+}
 
 interface FetchErrorLike {
   name?: string
@@ -117,6 +123,47 @@ function toBackendError(err: unknown, context: string): BackendError {
   return new BackendError(status, detail)
 }
 
+async function backendErrorFromResponse(response: Response): Promise<BackendError> {
+  let detail = ''
+  try {
+    const data = await response.json() as { detail?: unknown }
+    if (typeof data.detail === 'string') {
+      detail = data.detail
+    }
+  } catch {
+    // JSON でないエラー本文はユーザーに出さない。
+  }
+  if (!detail) {
+    detail = response.status >= 500
+      ? 'サーバー側で予期しないエラーが発生しました。時間を置いて再度お試しください。'
+      : '処理に失敗しました。'
+  }
+  return new BackendError(response.status, detail)
+}
+
+function parseSseEvent(raw: string): { event: ChatStreamEventName; data: unknown } | null {
+  let event: ChatStreamEventName = 'status'
+  const dataLines: string[] = []
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) {
+      const value = line.slice('event:'.length).trim()
+      if (
+        value === 'status'
+        || value === 'tool_start'
+        || value === 'tool_result'
+        || value === 'final'
+        || value === 'error'
+      ) {
+        event = value
+      }
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice('data:'.length).trimStart())
+    }
+  }
+  if (dataLines.length === 0) return null
+  return { event, data: JSON.parse(dataLines.join('\n')) }
+}
+
 export function useBackend() {
   const config = useRuntimeConfig()
   const baseURL = config.public.backendUrl
@@ -197,6 +244,74 @@ export function useBackend() {
         query: { session_id: sessionId },
         timeout: HEAVY_TIMEOUT_MS,
       })
+    },
+
+    /** POST /chat/{job_id}/stream — 進捗イベントを受け取りながら LLM 応答を待つ. */
+    async chatStream(
+      jobId: string,
+      message: string,
+      sessionId = 'default',
+      handlers: ChatStreamHandlers = {},
+    ): Promise<ChatReply> {
+      try {
+        const root = String(baseURL || '').replace(/\/$/, '')
+        const query = new URLSearchParams({ session_id: sessionId })
+        const response = await fetch(`${root}/chat/${jobId}/stream?${query.toString()}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+        })
+        if (!response.ok) {
+          throw await backendErrorFromResponse(response)
+        }
+        if (!response.body) {
+          throw new BackendError(0, 'サーバーから進捗ストリームを取得できませんでした。')
+        }
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let finalReply: ChatReply | null = null
+        let streamError = ''
+
+        const dispatch = (raw: string) => {
+          const parsed = parseSseEvent(raw)
+          if (!parsed) return
+          if (parsed.event === 'final') {
+            finalReply = parsed.data as ChatReply
+          } else if (parsed.event === 'error') {
+            const data = parsed.data as Partial<ChatProgressEvent>
+            streamError = data.message || '応答生成中にエラーが発生しました。'
+          }
+          handlers.onEvent?.(parsed.event, parsed.data as ChatProgressEvent | ChatReply)
+        }
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+          let boundary = buffer.indexOf('\n\n')
+          while (boundary >= 0) {
+            const raw = buffer.slice(0, boundary)
+            buffer = buffer.slice(boundary + 2)
+            dispatch(raw)
+            boundary = buffer.indexOf('\n\n')
+          }
+        }
+        buffer += decoder.decode().replace(/\r\n/g, '\n')
+        if (buffer.trim()) dispatch(buffer)
+
+        if (streamError) {
+          throw new BackendError(500, streamError)
+        }
+        if (!finalReply) {
+          throw new BackendError(0, '応答の受信が完了しませんでした。もう一度お試しください。')
+        }
+        return finalReply
+      } catch (e) {
+        if (e instanceof BackendError) throw e
+        throw toBackendError(e, 'chatStream')
+      }
     },
 
     /** GET /chat/{job_id}/history */
