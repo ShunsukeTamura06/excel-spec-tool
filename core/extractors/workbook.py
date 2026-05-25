@@ -12,6 +12,7 @@ import logging
 import posixpath
 import re
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -303,22 +304,47 @@ def _resolve_package_part(base_dir: str, target: str) -> str:
     return posixpath.normpath(posixpath.join(base_dir, target))
 
 
-def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, list[str]]:
-    """xlsm zip から「シート名 → vmlDrawing*.vml のフルパス一覧」を返す.
+def _local_name(tag: str) -> str:
+    """XMLタグ名から名前空間を除いたローカル名を返す.
 
     Args:
-        zf: xlsm/xltm/xlsb を開いた ZipFile。
+        tag: ElementTree のタグ名。
 
     Returns:
-        シート名をキー、関連する VML パーツ一覧を値にしたマップ。
-        rels の解決にコケた場合は、取れた範囲だけ返す。
+        ローカル名。
     """
-    sheet_to_vml: dict[str, list[str]] = {}
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def _relationship_id(el: ET.Element) -> str:
+    """officeDocument relationship id を返す.
+
+    Args:
+        el: XML 要素。
+
+    Returns:
+        ``r:id`` 相当の属性値。なければ空文字。
+    """
+    return el.attrib.get(
+        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", ""
+    )
+
+
+def _xlsm_sheet_paths(zf: zipfile.ZipFile) -> dict[str, str]:
+    """xlsm zip から「シート名 → worksheet パーツパス」を返す.
+
+    Args:
+        zf: xlsx/xlsm/xltm/xlsb を開いた ZipFile。
+
+    Returns:
+        シート名をキー、``xl/worksheets/sheet*.xml`` を値にしたマップ。
+    """
+    name_to_sheet_path: dict[str, str] = {}
     try:
         wb_xml = zf.read("xl/workbook.xml")
         wb_rels = zf.read("xl/_rels/workbook.xml.rels")
     except KeyError:
-        return sheet_to_vml
+        return name_to_sheet_path
 
     # r:id → sheet file
     rid_to_target: dict[str, str] = {}
@@ -329,16 +355,14 @@ def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, list[str]]:
         ):
             rid_to_target[rel.attrib.get("Id", "")] = rel.attrib.get("Target", "")
     except ET.ParseError:
-        return sheet_to_vml
+        return name_to_sheet_path
 
     # sheet name → r:id → sheet file path
-    name_to_sheet_path: dict[str, str] = {}
     try:
         root = ET.fromstring(wb_xml)
         for sheet in root.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheet"):
             name = sheet.attrib.get("name", "")
-            rid_key = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
-            rid = sheet.attrib.get(rid_key, "")
+            rid = _relationship_id(sheet)
             target = rid_to_target.get(rid, "")
             if not name or not target:
                 continue
@@ -346,9 +370,26 @@ def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, list[str]]:
             sheet_path = _resolve_package_part("xl", target)
             name_to_sheet_path[name] = sheet_path
     except ET.ParseError:
-        return sheet_to_vml
+        return name_to_sheet_path
+    return name_to_sheet_path
 
-    # 各 sheet の _rels を辿って vmlDrawing を見つける
+
+def _sheet_related_parts(
+    zf: zipfile.ZipFile,
+    predicate: Callable[[ET.Element], bool],
+) -> dict[str, list[str]]:
+    """各シートの relationship から条件に合うパーツ一覧を返す.
+
+    Args:
+        zf: xlsx/xlsm/xltm/xlsb を開いた ZipFile。
+        predicate: Relationship 要素を受け取り、対象なら True を返す関数。
+
+    Returns:
+        シート名をキー、関連パーツ一覧を値にしたマップ。
+    """
+    sheet_to_parts: dict[str, list[str]] = {}
+    name_to_sheet_path = _xlsm_sheet_paths(zf)
+
     for name, sheet_path in name_to_sheet_path.items():
         # 例: xl/worksheets/sheet1.xml → xl/worksheets/_rels/sheet1.xml.rels
         if "/" in sheet_path:
@@ -367,12 +408,94 @@ def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, list[str]]:
         for rel in rels_root.iter(
             "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
         ):
+            if not predicate(rel):
+                continue
             target = rel.attrib.get("Target", "")
-            if "vmlDrawing" in target and target.endswith(".vml"):
-                vml_path = _resolve_package_part(dir_part, target)
-                sheet_to_vml.setdefault(name, []).append(vml_path)
+            part_path = _resolve_package_part(dir_part, target)
+            sheet_to_parts.setdefault(name, []).append(part_path)
 
-    return sheet_to_vml
+    return sheet_to_parts
+
+
+def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, list[str]]:
+    """xlsm zip から「シート名 → vmlDrawing*.vml のフルパス一覧」を返す.
+
+    Args:
+        zf: xlsm/xltm/xlsb を開いた ZipFile。
+
+    Returns:
+        シート名をキー、関連する VML パーツ一覧を値にしたマップ。
+        rels の解決にコケた場合は、取れた範囲だけ返す。
+    """
+
+    def _is_vml(rel: ET.Element) -> bool:
+        target = rel.attrib.get("Target", "")
+        rel_type = rel.attrib.get("Type", "")
+        return target.lower().endswith(".vml") and (
+            "vmldrawing" in target.lower() or rel_type.endswith("/vmlDrawing")
+        )
+
+    return _sheet_related_parts(zf, _is_vml)
+
+
+def _xlsm_sheet_to_drawing_map(zf: zipfile.ZipFile) -> dict[str, list[str]]:
+    """xlsx/xlsm zip から「シート名 → drawing*.xml のフルパス一覧」を返す.
+
+    Args:
+        zf: xlsx/xlsm/xltm/xlsb を開いた ZipFile。
+
+    Returns:
+        シート名をキー、関連する DrawingML パーツ一覧を値にしたマップ。
+    """
+
+    def _is_drawing(rel: ET.Element) -> bool:
+        target = rel.attrib.get("Target", "")
+        rel_type = rel.attrib.get("Type", "")
+        return target.lower().endswith(".xml") and (
+            "drawings/drawing" in target.lower() or rel_type.endswith("/drawing")
+        )
+
+    return _sheet_related_parts(zf, _is_drawing)
+
+
+def _normalize_vml_xml(vml_bytes: bytes) -> bytes:
+    """Excel が出す HTML 風の VML を XML として読める形へ補正する.
+
+    Args:
+        vml_bytes: ``xl/drawings/vmlDrawing*.vml`` の内容。
+
+    Returns:
+        ElementTree で読めるように軽く補正した VML バイト列。
+    """
+
+    def _close_br(match: re.Match[bytes]) -> bytes:
+        attrs = match.group("attrs") or b""
+        if attrs.strip().endswith(b"/"):
+            return match.group(0)
+        return b"<br" + attrs + b" />"
+
+    return re.sub(rb"<br(?P<attrs>(?=[\s/>])[^<>]*)>", _close_br, vml_bytes, flags=re.I)
+
+
+def _element_text_with_breaks(el: ET.Element) -> str:
+    """XML 要素配下のテキストを、br を空白として抽出する.
+
+    Args:
+        el: テキスト抽出対象の XML 要素。
+
+    Returns:
+        結合したテキスト。
+    """
+    parts: list[str] = []
+    if el.text:
+        parts.append(el.text)
+    for child in el:
+        if _local_name(child.tag).lower() == "br":
+            parts.append(" ")
+        parts.append(_element_text_with_breaks(child))
+        if child.tail:
+            parts.append(child.tail)
+    return "".join(parts)
 
 
 def _parse_vml_form_controls(vml_bytes: bytes) -> list[FormControl]:
@@ -386,7 +509,7 @@ def _parse_vml_form_controls(vml_bytes: bytes) -> list[FormControl]:
     """
     out: list[FormControl] = []
     try:
-        root = ET.fromstring(vml_bytes)
+        root = ET.fromstring(_normalize_vml_xml(vml_bytes))
     except ET.ParseError:
         return out
 
@@ -430,7 +553,7 @@ def _parse_vml_form_controls(vml_bytes: bytes) -> list[FormControl]:
         textbox = shape.find(v_textbox_tag)
         if textbox is not None:
             # textbox 配下の全テキストを連結
-            text = "".join(textbox.itertext()).strip()
+            text = _element_text_with_breaks(textbox).strip()
             # 改行・余分な空白を 1 つに圧縮
             text = re.sub(r"\s+", " ", text)[:120]
 
@@ -468,15 +591,234 @@ def _anchor_to_cell(anchor_text: str) -> str:
         return ""
 
 
-def _extract_form_controls(file_path: Path, sheet_names: list[str]) -> dict[str, list[FormControl]]:
-    """xlsm 内の VML ドローイングから (シート名 → フォームコントロール) を抽出.
+def _drawing_anchor_to_cell(anchor: ET.Element) -> str:
+    """DrawingML anchor 要素から左上セルを A1 形式で返す.
 
-    .xls / .xlsx は VBA を含まないので空を返す. xlsm でも VML がない (= ボタンが
-    一つも置かれていない) なら空. zipfile / XML パース失敗は警告ログのみで握り潰し
-    結果は best-effort.
+    Args:
+        anchor: ``xdr:twoCellAnchor`` または ``xdr:oneCellAnchor`` 要素。
+
+    Returns:
+        左上セル。取得できない場合は空文字。
+    """
+    try:
+        from openpyxl.utils import get_column_letter
+
+        from_el = next((c for c in anchor if _local_name(c.tag) == "from"), None)
+        if from_el is None:
+            return ""
+        col_text = ""
+        row_text = ""
+        for child in from_el:
+            if _local_name(child.tag) == "col":
+                col_text = child.text or ""
+            elif _local_name(child.tag) == "row":
+                row_text = child.text or ""
+        if not col_text or not row_text:
+            return ""
+        return f"{get_column_letter(int(col_text) + 1)}{int(row_text) + 1}"
+    except (ValueError, IndexError):
+        return ""
+
+
+def _first_descendant(el: ET.Element, local_name: str) -> ET.Element | None:
+    """指定ローカル名の子孫要素を1件返す.
+
+    Args:
+        el: 探索開始要素。
+        local_name: 名前空間を除いたタグ名。
+
+    Returns:
+        見つかった要素。なければ None。
+    """
+    return next((d for d in el.iter() if _local_name(d.tag) == local_name), None)
+
+
+def _drawing_text(el: ET.Element) -> str:
+    """DrawingML 要素配下のテキストを抽出する.
+
+    Args:
+        el: ``xdr:sp`` などの DrawingML 要素。
+
+    Returns:
+        結合・空白正規化したテキスト。
+    """
+    parts = [d.text or "" for d in el.iter() if _local_name(d.tag) == "t" and d.text]
+    return re.sub(r"\s+", " ", "".join(parts)).strip()[:120]
+
+
+def _control_kind(name: str, text: str, fallback: str = "control") -> str:
+    """コントロール名や表示文字から種別を推定する.
+
+    Args:
+        name: コントロール名。
+        text: 表示テキスト。
+        fallback: 推定できない場合の種別。
+
+    Returns:
+        種別文字列。
+    """
+    value = f"{name} {text}".lower()
+    if "button" in value or "ボタン" in value:
+        return "button"
+    if "check" in value or "チェック" in value:
+        return "checkbox"
+    if "option" in value or "radio" in value:
+        return "radio"
+    return fallback
+
+
+def _extract_macro_from_control_props(props_bytes: bytes) -> str:
+    """ctrlProp XML からマクロ名を抽出する.
+
+    Args:
+        props_bytes: ``xl/ctrlProps/ctrlProp*.xml`` の内容。
+
+    Returns:
+        マクロ名。取得できない場合は空文字。
+    """
+    try:
+        root = ET.fromstring(props_bytes)
+    except ET.ParseError:
+        return ""
+    for key, value in root.attrib.items():
+        if _local_name(key).lower() == "macro" and value:
+            return value.strip()
+    for el in root.iter():
+        if _local_name(el.tag).lower() in {"macro", "fmlamacro"} and el.text:
+            return el.text.strip()
+    return ""
+
+
+def _drawing_control_macros(zf: zipfile.ZipFile, drawing_path: str) -> dict[str, str]:
+    """DrawingML の relationship から control property のマクロを返す.
+
+    Args:
+        zf: xlsx/xlsm/xltm/xlsb を開いた ZipFile。
+        drawing_path: ``xl/drawings/drawing*.xml`` のパス。
+
+    Returns:
+        relationship id をキー、マクロ名を値にしたマップ。
+    """
+    if "/" in drawing_path:
+        dir_part, file_part = drawing_path.rsplit("/", 1)
+    else:
+        dir_part, file_part = "", drawing_path
+    rels_path = f"{dir_part}/_rels/{file_part}.rels"
+    try:
+        rels_xml = zf.read(rels_path)
+        rels_root = ET.fromstring(rels_xml)
+    except (KeyError, ET.ParseError):
+        return {}
+
+    out: dict[str, str] = {}
+    for rel in rels_root.iter(
+        "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+    ):
+        target = rel.attrib.get("Target", "")
+        rel_type = rel.attrib.get("Type", "")
+        if "ctrlprop" not in target.lower() and not rel_type.endswith("/ctrlProp"):
+            continue
+        props_path = _resolve_package_part(dir_part, target)
+        try:
+            macro = _extract_macro_from_control_props(zf.read(props_path))
+        except KeyError:
+            continue
+        if macro:
+            out[rel.attrib.get("Id", "")] = macro
+    return out
+
+
+def _parse_drawing_form_controls(
+    drawing_bytes: bytes,
+    control_macros: dict[str, str] | None = None,
+) -> list[FormControl]:
+    """DrawingML からフォームコントロール相当のボタンを抽出する.
+
+    Args:
+        drawing_bytes: ``xl/drawings/drawing*.xml`` の内容。
+        control_macros: drawing rels から得た ``r:id -> macro`` マップ。
+
+    Returns:
+        抽出したフォームコントロール一覧。
+    """
+    out: list[FormControl] = []
+    control_macros = control_macros or {}
+    try:
+        root = ET.fromstring(drawing_bytes)
+    except ET.ParseError:
+        return out
+
+    for anchor in root.iter():
+        if _local_name(anchor.tag) not in {"twoCellAnchor", "oneCellAnchor"}:
+            continue
+        control_el = _first_descendant(anchor, "control")
+        control_name = control_el.attrib.get("name", "") if control_el is not None else ""
+        control_rid = _relationship_id(control_el) if control_el is not None else ""
+        control_macro = control_macros.get(control_rid, "")
+
+        for shape in (d for d in anchor.iter() if _local_name(d.tag) == "sp"):
+            macro = (shape.attrib.get("macro", "") or control_macro).strip()
+            c_nv_pr = _first_descendant(shape, "cNvPr")
+            name = ""
+            if c_nv_pr is not None:
+                name = c_nv_pr.attrib.get("name", "") or c_nv_pr.attrib.get("descr", "")
+            if not name:
+                name = control_name
+            text = _drawing_text(shape)
+
+            # 通常の図形をフォームとして誤検出しないよう、macro または xdr:control が
+            # あるものだけフォームコントロール候補にする。
+            if not macro and control_el is None:
+                continue
+            if not macro and not text and not name:
+                continue
+
+            out.append(
+                FormControl(
+                    kind=_control_kind(name, text, "control"),
+                    name=name,
+                    text=text,
+                    macro=macro,
+                    anchor=_drawing_anchor_to_cell(anchor),
+                )
+            )
+    return out
+
+
+def _dedupe_form_controls(controls: list[FormControl]) -> list[FormControl]:
+    """同一コントロールの重複を取り除く.
+
+    Args:
+        controls: フォームコントロール一覧。
+
+    Returns:
+        入力順を保った重複除去後の一覧。
+    """
+    seen: set[tuple[str, str, str, str, str]] = set()
+    out: list[FormControl] = []
+    for control in controls:
+        key = (control.kind, control.name, control.text, control.macro, control.anchor)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(control)
+    return out
+
+
+def _extract_form_controls(file_path: Path, sheet_names: list[str]) -> dict[str, list[FormControl]]:
+    """Excel ファイルから (シート名 → フォームコントロール) を抽出する.
+
+    VML 形式と DrawingML + ctrlProps 形式の両方を best-effort で読む。
+
+    Args:
+        file_path: 対象 Excel ファイル。
+        sheet_names: 抽出対象シート名。
+
+    Returns:
+        シート名をキー、フォームコントロール一覧を値にしたマップ。
     """
     out: dict[str, list[FormControl]] = {sn: [] for sn in sheet_names}
-    if file_path.suffix.lower() not in {".xlsm", ".xltm", ".xlsb"}:
+    if file_path.suffix.lower() not in {".xlsx", ".xlsm", ".xltx", ".xltm", ".xlsb"}:
         return out
     try:
         with zipfile.ZipFile(file_path) as zf:
@@ -490,6 +832,23 @@ def _extract_form_controls(file_path: Path, sheet_names: list[str]) -> dict[str,
                     except KeyError:
                         continue
                     out[sheet_name].extend(_parse_vml_form_controls(vml_bytes))
+            sheet_to_drawings = _xlsm_sheet_to_drawing_map(zf)
+            for sheet_name, drawing_paths in sheet_to_drawings.items():
+                if sheet_name not in out:
+                    continue
+                for drawing_path in drawing_paths:
+                    try:
+                        drawing_bytes = zf.read(drawing_path)
+                    except KeyError:
+                        continue
+                    out[sheet_name].extend(
+                        _parse_drawing_form_controls(
+                            drawing_bytes,
+                            _drawing_control_macros(zf, drawing_path),
+                        )
+                    )
+            for sheet_name, controls in out.items():
+                out[sheet_name] = _dedupe_form_controls(controls)
     except (zipfile.BadZipFile, OSError) as e:
         logger.warning("failed to read form controls from %s: %s", file_path.name, e)
     return out

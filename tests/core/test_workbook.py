@@ -431,6 +431,33 @@ class TestFormControlsParser:
         assert cb.kind == "checkbox"
         assert cb.macro == "Module1.ToggleFilter"
 
+    def test_parses_vml_textbox_with_html_br(self) -> None:
+        """textbox 内の閉じタグなし br があっても VML 全体を捨てない."""
+        from core.extractors.workbook import _parse_vml_form_controls
+
+        vml_str = """<?xml version="1.0" encoding="UTF-8"?>
+<xml xmlns:v="urn:schemas-microsoft-com:vml"
+     xmlns:x="urn:schemas-microsoft-com:office:excel"
+     xmlns:o="urn:schemas-microsoft-com:office:office">
+  <v:shape id="_x0000_s1025" o:spid="_x0000_s1025" type="#_x0000_t201">
+    <v:textbox>
+      <div><font>登録<br>実行</font></div>
+    </v:textbox>
+    <x:ClientData ObjectType="Button">
+      <x:Anchor>0,0,1,0,2,0,3,0</x:Anchor>
+      <x:FmlaMacro>Module1.Register</x:FmlaMacro>
+    </x:ClientData>
+  </v:shape>
+</xml>
+"""
+        controls = _parse_vml_form_controls(vml_str.encode("utf-8"))
+
+        assert len(controls) == 1
+        assert controls[0].kind == "button"
+        assert controls[0].macro == "Module1.Register"
+        assert controls[0].text == "登録 実行"
+        assert controls[0].anchor == "A2"
+
     def test_skips_shapes_without_macro_or_text(self) -> None:
         from core.extractors.workbook import _parse_vml_form_controls
 
@@ -542,3 +569,107 @@ class TestFormControlsParser:
         assert result["Problem"][0].kind == "button"
         assert result["Problem"][0].text == "実行"
         assert result["Problem"][0].macro == "Module1.Run"
+
+    def test_parses_drawing_shape_with_macro(self) -> None:
+        """DrawingML の macro 属性付きボタン図形を抽出する."""
+        from core.extractors.workbook import _parse_drawing_form_controls
+
+        drawing_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+          xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <xdr:twoCellAnchor>
+    <xdr:from><xdr:col>2</xdr:col><xdr:row>4</xdr:row></xdr:from>
+    <xdr:sp macro="Module1.Refresh">
+      <xdr:nvSpPr>
+        <xdr:cNvPr id="10" name="Button 1"/>
+      </xdr:nvSpPr>
+      <xdr:txBody>
+        <a:p><a:r><a:t>更新</a:t></a:r></a:p>
+      </xdr:txBody>
+    </xdr:sp>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>
+</xdr:wsDr>
+"""
+        controls = _parse_drawing_form_controls(drawing_xml.encode("utf-8"))
+
+        assert len(controls) == 1
+        assert controls[0].kind == "button"
+        assert controls[0].name == "Button 1"
+        assert controls[0].text == "更新"
+        assert controls[0].macro == "Module1.Refresh"
+        assert controls[0].anchor == "C5"
+
+    def test_extracts_drawing_control_props_macro(self, tmp_path: Path) -> None:
+        """DrawingML + ctrlProps 形式のフォームコントロールを抽出する."""
+        from core.extractors.workbook import _extract_form_controls
+
+        workbook_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Problem" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>
+"""
+        workbook_rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+                Target="worksheets/sheet1.xml"/>
+</Relationships>
+"""
+        sheet_rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
+                Target="../drawings/drawing1.xml"/>
+</Relationships>
+"""
+        drawing_rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdControl"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp"
+                Target="../ctrlProps/ctrlProp1.xml"/>
+</Relationships>
+"""
+        drawing_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+          xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <xdr:twoCellAnchor>
+    <xdr:from><xdr:col>0</xdr:col><xdr:row>1</xdr:row></xdr:from>
+    <xdr:sp>
+      <xdr:nvSpPr>
+        <xdr:cNvPr id="20" name="Button 2"/>
+      </xdr:nvSpPr>
+      <xdr:txBody>
+        <a:p><a:r><a:t>登録</a:t></a:r></a:p>
+      </xdr:txBody>
+    </xdr:sp>
+    <xdr:control name="Button 2" r:id="rIdControl"/>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>
+</xdr:wsDr>
+"""
+        ctrl_prop = """<?xml version="1.0" encoding="UTF-8"?>
+<controlPr xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+           macro="Module1.Register"/>
+"""
+        xlsx = tmp_path / "drawing_control.xlsx"
+        with zipfile.ZipFile(xlsx, "w") as zf:
+            zf.writestr("xl/workbook.xml", workbook_xml)
+            zf.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+            zf.writestr("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels)
+            zf.writestr("xl/drawings/drawing1.xml", drawing_xml)
+            zf.writestr("xl/drawings/_rels/drawing1.xml.rels", drawing_rels)
+            zf.writestr("xl/ctrlProps/ctrlProp1.xml", ctrl_prop)
+
+        result = _extract_form_controls(xlsx, ["Problem"])
+
+        assert len(result["Problem"]) == 1
+        assert result["Problem"][0].kind == "button"
+        assert result["Problem"][0].name == "Button 2"
+        assert result["Problem"][0].text == "登録"
+        assert result["Problem"][0].macro == "Module1.Register"
+        assert result["Problem"][0].anchor == "A2"
