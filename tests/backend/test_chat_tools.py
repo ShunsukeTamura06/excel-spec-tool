@@ -145,8 +145,10 @@ class TestToolLoop:
     def test_tool_loop_caps_iterations(
         self, app_client: TestClient, xlsx_bytes: bytes, scripted_llm: MockLLMClient
     ) -> None:
-        # 無限ループ風: 常に tool_call を返す応答を 10 回キュー
-        for i in range(10):
+        # 無限ループ風: 上限回数までは常に tool_call を返す
+        from backend.routes.chat import MAX_TOOL_ITERATIONS
+
+        for i in range(MAX_TOOL_ITERATIONS):
             scripted_llm.queue_response(
                 LLMResponse(
                     content=None,
@@ -159,14 +161,18 @@ class TestToolLoop:
                     ],
                 )
             )
+        scripted_llm.queue_response(LLMResponse(content="確認できた範囲で回答します"))
         job_id = _setup_job(app_client, xlsx_bytes)
         r = app_client.post(f"/chat/{job_id}", json={"message": "loop"})
         assert r.status_code == 200
         # MAX_TOOL_ITERATIONS で打ち切られていること
         body = r.json()
-        from backend.routes.chat import MAX_TOOL_ITERATIONS
 
         assert len(body["tool_trace"]) == MAX_TOOL_ITERATIONS
+        assert body["reply"] == "確認できた範囲で回答します"
+        assert "tool loop max iterations" not in body["reply"]
+        assert scripted_llm.calls[-1]["messages"][-1]["role"] == "system"
+        assert "追加のツール呼び出しはせず" in scripted_llm.calls[-1]["messages"][-1]["content"]
 
     def test_history_contains_only_user_and_assistant(
         self, app_client: TestClient, xlsx_bytes: bytes, scripted_llm: MockLLMClient

@@ -242,7 +242,8 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "    このブックで使われている外部 Add-In 関数の一覧 (回数 / 主な使用箇所) を返す。",
         "    「このブックは Bloomberg をどこで使っている？」のような問いの起点に使う。",
         "",
-        "ツールの呼び出しに上限はありません。確実性を優先して、必要な回数呼んでください。",
+        "確実性を優先して必要な範囲でツールを呼んでください。",
+        "同じ観点の確認を繰り返さず、十分な根拠が集まったら回答をまとめてください。",
     ]
 )
 
@@ -369,10 +370,39 @@ def _run_tool_loop(
         total_usage.total_tokens,
         total_usage.cached_tokens,
     )
-    return (
-        (resp.content or "[tool loop max iterations reached; partial result]"),
-        tool_trace,
+    messages.append(
+        {
+            "role": "system",
+            "content": (
+                "ツール呼び出しの上限に達しました。追加のツール呼び出しはせず、"
+                "ここまでに得たツール結果と設計書だけを根拠に、分かる範囲で最終回答を"
+                "日本語でまとめてください。不明点は不明として明示してください。"
+            ),
+        }
     )
+    final_resp = llm.chat_completion_with_tools(
+        messages,
+        tools=[],
+        tier="pro",
+        cache_prefix=1,
+    )
+    if final_resp.usage is not None:
+        total_usage = total_usage + final_resp.usage
+        logger.info(
+            "llm forced final usage model=%s prompt=%d completion=%d total=%d cached=%d",
+            final_resp.model or "?",
+            final_resp.usage.prompt_tokens,
+            final_resp.usage.completion_tokens,
+            final_resp.usage.total_tokens,
+            final_resp.usage.cached_tokens,
+        )
+    reply = (final_resp.content or resp.content or "").strip()
+    if not reply:
+        reply = (
+            "ツール確認が上限に達し、最終回答を生成できませんでした。"
+            "質問範囲を少し絞ってもう一度聞いてください。"
+        )
+    return (reply, tool_trace)
 
 
 @router.post("/chat/{job_id}")
