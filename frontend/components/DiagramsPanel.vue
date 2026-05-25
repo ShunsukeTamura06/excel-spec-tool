@@ -130,6 +130,28 @@ const viewItems = computed(() => [
         <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="currentColor" stroke-width="2"/></svg>
         矢印の太さ = 参照回数 (×N はエッジに併記)
       </span>
+      <span class="flex items-center gap-1">
+        <span class="inline-flex items-center gap-0.5">
+          <span class="block h-0.5 w-3 rounded bg-blue-600" />
+          <span class="block h-0.5 w-3 rounded bg-emerald-600" />
+          <span class="block h-0.5 w-3 rounded bg-red-600" />
+        </span>
+        線色 = 起点グループ
+      </span>
+      <span v-if="view === 'vba_calls'" class="flex items-center gap-1">
+        <svg width="22" height="6">
+          <line
+            x1="0"
+            y1="3"
+            x2="22"
+            y2="3"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-dasharray="5 3"
+          />
+        </svg>
+        破線 = VBA 呼び出し
+      </span>
     </div>
 
     <ClientOnly>

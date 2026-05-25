@@ -7,7 +7,7 @@
  */
 
 import dagre from 'dagre'
-import { MarkerType, type Edge, type Node } from '@vue-flow/core'
+import { MarkerType, Position, type Edge, type Node } from '@vue-flow/core'
 import type { Diagram } from '~/types/api'
 
 export interface LayoutOptions {
@@ -27,8 +27,35 @@ const DEFAULT_OPTS: Required<LayoutOptions> = {
   direction: 'LR',
   nodeWidth: 200,
   nodeHeight: 64,
-  rankSep: 90,
-  nodeSep: 30,
+  rankSep: 150,
+  nodeSep: 70,
+}
+
+const EDGE_PALETTE = [
+  '#2563eb',
+  '#059669',
+  '#dc2626',
+  '#7c3aed',
+  '#ca8a04',
+  '#0891b2',
+  '#db2777',
+  '#4f46e5',
+]
+
+function hashString(value: string): number {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0
+  }
+  return hash
+}
+
+function edgeColor(source: string, index: number): string {
+  return EDGE_PALETTE[(hashString(source) + index) % EDGE_PALETTE.length]
+}
+
+function edgeOffset(index: number): number {
+  return 18 + (index % 5) * 8
 }
 
 /** Diagram を Vue Flow 用の {nodes, edges} に変換する. */
@@ -56,6 +83,7 @@ export function layoutDiagram(d: Diagram, opts: LayoutOptions = {}) {
 
   const nodes: Node[] = d.nodes.map((n) => {
     const p = g.node(n.id)
+    const isHorizontal = o.direction === 'LR'
     return {
       id: n.id,
       type: 'specNode',
@@ -63,6 +91,8 @@ export function layoutDiagram(d: Diagram, opts: LayoutOptions = {}) {
         x: (p?.x ?? 0) - o.nodeWidth / 2,
         y: (p?.y ?? 0) - o.nodeHeight / 2,
       },
+      sourcePosition: isHorizontal ? Position.Right : Position.Bottom,
+      targetPosition: isHorizontal ? Position.Left : Position.Top,
       data: {
         label: n.label,
         kind: n.kind,
@@ -76,23 +106,47 @@ export function layoutDiagram(d: Diagram, opts: LayoutOptions = {}) {
   })
 
   const edges: Edge[] = d.edges.map((e, i) => {
-    // 太さ: weight に応じて 1.2〜4 で段階
-    const w = 1.2 + (e.weight / maxWeight) * 2.8
+    // 太さ: weight に応じて 1.4〜4.2 で段階
+    const w = 1.4 + (e.weight / maxWeight) * 2.8
+    const color = edgeColor(e.src, i)
     return {
       id: `e${i}-${e.src}->${e.dst}`,
       source: e.src,
       target: e.dst,
       // 重みが 2 以上のときだけラベル表示
       label: e.weight >= 2 ? `×${e.weight}` : undefined,
-      labelBgPadding: [4, 2],
-      labelBgBorderRadius: 4,
-      labelStyle: { fontSize: '10px', fontWeight: '600' },
+      labelShowBg: true,
+      labelBgPadding: [5, 3],
+      labelBgBorderRadius: 5,
+      labelBgStyle: {
+        fill: 'var(--ui-bg)',
+        stroke: color,
+        strokeWidth: 1,
+      },
+      labelStyle: {
+        fill: color,
+        fontSize: '10px',
+        fontWeight: '700',
+      },
       type: 'smoothstep',
-      animated: e.kind === 'call',
-      markerEnd: MarkerType.ArrowClosed,
+      pathOptions: {
+        offset: edgeOffset(i),
+        borderRadius: 10,
+      },
+      animated: false,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color,
+        width: 16,
+        height: 16,
+      },
+      class: ['spec-diagram-edge', `edge-kind-${e.kind}`],
+      interactionWidth: 18,
+      zIndex: Math.round(w * 10),
       style: {
         strokeWidth: w,
-        stroke: e.kind === 'call' ? 'var(--ui-color-info-500)' : 'var(--ui-color-primary-500)',
+        stroke: color,
+        opacity: 0.78,
       },
     }
   })

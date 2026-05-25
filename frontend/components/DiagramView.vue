@@ -46,7 +46,7 @@ const isEmpty = computed(() => props.diagram.nodes.length === 0)
 <template>
   <div
     class="relative w-full rounded-xl border border-(--ui-border) bg-(--ui-bg-elevated)/30 overflow-hidden"
-    style="height: 540px"
+    style="height: 640px"
   >
     <div
       v-if="isEmpty"
@@ -72,3 +72,22 @@ const isEmpty = computed(() => props.diagram.nodes.length === 0)
     </VueFlow>
   </div>
 </template>
+
+<style scoped>
+:deep(.spec-diagram-edge) {
+  transition:
+    opacity 120ms ease,
+    filter 120ms ease,
+    stroke-width 120ms ease;
+}
+
+:deep(.spec-diagram-edge:hover),
+:deep(.spec-diagram-edge.selected) {
+  opacity: 1 !important;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 35%, transparent));
+}
+
+:deep(.edge-kind-call) {
+  stroke-dasharray: 8 5;
+}
+</style>
