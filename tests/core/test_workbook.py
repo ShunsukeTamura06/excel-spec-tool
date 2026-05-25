@@ -4,6 +4,7 @@ xlsx は openpyxl で動的に作って tmp_path に書き出し、それを読�
 バイナリの xlsx fixture をコミットせずに済ませる。
 """
 
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -476,3 +477,68 @@ class TestFormControlsParser:
         wb.save(out)
         result = _extract_form_controls(out, ["S"])
         assert result == {"S": []}
+
+    def test_extracts_controls_from_all_vml_relationships(self, tmp_path: Path) -> None:
+        """1シートに複数VMLがある場合、後続VMLのボタンも抽出する."""
+        from core.extractors.workbook import _extract_form_controls
+
+        workbook_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Problem" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>
+"""
+        workbook_rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+                Target="worksheets/sheet1.xml"/>
+</Relationships>
+"""
+        sheet_rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing"
+                Target="../drawings/vmlDrawing1.vml"/>
+  <Relationship Id="rId2"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing"
+                Target="/xl/drawings/vmlDrawing2.vml"/>
+</Relationships>
+"""
+        empty_vml = """<?xml version="1.0" encoding="UTF-8"?>
+<xml xmlns:v="urn:schemas-microsoft-com:vml"
+     xmlns:x="urn:schemas-microsoft-com:office:excel">
+  <v:shape>
+    <x:ClientData ObjectType="Button"></x:ClientData>
+  </v:shape>
+</xml>
+"""
+        button_vml = """<?xml version="1.0" encoding="UTF-8"?>
+<xml xmlns:v="urn:schemas-microsoft-com:vml"
+     xmlns:x="urn:schemas-microsoft-com:office:excel"
+     xmlns:o="urn:schemas-microsoft-com:office:office">
+  <v:shape id="_x0000_s2048" o:spid="_x0000_s2048">
+    <v:textbox><div>実行</div></v:textbox>
+    <x:ClientData ObjectType="Button">
+      <x:Anchor>1,0,2,0,3,0,4,0</x:Anchor>
+      <x:FmlaMacro>Module1.Run</x:FmlaMacro>
+    </x:ClientData>
+  </v:shape>
+</xml>
+"""
+        xlsm = tmp_path / "multi_vml.xlsm"
+        with zipfile.ZipFile(xlsm, "w") as zf:
+            zf.writestr("xl/workbook.xml", workbook_xml)
+            zf.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+            zf.writestr("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels)
+            zf.writestr("xl/drawings/vmlDrawing1.vml", empty_vml)
+            zf.writestr("xl/drawings/vmlDrawing2.vml", button_vml)
+
+        result = _extract_form_controls(xlsm, ["Problem"])
+
+        assert len(result["Problem"]) == 1
+        assert result["Problem"][0].kind == "button"
+        assert result["Problem"][0].text == "実行"
+        assert result["Problem"][0].macro == "Module1.Run"

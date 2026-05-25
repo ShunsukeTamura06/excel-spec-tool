@@ -9,6 +9,7 @@ SPEC.md §4.2 参照。
 from __future__ import annotations
 
 import logging
+import posixpath
 import re
 import zipfile
 from pathlib import Path
@@ -285,17 +286,34 @@ _VML_NS = {
 _REL_NS = {"r": "http://schemas.openxmlformats.org/package/2006/relationships"}
 
 
-def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, str]:
-    """xlsm zip から「シート名 → vmlDrawing*.vml のフルパス」マップを返す.
+def _resolve_package_part(base_dir: str, target: str) -> str:
+    """Open XML パッケージ内の Relationship Target を正規化する.
 
-    手順:
-      1. xl/workbook.xml で sheet name → r:id を集める
-      2. xl/_rels/workbook.xml.rels で r:id → worksheets/sheet*.xml を解決
-      3. 各 xl/worksheets/_rels/sheet*.xml.rels から vmlDrawing への参照を取得
+    Args:
+        base_dir: relationship 所有パーツのディレクトリ。例: ``xl/worksheets``。
+        target: rels に書かれた Target。相対パスまたは ``/xl/...`` 形式。
 
-    rels の解決にコケたら部分結果でも返す (best-effort).
+    Returns:
+        zip 内で読める、先頭スラッシュなしの正規化パス。
     """
-    sheet_to_vml: dict[str, str] = {}
+    if not target:
+        return ""
+    if target.startswith("/"):
+        return posixpath.normpath(target.lstrip("/"))
+    return posixpath.normpath(posixpath.join(base_dir, target))
+
+
+def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, list[str]]:
+    """xlsm zip から「シート名 → vmlDrawing*.vml のフルパス一覧」を返す.
+
+    Args:
+        zf: xlsm/xltm/xlsb を開いた ZipFile。
+
+    Returns:
+        シート名をキー、関連する VML パーツ一覧を値にしたマップ。
+        rels の解決にコケた場合は、取れた範囲だけ返す。
+    """
+    sheet_to_vml: dict[str, list[str]] = {}
     try:
         wb_xml = zf.read("xl/workbook.xml")
         wb_rels = zf.read("xl/_rels/workbook.xml.rels")
@@ -306,7 +324,9 @@ def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, str]:
     rid_to_target: dict[str, str] = {}
     try:
         root = ET.fromstring(wb_rels)
-        for rel in root.iter("{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"):
+        for rel in root.iter(
+            "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+        ):
             rid_to_target[rel.attrib.get("Id", "")] = rel.attrib.get("Target", "")
     except ET.ParseError:
         return sheet_to_vml
@@ -322,8 +342,8 @@ def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, str]:
             target = rid_to_target.get(rid, "")
             if not name or not target:
                 continue
-            # target は通常 "worksheets/sheet1.xml" (xl/ からの相対)
-            sheet_path = f"xl/{target}" if not target.startswith("xl/") else target
+            # workbook.xml.rels の Target は通常 "worksheets/sheet1.xml"。
+            sheet_path = _resolve_package_part("xl", target)
             name_to_sheet_path[name] = sheet_path
     except ET.ParseError:
         return sheet_to_vml
@@ -349,15 +369,8 @@ def _xlsm_sheet_to_vml_map(zf: zipfile.ZipFile) -> dict[str, str]:
         ):
             target = rel.attrib.get("Target", "")
             if "vmlDrawing" in target and target.endswith(".vml"):
-                # 相対パスを正規化: target は "../drawings/vmlDrawing1.vml" 等
-                # dir_part = "xl/worksheets" の前提で 1 階層上に上がる
-                # 雑だが xlsm の構造は固定なので OK
-                if target.startswith("../"):
-                    vml_path = "xl/" + target[len("../"):]
-                else:
-                    vml_path = f"{dir_part}/{target}"
-                sheet_to_vml[name] = vml_path
-                break
+                vml_path = _resolve_package_part(dir_part, target)
+                sheet_to_vml.setdefault(name, []).append(vml_path)
 
     return sheet_to_vml
 
@@ -468,14 +481,15 @@ def _extract_form_controls(file_path: Path, sheet_names: list[str]) -> dict[str,
     try:
         with zipfile.ZipFile(file_path) as zf:
             sheet_to_vml = _xlsm_sheet_to_vml_map(zf)
-            for sheet_name, vml_path in sheet_to_vml.items():
-                try:
-                    vml_bytes = zf.read(vml_path)
-                except KeyError:
+            for sheet_name, vml_paths in sheet_to_vml.items():
+                if sheet_name not in out:
                     continue
-                controls = _parse_vml_form_controls(vml_bytes)
-                if controls and sheet_name in out:
-                    out[sheet_name] = controls
+                for vml_path in vml_paths:
+                    try:
+                        vml_bytes = zf.read(vml_path)
+                    except KeyError:
+                        continue
+                    out[sheet_name].extend(_parse_vml_form_controls(vml_bytes))
     except (zipfile.BadZipFile, OSError) as e:
         logger.warning("failed to read form controls from %s: %s", file_path.name, e)
     return out
