@@ -252,7 +252,7 @@ const examples = [
 </script>
 
 <template>
-  <div class="flex flex-col gap-4" style="height: calc(100vh - 3rem)">
+  <div class="h-[calc(100vh-3rem)] min-h-0 overflow-hidden flex flex-col gap-3">
     <!-- パンくず + ヘッダー -->
     <div class="flex items-center justify-between gap-3 flex-wrap">
       <div class="flex items-center gap-2 text-sm text-(--ui-text-muted)">
@@ -284,8 +284,11 @@ const examples = [
       :description="loadError"
     />
 
-    <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[18rem_1fr] gap-4">
-      <UCard :ui="{ body: 'p-3' }" class="min-h-0 overflow-hidden">
+    <div class="flex-1 min-h-0 flex flex-col lg:flex-row gap-3">
+      <UCard
+        :ui="{ body: 'p-2 sm:p-3 h-full min-h-0' }"
+        class="h-32 sm:h-40 lg:h-full lg:w-72 shrink-0 min-h-0 overflow-hidden"
+      >
         <div class="h-full flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <h2 class="text-sm font-semibold text-(--ui-text-highlighted)">相談</h2>
@@ -357,8 +360,8 @@ const examples = [
         </div>
       </UCard>
 
-      <div class="min-h-0 flex flex-col gap-3">
-        <UCard :ui="{ body: 'p-3' }">
+      <div class="flex-1 h-full min-h-0 flex flex-col gap-3">
+        <UCard :ui="{ body: 'p-2 sm:p-3' }">
           <div class="flex items-center justify-between gap-3 flex-wrap">
             <div class="min-w-0 flex-1">
               <div v-if="editingTitle" class="flex items-center gap-2">
@@ -381,12 +384,12 @@ const examples = [
                     アーカイブ済み
                   </UBadge>
                 </div>
-                <p class="text-xs text-(--ui-text-muted) mt-1">
+                <p class="hidden sm:block text-xs text-(--ui-text-muted) mt-1">
                   この相談は現在のExcel解析結果に紐づきます。
                 </p>
               </div>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 shrink-0">
               <UButton
                 icon="i-lucide-pencil"
                 color="neutral"
@@ -413,12 +416,12 @@ const examples = [
 
         <!-- 履歴エリア -->
         <UCard
-          :ui="{ body: 'p-0' }"
+          :ui="{ body: 'p-0 h-full min-h-0 overflow-hidden' }"
           class="flex-1 min-h-0 overflow-hidden"
         >
           <div
             ref="scrollContainer"
-            class="h-full overflow-y-auto px-4 py-6 space-y-5"
+            class="h-full min-h-0 overflow-y-auto px-4 py-6 space-y-5"
           >
             <!-- 履歴ロード中インジケータ (空状態とは別; ロード完了まで空状態を出さない) -->
             <div
@@ -486,7 +489,7 @@ const examples = [
         <ToolTraceList :items="lastToolTrace" />
 
         <!-- 入力欄 -->
-        <UCard :ui="{ body: 'p-3' }">
+        <UCard :ui="{ body: 'p-2 sm:p-3' }">
           <div class="space-y-2">
             <UTextarea
               v-model="input"
