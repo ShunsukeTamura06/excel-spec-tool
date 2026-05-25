@@ -32,7 +32,22 @@ async function onSelect(file: File) {
   analyzingFilename.value = file.name
   errorMessage.value = ''
   try {
-    const jobId = await backend.extract(file)
+    const extractResult = await backend.extract(file)
+    const jobId = extractResult.job_id
+    if (extractResult.duplicate) {
+      phase.value = 'done'
+      jobStore.setCurrentJobId(jobId)
+      await jobStore.refreshJobs()
+      toast.add({
+        title: '既存の分析結果を開きます',
+        description: `${file.name} は同じ内容のジョブがあるため、再分析せずに再利用しました`,
+        color: 'neutral',
+        icon: 'i-lucide-copy-check',
+      })
+      setTimeout(() => navigateTo(`/spec/${jobId}`), 200)
+      return
+    }
+
     phase.value = 'analyzing'
     await backend.analyze(jobId)
     phase.value = 'done'
@@ -100,6 +115,8 @@ const stats = computed(() => {
   const failed = jobStore.jobs.filter(j => j.status === 'failed').length
   return { total, analyzed, failed }
 })
+
+const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0, 10) ?? '')
 </script>
 
 <template>
@@ -146,6 +163,7 @@ const stats = computed(() => {
               <div class="flex items-center gap-2 mt-1">
                 <JobStatusBadge :status="jobStore.currentJob.status" size="sm" />
                 <span class="text-xs text-(--ui-text-muted)">{{ jobStore.currentJob.created_at.slice(0, 16).replace('T', ' ') }}</span>
+                <span v-if="currentFileHash" class="text-xs font-mono text-(--ui-text-muted)">sha256:{{ currentFileHash }}</span>
               </div>
             </div>
           </div>

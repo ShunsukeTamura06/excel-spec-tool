@@ -15,6 +15,8 @@ const created = computed(() => {
   const s = props.job.created_at
   return s ? s.slice(0, 16).replace('T', ' ') : ''
 })
+
+const shortHash = computed(() => props.job.file_sha256?.slice(0, 10) ?? '')
 </script>
 
 <template>
@@ -37,7 +39,9 @@ const created = computed(() => {
           <JobStatusBadge :status="job.status" size="sm" />
           <span class="text-xs text-(--ui-text-muted)">{{ created }}</span>
         </div>
-        <p class="text-[10px] font-mono text-(--ui-text-muted) mt-1 truncate">{{ job.job_id }}</p>
+        <p class="text-[10px] font-mono text-(--ui-text-muted) mt-1 truncate">
+          {{ shortHash ? `sha256:${shortHash}` : job.job_id }}
+        </p>
       </div>
       <div class="flex flex-col gap-1.5 shrink-0">
         <UButton

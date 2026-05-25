@@ -2,12 +2,12 @@
 /**
  * チャットページ — 改修対話.
  *
- * - 上部: ヘッダー (パンくず + ファイル名 + spec/diagram へのリンク)
- * - 中央: メッセージ履歴 (スクロール)
+ * - 左: 同じ Excel ジョブ配下の相談セッション一覧
+ * - 中央: 選択中セッションのメッセージ履歴
  * - 下部: 直近ツール呼び出し + メッセージ入力欄
  */
 
-import type { ChatMessage, ToolTraceItem } from '~/types/api'
+import type { ChatMessage, ChatSessionMeta, ToolTraceItem } from '~/types/api'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: 'チャット — Excelツール改修支援AI' })
@@ -19,16 +19,60 @@ const toast = useToast()
 
 const jobId = computed(() => String(route.params.jobId))
 
-// 履歴ロード
+const sessions = ref<ChatSessionMeta[]>([])
+const activeSessionId = ref('default')
+const showArchived = ref(false)
 const history = ref<ChatMessage[]>([])
 const loading = ref(false)
 const loadError = ref('')
 
+const activeSession = computed(() => {
+  return sessions.value.find(s => s.session_id === activeSessionId.value) ?? null
+})
+
+const visibleSessions = computed(() => {
+  return sessions.value.filter(s => showArchived.value || !s.archived)
+})
+
+function sessionTime(session: ChatSessionMeta) {
+  return session.updated_at ? session.updated_at.slice(0, 16).replace('T', ' ') : ''
+}
+
+function sessionPreview(session: ChatSessionMeta) {
+  if (session.last_message_preview) return session.last_message_preview
+  return session.message_count > 0 ? `${session.message_count}件のメッセージ` : 'まだメッセージはありません'
+}
+
+async function updateSessionQuery(sessionId: string) {
+  await navigateTo(
+    { path: route.path, query: { ...route.query, session: sessionId } },
+    { replace: true },
+  )
+}
+
+async function refreshSessionsOnly() {
+  sessions.value = await backend.listChatSessions(jobId.value, true)
+}
+
 async function loadHistory() {
+  history.value = await backend.getChatHistory(jobId.value, activeSessionId.value)
+}
+
+async function loadChatState() {
   loading.value = true
   loadError.value = ''
   try {
-    history.value = await backend.getChatHistory(jobId.value)
+    await refreshSessionsOnly()
+    const querySession = typeof route.query.session === 'string' ? route.query.session : ''
+    const activeCandidates = sessions.value.filter(s => !s.archived)
+    const selected = sessions.value.find(s => s.session_id === querySession)
+      ?? activeCandidates[0]
+      ?? sessions.value[0]
+    activeSessionId.value = selected?.session_id ?? 'default'
+    if (route.query.session !== activeSessionId.value) {
+      await updateSessionQuery(activeSessionId.value)
+    }
+    await loadHistory()
   } catch (e) {
     loadError.value = friendlyMessage(e)
   } finally {
@@ -36,13 +80,111 @@ async function loadHistory() {
   }
 }
 
-// 履歴取得とジョブストア同期はナビゲーションをブロックしないよう onMounted で実行.
-// 取得中は空状態 (もしくは loading 表示) を見せ、終わったら履歴を埋める.
 onMounted(() => {
   if (jobStore.currentJobId !== jobId.value) jobStore.setCurrentJobId(jobId.value)
   void jobStore.refreshJobs()
-  void loadHistory()
+  void loadChatState()
 })
+
+async function selectSession(session: ChatSessionMeta) {
+  activeSessionId.value = session.session_id
+  lastToolTrace.value = []
+  await updateSessionQuery(session.session_id)
+  loading.value = true
+  loadError.value = ''
+  try {
+    await loadHistory()
+  } catch (e) {
+    loadError.value = friendlyMessage(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function createSession() {
+  try {
+    const session = await backend.createChatSession(jobId.value)
+    await refreshSessionsOnly()
+    await selectSession(session)
+  } catch (e) {
+    toast.add({
+      title: '相談の作成に失敗しました',
+      description: friendlyMessage(e),
+      color: 'error',
+      icon: 'i-lucide-alert-triangle',
+    })
+  }
+}
+
+async function archiveCurrentSession() {
+  const session = activeSession.value
+  if (!session) return
+  try {
+    await backend.updateChatSession(jobId.value, session.session_id, { archived: true })
+    await refreshSessionsOnly()
+    const next = sessions.value.find(s => !s.archived)
+    if (next) {
+      await selectSession(next)
+    } else {
+      await createSession()
+    }
+    toast.add({ title: '相談をアーカイブしました', color: 'neutral', icon: 'i-lucide-archive' })
+  } catch (e) {
+    toast.add({
+      title: 'アーカイブに失敗しました',
+      description: friendlyMessage(e),
+      color: 'error',
+      icon: 'i-lucide-alert-triangle',
+    })
+  }
+}
+
+async function restoreSession(session: ChatSessionMeta) {
+  try {
+    const restored = await backend.updateChatSession(jobId.value, session.session_id, {
+      archived: false,
+    })
+    await refreshSessionsOnly()
+    await selectSession(restored)
+  } catch (e) {
+    toast.add({
+      title: '復元に失敗しました',
+      description: friendlyMessage(e),
+      color: 'error',
+      icon: 'i-lucide-alert-triangle',
+    })
+  }
+}
+
+const editingTitle = ref(false)
+const titleDraft = ref('')
+
+function beginTitleEdit() {
+  titleDraft.value = activeSession.value?.title ?? ''
+  editingTitle.value = true
+}
+
+async function saveTitle() {
+  const session = activeSession.value
+  const title = titleDraft.value.trim()
+  if (!session || !title) {
+    editingTitle.value = false
+    return
+  }
+  try {
+    await backend.updateChatSession(jobId.value, session.session_id, { title })
+    await refreshSessionsOnly()
+  } catch (e) {
+    toast.add({
+      title: 'タイトル変更に失敗しました',
+      description: friendlyMessage(e),
+      color: 'error',
+      icon: 'i-lucide-alert-triangle',
+    })
+  } finally {
+    editingTitle.value = false
+  }
+}
 
 // 送信
 const input = ref('')
@@ -74,9 +216,10 @@ async function send() {
   scrollToBottom()
 
   try {
-    const r = await backend.chat(jobId.value, msg)
+    const r = await backend.chat(jobId.value, msg, activeSessionId.value)
     history.value = r.history
     lastToolTrace.value = r.tool_trace ?? []
+    await refreshSessionsOnly()
     scrollToBottom()
   } catch (e) {
     sendError.value = friendlyMessage(e)
@@ -141,109 +284,238 @@ const examples = [
       :description="loadError"
     />
 
-    <!-- 履歴エリア -->
-    <UCard
-      :ui="{ body: 'p-0' }"
-      class="flex-1 min-h-0 overflow-hidden"
-    >
-      <div
-        ref="scrollContainer"
-        class="h-full overflow-y-auto px-4 py-6 space-y-5"
-      >
-        <!-- 履歴ロード中インジケータ (空状態とは別; ロード完了まで空状態を出さない) -->
-        <div
-          v-if="loading && history.length === 0"
-          class="h-full flex items-center justify-center gap-2 text-(--ui-text-muted)"
-        >
-          <UIcon name="i-lucide-loader-2" class="animate-spin size-4" />
-          <span class="text-sm">履歴を読み込み中...</span>
-        </div>
-
-        <!-- 空状態 (履歴ロード完了 & メッセージなし) -->
-        <div
-          v-else-if="!loading && history.length === 0"
-          class="h-full flex flex-col items-center justify-center text-center gap-3 py-10"
-        >
-          <div class="size-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center">
-            <UIcon name="i-lucide-sparkles" class="size-7" />
-          </div>
-          <div class="space-y-1">
-            <p class="font-semibold text-(--ui-text-highlighted)">改修について質問しましょう</p>
-            <p class="text-xs text-(--ui-text-muted) max-w-md">
-              設計書とツールを根拠に、改修手順と波及範囲を提案します。
-              質問例から始めるか、自由に入力してください.
-            </p>
-          </div>
-          <div class="flex flex-wrap gap-2 justify-center max-w-xl">
+    <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[18rem_1fr] gap-4">
+      <UCard :ui="{ body: 'p-3' }" class="min-h-0 overflow-hidden">
+        <div class="h-full flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="text-sm font-semibold text-(--ui-text-highlighted)">相談</h2>
             <UButton
-              v-for="ex in examples"
-              :key="ex"
-              size="sm"
+              icon="i-lucide-plus"
+              color="primary"
               variant="soft"
-              color="neutral"
-              icon="i-lucide-corner-down-left"
-              @click="input = ex"
+              size="xs"
+              @click="createSession"
             >
-              {{ ex }}
+              新しい相談
             </UButton>
           </div>
-        </div>
-
-        <!-- メッセージ -->
-        <ChatMessageBubble
-          v-for="(m, i) in history"
-          :key="i"
-          :message="m"
-          :job-id="jobId"
-        />
-
-        <!-- アシスタント応答中インジケータ -->
-        <div v-if="sending" class="flex gap-3">
-          <div class="size-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center shrink-0">
-            <UIcon name="i-lucide-sparkles" class="size-4" />
-          </div>
-          <div class="rounded-2xl rounded-tl-sm px-4 py-3 bg-(--ui-bg-elevated) flex items-center gap-2">
-            <span class="size-2 rounded-full bg-(--ui-text-muted) animate-pulse" style="animation-delay: 0ms" />
-            <span class="size-2 rounded-full bg-(--ui-text-muted) animate-pulse" style="animation-delay: 150ms" />
-            <span class="size-2 rounded-full bg-(--ui-text-muted) animate-pulse" style="animation-delay: 300ms" />
-            <span class="text-xs text-(--ui-text-muted) ml-1">考え中…</span>
-          </div>
-        </div>
-      </div>
-    </UCard>
-
-    <!-- 直近のツール呼び出し -->
-    <ToolTraceList :items="lastToolTrace" />
-
-    <!-- 入力欄 -->
-    <UCard :ui="{ body: 'p-3' }">
-      <div class="space-y-2">
-        <UTextarea
-          v-model="input"
-          placeholder="改修したい内容や質問を入力 (Cmd/Ctrl + Enter で送信)"
-          :rows="3"
-          :disabled="sending"
-          autoresize
-          :maxrows="8"
-          class="w-full"
-          @keydown="onKeydown"
-        />
-        <div class="flex items-center justify-between gap-2">
-          <p class="text-[10px] text-(--ui-text-muted) flex items-center gap-1">
-            <UIcon name="i-lucide-info" class="size-3" />
-            応答には数十秒かかる場合があります (LLM 呼び出し + ツール反復)。
-          </p>
           <UButton
-            :loading="sending"
-            :disabled="!input.trim()"
-            color="primary"
-            icon="i-lucide-send"
-            @click="send"
+            :icon="showArchived ? 'i-lucide-eye-off' : 'i-lucide-archive'"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+            block
+            @click="showArchived = !showArchived"
           >
-            送信
+            {{ showArchived ? 'アーカイブを隠す' : 'アーカイブ済みを表示' }}
           </UButton>
+
+          <div class="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
+            <div
+              v-for="session in visibleSessions"
+              :key="session.session_id"
+              class="rounded-lg border p-2 transition-colors"
+              :class="[
+                session.session_id === activeSessionId
+                  ? 'border-(--ui-primary) bg-(--ui-primary)/5'
+                  : 'border-(--ui-border) hover:bg-(--ui-bg-muted)/50',
+                session.archived && 'opacity-70',
+              ]"
+            >
+              <button class="w-full text-left min-w-0" @click="selectSession(session)">
+                <div class="flex items-center gap-2 min-w-0">
+                  <UIcon
+                    :name="session.archived ? 'i-lucide-archive' : 'i-lucide-message-square'"
+                    class="size-3.5 text-(--ui-text-muted) shrink-0"
+                  />
+                  <p class="text-sm font-medium text-(--ui-text-highlighted) truncate">
+                    {{ session.title }}
+                  </p>
+                </div>
+                <p class="text-xs text-(--ui-text-muted) mt-1 line-clamp-2">
+                  {{ sessionPreview(session) }}
+                </p>
+                <div class="flex items-center justify-between gap-2 mt-2">
+                  <span class="text-[10px] text-(--ui-text-muted)">{{ sessionTime(session) }}</span>
+                  <span class="text-[10px] text-(--ui-text-muted)">{{ session.message_count }}件</span>
+                </div>
+              </button>
+              <div v-if="session.archived" class="mt-2">
+                <UButton
+                  icon="i-lucide-rotate-ccw"
+                  color="neutral"
+                  variant="soft"
+                  size="xs"
+                  block
+                  @click="restoreSession(session)"
+                >
+                  復元
+                </UButton>
+              </div>
+            </div>
+          </div>
         </div>
+      </UCard>
+
+      <div class="min-h-0 flex flex-col gap-3">
+        <UCard :ui="{ body: 'p-3' }">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="min-w-0 flex-1">
+              <div v-if="editingTitle" class="flex items-center gap-2">
+                <UInput
+                  v-model="titleDraft"
+                  size="sm"
+                  class="max-w-md"
+                  autofocus
+                  @keydown.enter.prevent="saveTitle"
+                  @keydown.esc.prevent="editingTitle = false"
+                />
+                <UButton icon="i-lucide-check" color="primary" size="xs" @click="saveTitle" />
+              </div>
+              <div v-else class="min-w-0">
+                <div class="flex items-center gap-2 min-w-0">
+                  <p class="font-semibold text-(--ui-text-highlighted) truncate">
+                    {{ activeSession?.title ?? '新しい相談' }}
+                  </p>
+                  <UBadge v-if="activeSession?.archived" color="neutral" variant="soft" size="sm">
+                    アーカイブ済み
+                  </UBadge>
+                </div>
+                <p class="text-xs text-(--ui-text-muted) mt-1">
+                  この相談は現在のExcel解析結果に紐づきます。
+                </p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <UButton
+                icon="i-lucide-pencil"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                :disabled="!activeSession"
+                @click="beginTitleEdit"
+              >
+                名前を変更
+              </UButton>
+              <UButton
+                icon="i-lucide-archive"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                :disabled="!activeSession || activeSession.archived"
+                @click="archiveCurrentSession"
+              >
+                アーカイブ
+              </UButton>
+            </div>
+          </div>
+        </UCard>
+
+        <!-- 履歴エリア -->
+        <UCard
+          :ui="{ body: 'p-0' }"
+          class="flex-1 min-h-0 overflow-hidden"
+        >
+          <div
+            ref="scrollContainer"
+            class="h-full overflow-y-auto px-4 py-6 space-y-5"
+          >
+            <!-- 履歴ロード中インジケータ (空状態とは別; ロード完了まで空状態を出さない) -->
+            <div
+              v-if="loading && history.length === 0"
+              class="h-full flex items-center justify-center gap-2 text-(--ui-text-muted)"
+            >
+              <UIcon name="i-lucide-loader-2" class="animate-spin size-4" />
+              <span class="text-sm">履歴を読み込み中...</span>
+            </div>
+
+            <!-- 空状態 (履歴ロード完了 & メッセージなし) -->
+            <div
+              v-else-if="!loading && history.length === 0"
+              class="h-full flex flex-col items-center justify-center text-center gap-3 py-10"
+            >
+              <div class="size-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center">
+                <UIcon name="i-lucide-sparkles" class="size-7" />
+              </div>
+              <div class="space-y-1">
+                <p class="font-semibold text-(--ui-text-highlighted)">改修について質問しましょう</p>
+                <p class="text-xs text-(--ui-text-muted) max-w-md">
+                  設計書とツールを根拠に、改修手順と波及範囲を提案します。
+                  質問例から始めるか、自由に入力してください.
+                </p>
+              </div>
+              <div class="flex flex-wrap gap-2 justify-center max-w-xl">
+                <UButton
+                  v-for="ex in examples"
+                  :key="ex"
+                  size="sm"
+                  variant="soft"
+                  color="neutral"
+                  icon="i-lucide-corner-down-left"
+                  @click="input = ex"
+                >
+                  {{ ex }}
+                </UButton>
+              </div>
+            </div>
+
+            <!-- メッセージ -->
+            <ChatMessageBubble
+              v-for="(m, i) in history"
+              :key="i"
+              :message="m"
+              :job-id="jobId"
+            />
+
+            <!-- アシスタント応答中インジケータ -->
+            <div v-if="sending" class="flex gap-3">
+              <div class="size-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center shrink-0">
+                <UIcon name="i-lucide-sparkles" class="size-4" />
+              </div>
+              <div class="rounded-2xl rounded-tl-sm px-4 py-3 bg-(--ui-bg-elevated) flex items-center gap-2">
+                <span class="size-2 rounded-full bg-(--ui-text-muted) animate-pulse" style="animation-delay: 0ms" />
+                <span class="size-2 rounded-full bg-(--ui-text-muted) animate-pulse" style="animation-delay: 150ms" />
+                <span class="size-2 rounded-full bg-(--ui-text-muted) animate-pulse" style="animation-delay: 300ms" />
+                <span class="text-xs text-(--ui-text-muted) ml-1">考え中…</span>
+              </div>
+            </div>
+          </div>
+        </UCard>
+
+        <!-- 直近のツール呼び出し -->
+        <ToolTraceList :items="lastToolTrace" />
+
+        <!-- 入力欄 -->
+        <UCard :ui="{ body: 'p-3' }">
+          <div class="space-y-2">
+            <UTextarea
+              v-model="input"
+              placeholder="改修したい内容や質問を入力 (Cmd/Ctrl + Enter で送信)"
+              :rows="3"
+              :disabled="sending || activeSession?.archived"
+              autoresize
+              :maxrows="8"
+              class="w-full"
+              @keydown="onKeydown"
+            />
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[10px] text-(--ui-text-muted) flex items-center gap-1">
+                <UIcon name="i-lucide-info" class="size-3" />
+                応答には数十秒かかる場合があります (LLM 呼び出し + ツール反復)。
+              </p>
+              <UButton
+                :loading="sending"
+                :disabled="!input.trim() || activeSession?.archived"
+                color="primary"
+                icon="i-lucide-send"
+                @click="send"
+              >
+                送信
+              </UButton>
+            </div>
+          </div>
+        </UCard>
       </div>
-    </UCard>
+    </div>
   </div>
 </template>

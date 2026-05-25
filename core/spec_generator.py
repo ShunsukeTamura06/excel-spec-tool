@@ -21,11 +21,39 @@ from core.models import (
 
 _TOP_FORMULAS_PER_SHEET = 10
 _TOP_REFERENCES_GLOBAL = 20
+_REFERENCE_ANALYSIS_NOTE = (
+    "参照解析は静的解析です。数式参照と、VBA の静的に確定できる "
+    '`Range("A1")` / `Worksheets("Sheet").Range("A1")` / '
+    '`Sheets("Sheet").Cells(2, 8)` / `[Sheet!A1]` などを対象にします。'
+    '`Range("A" & row)`、`Range(addr)`、`ActiveSheet`、`Selection`、'
+    "`Offset` / `Resize` など実行時に決まる参照は検出対象外です。"
+    "参照が 0 件でも、動的参照まで含めて影響がないとは限りません。"
+)
 
 
 def _md_escape(s: str) -> str:
     """Markdown テーブル中で扱いづらい文字をエスケープする (パイプと改行)."""
     return s.replace("|", "\\|").replace("\n", " ")
+
+
+def _md_cell_list(values: Iterable[str], *, limit: int = 3, empty: str = "-") -> str:
+    """Markdown テーブルセル内に複数値をコンパクトに並べる.
+
+    Args:
+        values: 表示する文字列列.
+        limit: 表示する最大件数.
+        empty: 値がない場合の表示.
+
+    Returns:
+        `<br>` 区切りの短い一覧。超過分は件数だけ示す。
+    """
+    items = [_md_escape(v) for v in values if v]
+    if not items:
+        return empty
+    shown = items[:limit]
+    if len(items) > limit:
+        shown.append(f"... 他 {len(items) - limit} 件")
+    return "<br>".join(shown)
 
 
 def _section_overview(wb: Workbook) -> str:
@@ -76,124 +104,140 @@ def _pick_top_formulas(formulas: Iterable[CellFormula], n: int) -> list[CellForm
 
 
 def _section_sheet_details(wb: Workbook) -> str:
-    """## 3. シート詳細 (シートごとのサブセクション)."""
+    """## 3. シート詳細を横断テーブル中心に生成する."""
     lines = ["## 3. シート詳細"]
     if not wb.sheets:
         lines += ["", "_(シートなし)_"]
         return "\n".join(lines)
 
+    lines += [
+        "",
+        "### 3.1 業務サマリ",
+        "",
+        "| シート | 用途 | 利用シーン | IN | OUT | 主要計算 |",
+        "|---|---|---|---|---|---|",
+    ]
     for s in wb.sheets:
-        lines += ["", f"### {s.name}"]
-        if s.purpose:
-            lines += ["", f"- 用途（推定）: {s.purpose}"]
-        else:
-            lines += ["", "- 用途（推定）: _未設定_"]
+        lines.append(
+            "| {name} | {purpose} | {scenario} | {inputs} | {outputs} | {calcs} |".format(
+                name=_md_escape(s.name),
+                purpose=_md_escape(s.purpose) if s.purpose else "_未設定_",
+                scenario=_md_escape(s.usage_scenario) if s.usage_scenario else "-",
+                inputs=_md_cell_list(s.inputs),
+                outputs=_md_cell_list(s.outputs),
+                calcs=_md_cell_list(s.main_calculations),
+            )
+        )
 
-        # 構造化注釈 (LLM が JSON で返した詳細). 各フィールドは任意.
-        if s.usage_scenario:
-            lines += [f"- 想定利用シーン: {s.usage_scenario}"]
-        if s.inputs:
-            lines += [f"- 依存元 (IN): {', '.join(s.inputs)}"]
-        if s.outputs:
-            lines += [f"- 出力先 (OUT): {', '.join(s.outputs)}"]
-        if s.main_calculations:
-            lines += ["", "#### 主要計算 (LLM 説明)"]
-            for c in s.main_calculations:
-                lines.append(f"- {c}")
+    lines += [
+        "",
+        "### 3.2 構成サマリ",
+        "",
+        "| シート | サイズ | 数式 | 名前付き範囲 | 入力規則 | フォーム | "
+        "テーブル | 条件付き書式 | マージ |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for s in wb.sheets:
+        lines.append(
+            "| {name} | {shape} | {formulas} | {named} | {validations} | {controls} | "
+            "{tables} | {formats} | {merged} |".format(
+                name=_md_escape(s.name),
+                shape=f"{s.rows}×{s.cols}",
+                formulas=len(s.formulas),
+                named=len(s.named_ranges),
+                validations=len(s.data_validations),
+                controls=len(s.form_controls),
+                tables=len(s.tables),
+                formats=len(s.conditional_formats),
+                merged=len(s.merged_ranges),
+            )
+        )
 
-        # 主要数式
+    lines += [
+        "",
+        "### 3.3 主要数式",
+    ]
+    formula_rows: list[str] = []
+    for s in wb.sheets:
         top = _pick_top_formulas(s.formulas, _TOP_FORMULAS_PER_SHEET)
-        lines += ["", f"#### 主要数式 (TOP {min(_TOP_FORMULAS_PER_SHEET, len(s.formulas))})"]
-        if not top:
-            lines += ["", "_(数式なし)_"]
-        else:
-            lines += [
-                "",
-                "| セル | 数式 | 参照先 | 注釈 |",
-                "|---|---|---|---|",
-            ]
-            for f in top:
-                refs_str = ", ".join(f.refs) if f.refs else "-"
-                annot = f.annotation if f.annotation else ""
-                lines.append(
-                    "| `{c}` | `{fm}` | {r} | {a} |".format(
-                        c=_md_escape(f.coord),
-                        fm=_md_escape(f.formula),
-                        r=_md_escape(refs_str),
-                        a=_md_escape(annot) if annot else "-",
-                    )
-                )
+        for f in top:
+            refs_str = ", ".join(f.refs) if f.refs else "-"
+            annot = f.annotation if f.annotation else "-"
+            formula_rows.append(
+                f"| {_md_escape(s.name)} | `{_md_escape(f.coord)}` | "
+                f"`{_md_escape(f.formula)}` | {_md_escape(refs_str)} | "
+                f"{_md_escape(annot)} |"
+            )
+    if not formula_rows:
+        lines += ["", "_(数式なし)_"]
+    else:
+        lines += [
+            "",
+            f"各シート最大 {_TOP_FORMULAS_PER_SHEET} 件。",
+            "",
+            "| シート | セル | 数式 | 参照先 | 注釈 |",
+            "|---|---|---|---|---|",
+            *formula_rows,
+        ]
 
-        # 名前付き範囲
-        lines += ["", "#### 名前付き範囲"]
-        if not s.named_ranges:
-            lines += ["", "_(なし)_"]
-        else:
-            lines += ["", "| 名前 | 参照先 |", "|---|---|"]
-            for nr in s.named_ranges:
-                lines.append(f"| {_md_escape(nr.name)} | `{_md_escape(nr.refers_to)}` |")
-
-        # 条件付き書式
-        lines += ["", "#### 条件付き書式"]
-        if not s.conditional_formats:
-            lines += ["", "_(なし)_"]
-        else:
-            lines += ["", "| 範囲 | ルール |", "|---|---|"]
-            for cf in s.conditional_formats:
-                lines.append(f"| `{_md_escape(cf.range)}` | {_md_escape(cf.rule)} |")
-
-        # データ検証 (入力規則)
-        if s.data_validations:
-            lines += ["", "#### 入力規則"]
-            lines += [
-                "",
-                "| 範囲 | 種別 | 値 / 数式 | プロンプト |",
-                "|---|---|---|---|",
-            ]
-            for dv in s.data_validations:
-                op = f" {dv.operator}" if dv.operator else ""
-                value = f"{_md_escape(dv.formula)}{_md_escape(op)}".strip() if dv.formula else "-"
-                lines.append(
-                    f"| `{_md_escape(dv.range)}` | {_md_escape(dv.type)} | "
-                    f"{value} | {_md_escape(dv.prompt) if dv.prompt else '-'} |"
-                )
-
-        # フォームコントロール (ボタン → マクロ)
-        if s.form_controls:
-            lines += ["", "#### フォームコントロール（ボタン等）"]
-            lines += [
-                "",
-                "| 種別 | 表示テキスト | 配置 | 紐づけマクロ |",
-                "|---|---|---|---|",
-            ]
-            for fc in s.form_controls:
-                text = _md_escape(fc.text) if fc.text else "-"
-                anchor = f"`{_md_escape(fc.anchor)}`" if fc.anchor else "-"
-                macro = f"`{_md_escape(fc.macro)}`" if fc.macro else "-"
-                lines.append(f"| {_md_escape(fc.kind)} | {text} | {anchor} | {macro} |")
-
-        # Excel テーブル (ListObject) — ユーザーが明示的に定義したテーブルのみ
-        lines += ["", "#### Excel テーブル（明示的に定義されているもの）"]
-        if not s.tables:
-            lines += ["", "_(なし)_"]
-        else:
-            lines += ["", "| 名前 | 範囲 | ヘッダ行数 |", "|---|---|---:|"]
-            for t in s.tables:
-                lines.append(
-                    f"| `{_md_escape(t.name)}` | `{_md_escape(t.ref)}` | {t.header_row_count} |"
-                )
-
-        # マージセル — 件数が多い場合は先頭のみ
+    asset_rows: list[str] = []
+    for s in wb.sheets:
+        for nr in s.named_ranges:
+            asset_rows.append(
+                f"| {_md_escape(s.name)} | 名前付き範囲 | `{_md_escape(nr.name)}` | "
+                f"`{_md_escape(nr.refers_to)}` | - |"
+            )
+        for cf in s.conditional_formats:
+            asset_rows.append(
+                f"| {_md_escape(s.name)} | 条件付き書式 | `{_md_escape(cf.range)}` | "
+                f"{_md_escape(cf.rule)} | - |"
+            )
+        for dv in s.data_validations:
+            op = f" {dv.operator}" if dv.operator else ""
+            value = f"{_md_escape(dv.formula)}{_md_escape(op)}".strip() if dv.formula else "-"
+            asset_rows.append(
+                f"| {_md_escape(s.name)} | 入力規則 | `{_md_escape(dv.range)}` | "
+                f"{_md_escape(dv.type)} | {value} |"
+            )
+        for fc in s.form_controls:
+            target = _md_escape(fc.text or fc.name or fc.kind)
+            anchor = f"`{_md_escape(fc.anchor)}`" if fc.anchor else "-"
+            macro = f"`{_md_escape(fc.macro)}`" if fc.macro else "-"
+            asset_rows.append(
+                f"| {_md_escape(s.name)} | フォーム | {target} | {macro} | 配置: {anchor} |"
+            )
+        for t in s.tables:
+            asset_rows.append(
+                f"| {_md_escape(s.name)} | Excel テーブル | `{_md_escape(t.name)}` | "
+                f"`{_md_escape(t.ref)}` | ヘッダ行: {t.header_row_count} |"
+            )
         if s.merged_ranges:
             shown = s.merged_ranges[:10]
             extra = len(s.merged_ranges) - len(shown)
-            lines += ["", "#### マージセル"]
-            lines += ["", ", ".join(f"`{_md_escape(m)}`" for m in shown)]
-            if extra > 0:
-                lines.append(f"(他 {extra} 件)")
+            suffix = f" 他 {extra} 件" if extra > 0 else ""
+            asset_rows.append(
+                f"| {_md_escape(s.name)} | マージセル | {len(s.merged_ranges)} 件 | "
+                f"{', '.join(f'`{_md_escape(m)}`' for m in shown)} |{suffix} |"
+            )
 
-        # 冒頭プレビュー (literal, 解釈なし)
-        lines += _render_preview_block(s)
+    lines += ["", "### 3.4 定義・入力制約・配置物（Excel テーブル含む）"]
+    if not asset_rows:
+        lines += ["", "_(なし)_"]
+    else:
+        lines += [
+            "",
+            "| シート | 種別 | 対象 | 内容 | 補足 |",
+            "|---|---|---|---|---|",
+            *asset_rows,
+        ]
+
+    preview_blocks: list[str] = []
+    for s in wb.sheets:
+        block = _render_preview_block(s)
+        if block:
+            preview_blocks += ["", f"#### {s.name}"] + block
+    if preview_blocks:
+        lines += ["", "### 3.5 冒頭プレビュー", *preview_blocks]
 
     return "\n".join(lines)
 
@@ -233,7 +277,7 @@ def _render_preview_block(sheet: object) -> list[str]:
 
 
 def _section_vba_modules(wb: Workbook) -> str:
-    """## 4. VBAモジュール.
+    """## 4. VBAモジュールを横断テーブル中心に生成する.
 
     プロシージャの目録のみを載せ、ソースコード本体は載せない。
     本体が必要な場合は LLM 側の `get_vba_procedure(module, name)` ツールを使う
@@ -245,40 +289,47 @@ def _section_vba_modules(wb: Workbook) -> str:
         return "\n".join(lines)
 
     total_lines = 0
+    lines += [
+        "",
+        "### 4.1 モジュールサマリ",
+        "",
+        "| モジュール | 種別 | 行数 | プロシージャ数 |",
+        "|---|---|---:|---:|",
+    ]
     for m in wb.vba_modules:
         module_line_count = len(m.code.splitlines()) if m.code else 0
         total_lines += module_line_count
+        lines.append(
+            f"| `{_md_escape(m.name)}` | {m.type} | {module_line_count} | {len(m.procedures)} |"
+        )
+
+    proc_rows: list[str] = []
+    for m in wb.vba_modules:
+        for p in m.procedures:
+            annot = _md_escape(p.annotation) if p.annotation else "-"
+            side = _md_cell_list(p.side_effects)
+            trig = _md_cell_list(p.triggers)
+            calls = _md_cell_list(p.calls, limit=5)
+            proc_rows.append(
+                f"| `{_md_escape(m.name)}` | {p.kind} | `{_md_escape(p.name)}` | "
+                f"{p.start_line}-{p.end_line} | {annot} | {side} | {trig} | {calls} |"
+            )
+
+    lines += ["", "### 4.2 プロシージャ一覧"]
+    if not proc_rows:
+        lines += ["", "_(プロシージャなし)_"]
+    else:
         lines += [
             "",
-            f"### {m.name} ({m.type})",
-            "",
-            f"- 行数: {module_line_count}",
-            f"- プロシージャ数: {len(m.procedures)}",
+            "| モジュール | 種別 | 名前 | 行 | 注釈 | 副作用 | 起動契機 | 呼出先 |",
+            "|---|---|---|---|---|---|---|---|",
+            *proc_rows,
         ]
-
-        lines += ["", "#### プロシージャ一覧"]
-        if not m.procedures:
-            lines += ["", "_(なし)_"]
-        else:
-            lines += [
-                "",
-                "| 種別 | 名前 | 行 | 注釈 | 副作用 | 起動契機 | 呼出先 |",
-                "|---|---|---|---|---|---|---|",
-            ]
-            for p in m.procedures:
-                annot = _md_escape(p.annotation) if p.annotation else "-"
-                side = _md_escape(", ".join(p.side_effects)) if p.side_effects else "-"
-                trig = _md_escape(", ".join(p.triggers)) if p.triggers else "-"
-                calls = _md_escape(", ".join(p.calls)) if p.calls else "-"
-                lines.append(
-                    f"| {p.kind} | `{_md_escape(p.name)}` | "
-                    f"{p.start_line}-{p.end_line} | {annot} | "
-                    f"{side} | {trig} | {calls} |"
-                )
 
     lines += [
         "",
-        "_ソースコード本体は設計書には含まれません。"
+        f"_合計: {len(wb.vba_modules)} モジュール / {total_lines} 行。"
+        "ソースコード本体は設計書には含まれません。"
         "LLM が `get_vba_procedure(module, name)` ツールで取得します。_",
     ]
     return "\n".join(lines)
@@ -293,7 +344,11 @@ def _pick_top_references(ref_index: ReferenceIndex, n: int) -> list[tuple[str, i
 
 def _section_references(ref_index: ReferenceIndex) -> str:
     """## 5. 参照関係（抜粋）."""
-    lines = ["## 5. 参照関係（抜粋）"]
+    lines = [
+        "## 5. 参照関係（抜粋）",
+        "",
+        f"> {_REFERENCE_ANALYSIS_NOTE}",
+    ]
     top = _pick_top_references(ref_index, _TOP_REFERENCES_GLOBAL)
     if not top:
         lines += ["", "_(参照なし)_"]
@@ -322,12 +377,7 @@ def _mermaid_label(s: str) -> str:
     ダブルクォート・バックスラッシュ・改行・パイプを除去/置換する。
     日本語などはそのまま通る。
     """
-    return (
-        s.replace("\\", "\\\\")
-        .replace('"', "'")
-        .replace("\n", " ")
-        .replace("|", "/")
-    )
+    return s.replace("\\", "\\\\").replace('"', "'").replace("\n", " ").replace("|", "/")
 
 
 def _mermaid_id(prefix: str, index: int) -> str:
@@ -376,16 +426,15 @@ def _count_external_functions(wb: Workbook) -> Counter[str]:
     return c
 
 
-def _external_function_top_locations(
-    wb: Workbook, name: str, limit: int = 5
-) -> list[str]:
+def _external_function_top_locations(wb: Workbook, name: str, limit: int = 5) -> list[str]:
     """指定外部関数の使用箇所セル座標を先頭 limit 件返す."""
     out: list[str] = []
     for sheet in wb.sheets:
         for f in sheet.formulas:
             if name in f.external_functions:
-                out.append(f"{sheet.name}!{f.coord.split('!', 1)[-1]}"
-                           if "!" not in f.coord else f.coord)
+                out.append(
+                    f"{sheet.name}!{f.coord.split('!', 1)[-1]}" if "!" not in f.coord else f.coord
+                )
                 if len(out) >= limit:
                     return out
     return out
@@ -400,9 +449,7 @@ def _section_external_functions(wb: Workbook) -> str:
             "",
             "_検出された外部 Add-In 関数はありません。_",
             "",
-            "(対応ベンダー: " + ", ".join(
-                sorted({f.vendor for f in list_functions()})
-            ) + ")",
+            "(対応ベンダー: " + ", ".join(sorted({f.vendor for f in list_functions()})) + ")",
         ]
         return "\n".join(lines)
 

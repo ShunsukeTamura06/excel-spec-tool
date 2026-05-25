@@ -64,11 +64,11 @@
   @apply p-3 my-3 rounded-md bg-(--ui-bg-elevated) overflow-x-auto text-xs;
 }
 .spec-prose table {
-  @apply my-3 text-xs;
+  @apply my-3 block max-w-full overflow-x-auto text-xs border-collapse;
 }
 .spec-prose th,
 .spec-prose td {
-  @apply border border-(--ui-border) px-2 py-1;
+  @apply border border-(--ui-border) px-2 py-1 align-top;
 }
 .spec-prose th {
   @apply bg-(--ui-bg-elevated) font-semibold;

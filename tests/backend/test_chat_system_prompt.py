@@ -45,6 +45,13 @@ class TestSystemPromptContainsCoreGuidelines:
         assert "find_cells" in prompt
         assert "lookup_references" in prompt
 
+    def test_includes_reference_analysis_limitations(self) -> None:
+        prompt = _build_system_prompt("")
+        assert "参照解析の前提" in prompt
+        assert "静的に確定できる" in prompt
+        assert "Range(addr)" in prompt
+        assert "影響が完全に無いとは断定しない" in prompt
+
     def test_includes_spec_when_provided(self) -> None:
         prompt = _build_system_prompt("# 設計書: x.xlsm\n本文")
         assert "# 設計書: x.xlsm" in prompt

@@ -153,6 +153,7 @@ class TestExecuteLookupReferences:
         )
         assert result["count"] == 1
         assert result["refs"][0]["from"] == "Out!K3"
+        assert "analysis_scope" in result
 
     def test_unknown_target_returns_empty(self, job_with_cells: tuple[Storage, str]) -> None:
         storage, job_id = job_with_cells
@@ -164,6 +165,7 @@ class TestExecuteLookupReferences:
             execute_tool_call(storage, job_id, "lookup_references", {"target": "Nowhere!A1"})
         )
         assert result["count"] == 0
+        assert "動的" in result["analysis_scope"]
 
     def test_missing_target_returns_error(self, job_with_cells: tuple[Storage, str]) -> None:
         storage, job_id = job_with_cells
@@ -407,9 +409,7 @@ class TestResultTruncation:
         )
         assert len(result_str) <= 50
 
-    def test_under_limit_passes_through(
-        self, job_with_cells: tuple[Storage, str]
-    ) -> None:
+    def test_under_limit_passes_through(self, job_with_cells: tuple[Storage, str]) -> None:
         storage, job_id = job_with_cells
         # デフォルト上限 (20000) で十分に収まる小さな結果
         result_str = execute_tool_call(
@@ -430,9 +430,7 @@ class TestResultTruncation:
         monkeypatch.setenv("TOOL_RESULT_MAX_CHARS", "10")
         assert lt._tool_result_max_chars() == 1000
 
-    def test_env_var_invalid_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_var_invalid_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import backend.llm_tools as lt
 
         monkeypatch.setenv("TOOL_RESULT_MAX_CHARS", "not-a-number")
@@ -507,9 +505,7 @@ class TestListExternalFunctionsUsed:
         )
         storage.save_workbook(meta.job_id, wb)
 
-        out = execute_tool_call(
-            storage, meta.job_id, "list_external_functions_used", {}
-        )
+        out = execute_tool_call(storage, meta.job_id, "list_external_functions_used", {})
         payload = json.loads(out)
         # 種類数 2, 合計 3 件
         assert payload["total_kinds"] == 2
@@ -528,9 +524,7 @@ class TestListExternalFunctionsUsed:
         wb = Workbook(filename="demo.xlsm", sheets=[SheetInfo(name="S", rows=1, cols=1)])
         storage.save_workbook(meta.job_id, wb)
 
-        out = execute_tool_call(
-            storage, meta.job_id, "list_external_functions_used", {}
-        )
+        out = execute_tool_call(storage, meta.job_id, "list_external_functions_used", {})
         payload = json.loads(out)
         assert payload["items"] == []
         assert payload["total_kinds"] == 0

@@ -25,10 +25,12 @@ import re
 import shutil
 import uuid
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 
 from core.models import (
     ChatMessage,
+    ChatSessionMeta,
     Feedback,
     JobMeta,
     ReferenceIndex,
@@ -46,6 +48,8 @@ _UUID_V4_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+_DEFAULT_CHAT_SESSION_ID = "default"
+_DEFAULT_CHAT_SESSION_TITLE = "既存の相談"
 
 
 class StorageError(Exception):
@@ -60,6 +64,14 @@ def _validate_job_id(job_id: str) -> None:
     """job_id が UUIDv4 形式か検証する. 不正なら ValueError を投げる."""
     if not isinstance(job_id, str) or not _UUID_V4_RE.match(job_id):
         raise ValueError(f"invalid job_id (must be UUIDv4): {job_id!r}")
+
+
+def _validate_chat_session_id(session_id: str) -> None:
+    """チャット session_id を検証する. default または UUIDv4 のみ許可."""
+    if session_id == _DEFAULT_CHAT_SESSION_ID:
+        return
+    if not isinstance(session_id, str) or not _UUID_V4_RE.match(session_id):
+        raise ValueError(f"invalid chat session_id: {session_id!r}")
 
 
 def _utc_now_iso() -> str:
@@ -80,6 +92,25 @@ def _safe_suffix(filename: str) -> str:
     if not re.match(r"^\.[A-Za-z0-9]{1,10}$", suffix):
         return ".bin"
     return suffix.lower()
+
+
+def _file_sha256(data: bytes) -> str:
+    """ファイル内容の SHA-256 ダイジェストを 16 進文字列で返す."""
+    return sha256(data).hexdigest()
+
+
+def _chat_title_from_message(message: str) -> str:
+    """最初のユーザー発話からセッションタイトルを作る."""
+    text = " ".join((message or "").strip().split())
+    if not text:
+        return "新しい相談"
+    return text[:40]
+
+
+def _message_preview(message: str) -> str:
+    """セッション一覧用にメッセージ本文を短く整形する."""
+    text = " ".join((message or "").strip().split())
+    return text[:80]
 
 
 class Storage:
@@ -132,9 +163,30 @@ class Storage:
             filename=filename,
             created_at=_utc_now_iso(),
             status="uploaded",
+            file_sha256=_file_sha256(data),
+            file_size=len(data),
         )
         self._write_json(d / "meta.json", meta.model_dump())
         return meta
+
+    def find_duplicate_job(self, data: bytes) -> JobMeta | None:
+        """同一内容の利用可能な既存ジョブを返す.
+
+        Args:
+            data: アップロードされたファイルのバイト列。
+
+        Returns:
+            SHA-256 が一致し、分析済みの既存ジョブ。見つからない場合は None。
+        """
+        digest = _file_sha256(data)
+        size = len(data)
+        for meta in self.list_jobs():
+            if meta.status != "analyzed":
+                continue
+            meta = self._ensure_file_fingerprint(meta)
+            if meta.file_sha256 == digest and meta.file_size == size:
+                return meta
+        return None
 
     def list_jobs(self) -> list[JobMeta]:
         """登録済みジョブのメタを ISO 時刻降順で返す."""
@@ -168,6 +220,26 @@ class Storage:
     def get_meta(self, job_id: str) -> JobMeta:
         d = self._require_job_dir(job_id)
         return JobMeta.model_validate_json((d / "meta.json").read_text(encoding="utf-8"))
+
+    def _ensure_file_fingerprint(self, meta: JobMeta) -> JobMeta:
+        """旧形式の meta.json にファイル指紋を補完して返す."""
+        if meta.file_sha256 and meta.file_size is not None:
+            return meta
+        try:
+            path = self.get_original_path(meta.job_id)
+            data = path.read_bytes()
+        except (OSError, JobNotFoundError):
+            logger.warning("Failed to fingerprint original file for job: %s", meta.job_id)
+            return meta
+
+        updated = meta.model_copy(
+            update={
+                "file_sha256": _file_sha256(data),
+                "file_size": len(data),
+            }
+        )
+        self._write_json(self._job_dir(meta.job_id) / "meta.json", updated.model_dump())
+        return updated
 
     def update_status(
         self,
@@ -211,16 +283,177 @@ class Storage:
 
     # ------------------------------------------------------------ chat
 
-    def append_chat_message(self, job_id: str, message: ChatMessage) -> None:
+    def _chat_sessions_dir(self, job_id: str) -> Path:
+        d = self._require_job_dir(job_id) / "chat_sessions"
+        d.mkdir(mode=_DIR_MODE, exist_ok=True)
+        return d
+
+    def _chat_sessions_meta_path(self, job_id: str) -> Path:
+        return self._chat_sessions_dir(job_id) / "sessions.json"
+
+    def _chat_history_path(self, job_id: str, session_id: str) -> Path:
+        _validate_chat_session_id(session_id)
         d = self._require_job_dir(job_id)
-        path = d / "chat_history.jsonl"
+        if session_id == _DEFAULT_CHAT_SESSION_ID:
+            return d / "chat_history.jsonl"
+        return self._chat_sessions_dir(job_id) / f"{session_id}.jsonl"
+
+    def _load_chat_sessions_meta(self, job_id: str) -> list[ChatSessionMeta]:
+        path = self._chat_sessions_meta_path(job_id)
+        if not path.is_file():
+            return []
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            logger.warning("Malformed chat sessions meta: %s", path)
+            return []
+        if not isinstance(raw, list):
+            logger.warning("Unexpected chat sessions meta format: %s", path)
+            return []
+        metas: list[ChatSessionMeta] = []
+        for item in raw:
+            try:
+                metas.append(ChatSessionMeta.model_validate(item))
+            except Exception:  # noqa: BLE001
+                logger.warning("Skipping malformed chat session meta in %s", path)
+        return metas
+
+    def _save_chat_sessions_meta(self, job_id: str, metas: list[ChatSessionMeta]) -> None:
+        path = self._chat_sessions_meta_path(job_id)
+        data = [m.model_dump() for m in metas]
+        self._write_json(path, data)
+
+    def _default_chat_session_meta(self, job_id: str) -> ChatSessionMeta:
+        history = self._read_chat_history_file(
+            self._chat_history_path(job_id, _DEFAULT_CHAT_SESSION_ID)
+        )
+        now = _utc_now_iso()
+        updated_at = history[-1].timestamp if history else now
+        preview = _message_preview(history[-1].content) if history else ""
+        title = _DEFAULT_CHAT_SESSION_TITLE if history else "新しい相談"
+        if history:
+            first_user = next((m.content for m in history if m.role == "user" and m.content), "")
+            if first_user:
+                title = _chat_title_from_message(first_user)
+        return ChatSessionMeta(
+            session_id=_DEFAULT_CHAT_SESSION_ID,
+            title=title,
+            created_at=history[0].timestamp if history else now,
+            updated_at=updated_at,
+            archived=False,
+            last_message_preview=preview,
+            message_count=len(history),
+        )
+
+    def list_chat_sessions(
+        self,
+        job_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[ChatSessionMeta]:
+        """ジョブに紐づくチャットセッションを更新日時降順で返す."""
+        self._require_job_dir(job_id)
+        metas = self._load_chat_sessions_meta(job_id)
+        if not any(m.session_id == _DEFAULT_CHAT_SESSION_ID for m in metas):
+            metas.append(self._default_chat_session_meta(job_id))
+            self._save_chat_sessions_meta(job_id, metas)
+        filtered = metas if include_archived else [m for m in metas if not m.archived]
+        filtered.sort(key=lambda m: m.updated_at, reverse=True)
+        return filtered
+
+    def create_chat_session(self, job_id: str, title: str = "新しい相談") -> ChatSessionMeta:
+        """ジョブ配下に新しいチャットセッションを作成する."""
+        self._require_job_dir(job_id)
+        metas = self._load_chat_sessions_meta(job_id)
+        session_id = str(uuid.uuid4())
+        now = _utc_now_iso()
+        meta = ChatSessionMeta(
+            session_id=session_id,
+            title=title.strip()[:40] or "新しい相談",
+            created_at=now,
+            updated_at=now,
+        )
+        metas.append(meta)
+        self._save_chat_sessions_meta(job_id, metas)
+        return meta
+
+    def get_or_create_chat_session(
+        self,
+        job_id: str,
+        session_id: str = _DEFAULT_CHAT_SESSION_ID,
+    ) -> ChatSessionMeta:
+        """指定セッションを返す。default は必要に応じて作成する."""
+        _validate_chat_session_id(session_id)
+        metas = self._load_chat_sessions_meta(job_id)
+        for meta in metas:
+            if meta.session_id == session_id:
+                return meta
+        if session_id == _DEFAULT_CHAT_SESSION_ID:
+            meta = self._default_chat_session_meta(job_id)
+            metas.append(meta)
+            self._save_chat_sessions_meta(job_id, metas)
+            return meta
+        raise JobNotFoundError(f"chat session not found: {session_id}")
+
+    def update_chat_session(
+        self,
+        job_id: str,
+        session_id: str,
+        *,
+        title: str | None = None,
+        archived: bool | None = None,
+    ) -> ChatSessionMeta:
+        """チャットセッションのタイトルまたはアーカイブ状態を更新する."""
+        _validate_chat_session_id(session_id)
+        metas = self._load_chat_sessions_meta(job_id)
+        for i, meta in enumerate(metas):
+            if meta.session_id != session_id:
+                continue
+            updates: dict[str, object] = {"updated_at": _utc_now_iso()}
+            if title is not None:
+                updates["title"] = title.strip()[:40] or "新しい相談"
+            if archived is not None:
+                updates["archived"] = archived
+            updated = meta.model_copy(update=updates)
+            metas[i] = updated
+            self._save_chat_sessions_meta(job_id, metas)
+            return updated
+        raise JobNotFoundError(f"chat session not found: {session_id}")
+
+    def append_chat_message(
+        self,
+        job_id: str,
+        message: ChatMessage,
+        session_id: str = _DEFAULT_CHAT_SESSION_ID,
+    ) -> None:
+        meta = self.get_or_create_chat_session(job_id, session_id)
+        path = self._chat_history_path(job_id, session_id)
         line = json.dumps(message.model_dump(), ensure_ascii=False) + "\n"
         with path.open("a", encoding="utf-8") as f:
             f.write(line)
 
-    def load_chat_history(self, job_id: str) -> list[ChatMessage]:
-        d = self._require_job_dir(job_id)
-        path = d / "chat_history.jsonl"
+        updates: dict[str, object] = {
+            "updated_at": message.timestamp,
+            "last_message_preview": _message_preview(message.content),
+            "message_count": meta.message_count + 1,
+        }
+        if (
+            meta.message_count == 0
+            and meta.title in {"新しい相談", _DEFAULT_CHAT_SESSION_TITLE}
+            and message.role == "user"
+        ):
+            updates["title"] = _chat_title_from_message(message.content)
+        updated = meta.model_copy(update=updates)
+        metas = self._load_chat_sessions_meta(job_id)
+        for i, item in enumerate(metas):
+            if item.session_id == session_id:
+                metas[i] = updated
+                break
+        else:
+            metas.append(updated)
+        self._save_chat_sessions_meta(job_id, metas)
+
+    def _read_chat_history_file(self, path: Path) -> list[ChatMessage]:
         if not path.is_file():
             return []
         msgs: list[ChatMessage] = []
@@ -234,6 +467,14 @@ class Storage:
                 except Exception:  # noqa: BLE001
                     logger.warning("Skipping malformed chat line in %s", path)
         return msgs
+
+    def load_chat_history(
+        self,
+        job_id: str,
+        session_id: str = _DEFAULT_CHAT_SESSION_ID,
+    ) -> list[ChatMessage]:
+        self.get_or_create_chat_session(job_id, session_id)
+        return self._read_chat_history_file(self._chat_history_path(job_id, session_id))
 
     # ------------------------------------------------------------ feedback
     # ユーザーからのフィードバックは jobs と独立に永続化する (ジョブ削除でも残す).

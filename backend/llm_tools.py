@@ -195,7 +195,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "BDH / BDP / BDS のような非標準関数の引数・返り値・使用例・"
                 "落とし穴を、当ツールのレジストリから事実情報として取得する。"
                 "推測やハルシネーションを避けるため、外部関数の挙動を答える前に必ず呼ぶこと。"
-                "未登録ベンダーや未対応関数の場合は `{\"error\": \"...\"}` を返す。"
+                '未登録ベンダーや未対応関数の場合は `{"error": "..."}` を返す。'
             ),
             "parameters": {
                 "type": "object",
@@ -235,6 +235,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "完全一致だけでなく範囲交差でヒットする (例: target='Input!A5' は "
                 "'Input!A:A' を参照している数式も返す)。"
                 "シート修飾を付けて呼ぶこと (例: 'Calc!H2')。"
+                "VBA は静的に確定できる Range/Cells/短縮参照だけが対象で、"
+                'Range("A" & row), Range(addr), ActiveSheet, Selection, Offset, Resize '
+                "など実行時に決まる参照は検出対象外。"
+                "0 件でも動的参照を含めて影響なしとは断定しないこと。"
             ),
             "parameters": {
                 "type": "object",
@@ -463,9 +467,7 @@ def _exec_lookup_external_function(args: dict[str, Any]) -> str:
     return json.dumps(fn.model_dump(), ensure_ascii=False)
 
 
-def _exec_list_external_functions_used(
-    storage: Storage, job_id: str, args: dict[str, Any]
-) -> str:
+def _exec_list_external_functions_used(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
     """このジョブの Workbook で使われている外部関数を集計して返す."""
     try:
         wb = storage.load_workbook(job_id)
@@ -515,6 +517,13 @@ def _exec_lookup_references(storage: Storage, job_id: str, args: dict[str, Any])
     # 範囲交差で検索. `Calc!H2` で `Calc!A1:J100` のような上位範囲もヒットさせる.
     refs = find_overlapping(idx, str(target))
     return json.dumps(
-        {"refs": [r.model_dump(by_alias=True) for r in refs], "count": len(refs)},
+        {
+            "refs": [r.model_dump(by_alias=True) for r in refs],
+            "count": len(refs),
+            "analysis_scope": (
+                "静的解析で検出できる数式参照と VBA の静的 Range/Cells/短縮参照が対象。"
+                "動的に組み立てる VBA 参照や実行時状態依存の参照は含まれない。"
+            ),
+        },
         ensure_ascii=False,
     )

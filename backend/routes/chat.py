@@ -23,7 +23,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.dependencies import get_llm_client, get_storage
@@ -110,6 +110,19 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class ChatSessionCreateRequest(BaseModel):
+    """POST /chat/{job_id}/sessions のリクエストボディ."""
+
+    title: str = "新しい相談"
+
+
+class ChatSessionUpdateRequest(BaseModel):
+    """PATCH /chat/{job_id}/sessions/{session_id} のリクエストボディ."""
+
+    title: str | None = None
+    archived: bool | None = None
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -135,6 +148,7 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "- 設計書の preview に映っていない領域 (例: 50 行目以降、20 列目以降) の値は"
         "決して推測しない。必ずツールで取得する",
         "- 波及範囲を述べる前に lookup_references を呼んで実際の参照元を確認する",
+        "- lookup_references の結果が 0 件でも、動的 VBA 参照まで含めて影響がないとは断定しない",
         "",
         "## 3. 分からないことは素直に認める",
         "- 設計書とツールでも判定できない場合は"
@@ -154,7 +168,26 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "## 5. 回答漏れを防ぐ",
         "- ユーザーの質問に複数の論点が含まれていたら、すべてに答える",
         "- 波及範囲を聞かれたら参照元を網羅する (件数 + 主要箇所)",
+        "- 参照解析で検出できない動的参照の可能性が残る場合は、"
+        "「静的解析で確認できた範囲」と「未確認の可能性」を分けて書く",
         "- 不明な部分があってもそれを「不明」として明示すれば回答漏れにはならない",
+        "",
+        "# 参照解析の前提",
+        "",
+        "- 数式参照は openpyxl の Tokenizer で抽出した RANGE トークンを使う",
+        '- VBA 参照は静的に確定できる `Range("A1")`, '
+        '`Worksheets("Sheet").Range("A1")`, `Sheets("Sheet").Cells(2, 8)`, '
+        '`[Sheet!A1]`, 単純なシート変数 (`Set ws = Worksheets("Sheet")`)、'
+        '`With Sheets("Sheet")` 内の `.Range` / `.Cells` を対象にする',
+        "- コメントや文字列リテラル内の `Range(...)` は参照として扱わない",
+        '- `Range("A" & row)`, `Range(addr)`, `Worksheets(sheetName)`, '
+        "`Cells(row, col)`, `ActiveSheet`, `Selection`, `CurrentRegion`, "
+        "`UsedRange`, `Offset`, `Resize`, `Evaluate`, `Application.Run` など、"
+        "実行時に決まる参照は検出対象外",
+        "- 参照検索で見つからない場合は「静的解析では検出されない」と表現し、"
+        "影響が完全に無いとは断定しない",
+        "- VBA の波及範囲が重要な場合は、lookup_references だけで終えず、"
+        "list_vba_modules と get_vba_procedure で該当コードを確認する",
         "",
         "# 応答フォーマット",
         "",
@@ -188,6 +221,7 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "    あるセル/範囲を参照している箇所 (数式・VBA) を返す。波及範囲調査ではこれを必ず使う。",
         "    完全一致だけでなく範囲交差でヒットする (`Input!A5` で `Input!A:A` 参照もヒット)。",
         "    target はシート修飾付きで指定する (例: 'Calc!H2', 'Input!A:A')。",
+        "    ただし VBA は静的に確定できる参照のみ。0 件でも動的参照の可能性は残る。",
         "- `list_vba_modules()`:",
         "    VBA モジュールとプロシージャの一覧 (名前・種別・行範囲) を軽量に返す。",
         "    どのプロシージャが該当しそうかを最初に絞り込むときに使う。",
@@ -345,6 +379,7 @@ def _run_tool_loop(
 async def chat(
     job_id: str,
     body: ChatRequest,
+    session_id: str = Query(default="default"),
     storage: Storage = Depends(get_storage),
     llm: LLMClient = Depends(get_llm_client),
 ) -> dict[str, Any]:
@@ -359,11 +394,11 @@ async def chat(
         except FileNotFoundError:
             spec_md = ""
 
-        history = storage.load_chat_history(job_id)
+        history = storage.load_chat_history(job_id, session_id=session_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"invalid job_id: {e}") from e
     except JobNotFoundError as e:
-        raise HTTPException(status_code=404, detail="job not found") from e
+        raise HTTPException(status_code=404, detail="job or chat session not found") from e
 
     # 履歴を直近 N ペアに絞り、古い分は summary に集約 (Phase B-2)
     max_pairs = _get_history_pairs_limit()
@@ -387,9 +422,7 @@ async def chat(
     messages.append({"role": "user", "content": body.message})
 
     # LLM ループ全体を threadpool に逃がす (event loop を解放).
-    reply, tool_trace = await asyncio.to_thread(
-        _run_tool_loop, llm, storage, job_id, messages
-    )
+    reply, tool_trace = await asyncio.to_thread(_run_tool_loop, llm, storage, job_id, messages)
 
     # 履歴に追記 (user → assistant). tool 呼び出しの中間結果は履歴には残さない.
     # ファイル書き込みも一応 blocking なので to_thread に逃がす.
@@ -397,12 +430,16 @@ async def chat(
 
     def _persist_and_reload() -> list[ChatMessage]:
         storage.append_chat_message(
-            job_id, ChatMessage(role="user", content=body.message, timestamp=now)
+            job_id,
+            ChatMessage(role="user", content=body.message, timestamp=now),
+            session_id=session_id,
         )
         storage.append_chat_message(
-            job_id, ChatMessage(role="assistant", content=reply, timestamp=now)
+            job_id,
+            ChatMessage(role="assistant", content=reply, timestamp=now),
+            session_id=session_id,
         )
-        return storage.load_chat_history(job_id)
+        return storage.load_chat_history(job_id, session_id=session_id)
 
     new_history = await asyncio.to_thread(_persist_and_reload)
     return {
@@ -415,16 +452,71 @@ async def chat(
 @router.get("/chat/{job_id}/history")
 async def chat_history(
     job_id: str,
+    session_id: str = Query(default="default"),
     storage: Storage = Depends(get_storage),
 ) -> dict[str, Any]:
     """ジョブのチャット履歴を返す."""
     try:
-        history = storage.load_chat_history(job_id)
+        history = storage.load_chat_history(job_id, session_id=session_id)
         # ジョブ存在確認
         storage.get_meta(job_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"invalid job_id: {e}") from e
     except JobNotFoundError as e:
-        raise HTTPException(status_code=404, detail="job not found") from e
+        raise HTTPException(status_code=404, detail="job or chat session not found") from e
 
     return {"history": [m.model_dump() for m in history]}
+
+
+@router.get("/chat/{job_id}/sessions")
+async def list_chat_sessions(
+    job_id: str,
+    include_archived: bool = Query(default=False),
+    storage: Storage = Depends(get_storage),
+) -> dict[str, Any]:
+    """ジョブに紐づくチャットセッション一覧を返す."""
+    try:
+        sessions = storage.list_chat_sessions(job_id, include_archived=include_archived)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid job_id: {e}") from e
+    except JobNotFoundError as e:
+        raise HTTPException(status_code=404, detail="job not found") from e
+    return {"sessions": [s.model_dump() for s in sessions]}
+
+
+@router.post("/chat/{job_id}/sessions")
+async def create_chat_session(
+    job_id: str,
+    body: ChatSessionCreateRequest,
+    storage: Storage = Depends(get_storage),
+) -> dict[str, Any]:
+    """ジョブ配下に新しいチャットセッションを作成する."""
+    try:
+        session = storage.create_chat_session(job_id, title=body.title)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid job_id: {e}") from e
+    except JobNotFoundError as e:
+        raise HTTPException(status_code=404, detail="job not found") from e
+    return {"session": session.model_dump()}
+
+
+@router.patch("/chat/{job_id}/sessions/{session_id}")
+async def update_chat_session(
+    job_id: str,
+    session_id: str,
+    body: ChatSessionUpdateRequest,
+    storage: Storage = Depends(get_storage),
+) -> dict[str, Any]:
+    """チャットセッションのタイトルまたはアーカイブ状態を更新する."""
+    try:
+        session = storage.update_chat_session(
+            job_id,
+            session_id,
+            title=body.title,
+            archived=body.archived,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid id: {e}") from e
+    except JobNotFoundError as e:
+        raise HTTPException(status_code=404, detail="job or chat session not found") from e
+    return {"session": session.model_dump()}

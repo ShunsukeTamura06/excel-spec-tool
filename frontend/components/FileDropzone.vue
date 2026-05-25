@@ -71,7 +71,7 @@ function onDrop(e: DragEvent) {
           {{ dragOver ? 'ここにドロップ' : 'クリックまたはドラッグ&ドロップで Excel をアップロード' }}
         </p>
         <p class="text-xs text-(--ui-text-muted) mt-1">
-          対応: .xlsm / .xls / .xlsx ・ 上限 50MB 想定
+          対応: .xlsm / .xls / .xlsx ・ 上限 50MB ・ 同じ内容は既存結果を再利用
         </p>
       </div>
     </div>

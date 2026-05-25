@@ -106,7 +106,7 @@ def _run_extraction(storage: Storage, job_id: str, filename: str) -> None:
 async def extract(
     file: UploadFile = File(...),
     storage: Storage = Depends(get_storage),
-) -> dict[str, str]:
+) -> dict[str, object]:
     """ファイルを保存し、Core 抽出を実行して job_id を返す.
 
     重い同期処理 (openpyxl / olevba / cells.db) は `asyncio.to_thread` に
@@ -120,6 +120,20 @@ async def extract(
     if not data:
         raise HTTPException(status_code=400, detail="empty file")
 
+    duplicate = await asyncio.to_thread(storage.find_duplicate_job, data)
+    if duplicate is not None:
+        logger.info(
+            "extract skipped: duplicate file reused filename=%s duplicate_of=%s size=%d bytes",
+            duplicate.filename,
+            duplicate.job_id,
+            len(data),
+        )
+        return {
+            "job_id": duplicate.job_id,
+            "duplicate": True,
+            "duplicate_of": duplicate.job_id,
+        }
+
     # create_job (ディレクトリ作成 + バイト書き出し) も blocking なので to_thread に逃がす
     meta = await asyncio.to_thread(storage.create_job, file.filename, data)
     job_id = meta.job_id
@@ -132,4 +146,4 @@ async def extract(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"internal error: {e}") from e
 
-    return {"job_id": job_id}
+    return {"job_id": job_id, "duplicate": False}

@@ -164,6 +164,8 @@ class JobMeta(BaseModel):
     filename: str
     created_at: str
     status: Literal["uploaded", "extracted", "analyzed", "failed"]
+    file_sha256: str | None = None
+    file_size: int | None = None
 
 
 class ChatMessage(BaseModel):
@@ -178,12 +180,27 @@ class ChatMessage(BaseModel):
     timestamp: str
 
 
+class ChatSessionMeta(BaseModel):
+    """チャットセッションのメタ情報.
+
+    1つの Excel ジョブに複数の相談スレッドをぶら下げるための軽量メタ。
+    """
+
+    session_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    archived: bool = False
+    last_message_preview: str = ""
+    message_count: int = 0
+
+
 FeedbackKind = Literal[
-    "thumbs_up",    # チャット応答に良い
+    "thumbs_up",  # チャット応答に良い
     "thumbs_down",  # チャット応答にダメ
     "improvement",  # 改善要望
-    "bug",          # 不具合報告
-    "other",        # その他
+    "bug",  # 不具合報告
+    "other",  # その他
 ]
 
 
@@ -196,14 +213,14 @@ class Feedback(BaseModel):
     心理的負担を下げるため、`comment` 以外はすべて optional または自動収集.
     """
 
-    id: str            # UUIDv4
-    timestamp: str     # ISO 8601 (UTC)
+    id: str  # UUIDv4
+    timestamp: str  # ISO 8601 (UTC)
     kind: FeedbackKind
     comment: str = ""  # 自由記述 (任意)
 
     # 自動収集コンテキスト (フィードバックを意味付けるための情報)
-    page: str = ""              # ブラウザ URL パス (例: "/spec/abc-...")
-    job_id: str | None = None   # 関連ジョブ
+    page: str = ""  # ブラウザ URL パス (例: "/spec/abc-...")
+    job_id: str | None = None  # 関連ジョブ
     target_id: str | None = None  # 対象オブジェクト (例: チャット応答のタイムスタンプ)
-    target_excerpt: str = ""    # 対象の短い抜粋 (例: チャット応答の先頭 200 字)
-    user_label: str = ""        # 任意の自己申告ラベル (匿名 OK)
+    target_excerpt: str = ""  # 対象の短い抜粋 (例: チャット応答の先頭 200 字)
+    user_label: str = ""  # 任意の自己申告ラベル (匿名 OK)

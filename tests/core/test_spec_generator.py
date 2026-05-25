@@ -138,7 +138,8 @@ class TestSheetSection:
         md = generate_spec(wb, _empty_index())
 
         assert "| Calc |" in md  # シート一覧テーブル
-        assert "### Calc" in md  # 詳細セクション
+        assert "### 3.1 業務サマリ" in md
+        assert "### 3.3 主要数式" in md
         assert "日次集計" in md
         assert "Calc!H2" in md
         assert "SUMIF" in md
@@ -192,12 +193,12 @@ class TestVbaSection:
         )
         md = generate_spec(wb, _empty_index())
 
-        assert "### Module1" in md
+        assert "### 4.1 モジュールサマリ" in md
+        assert "`Module1`" in md
         assert "UpdateDaily" in md
         assert "日次更新処理" in md
         # 行数・プロシージャ数のメタ情報
-        assert "行数: 3" in md
-        assert "プロシージャ数: 1" in md
+        assert "| `Module1` | Module | 3 | 1 |" in md
         # Phase B-1: ソースコード本体は載せない. get_vba_procedure 案内が出る.
         assert "get_vba_procedure" in md
 
@@ -236,6 +237,14 @@ class TestVbaSection:
 
 
 class TestReferencesSection:
+    def test_includes_reference_analysis_scope_note(self) -> None:
+        wb = Workbook(filename="t.xlsm")
+        md = generate_spec(wb, _empty_index())
+
+        assert "参照解析は静的解析です" in md
+        assert "動的参照" in md
+        assert "影響がないとは限りません" in md
+
     def test_references_listed(self) -> None:
         idx = ReferenceIndex(
             refs={

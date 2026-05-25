@@ -75,6 +75,8 @@ class TestCreateJob:
         )
         assert meta.filename == "input.xlsm"
         assert meta.status == "uploaded"
+        assert meta.file_sha256
+        assert meta.file_size == len(b"hello")
 
         d = storage.jobs_dir / meta.job_id
         assert d.is_dir()
@@ -96,6 +98,20 @@ class TestCreateJob:
         meta = storage.create_job("weird.../passwd", b"x")
         d = storage.jobs_dir / meta.job_id
         assert (d / "original.bin").is_file()
+
+    def test_find_duplicate_job_returns_analyzed_same_content(self, storage: Storage) -> None:
+        meta = storage.create_job("input.xlsx", b"same")
+        storage.update_status(meta.job_id, "analyzed")
+
+        duplicate = storage.find_duplicate_job(b"same")
+
+        assert duplicate is not None
+        assert duplicate.job_id == meta.job_id
+
+    def test_find_duplicate_job_ignores_failed_job(self, storage: Storage) -> None:
+        storage.update_status(storage.create_job("bad.xlsx", b"same").job_id, "failed")
+
+        assert storage.find_duplicate_job(b"same") is None
 
 
 class TestListJobs:
@@ -248,6 +264,49 @@ class TestChat:
         path = storage.jobs_dir / meta.job_id / "chat_history.jsonl"
         lines = path.read_text(encoding="utf-8").strip().split("\n")
         assert len(lines) == 5
+
+    def test_default_session_meta_uses_legacy_history(self, storage: Storage) -> None:
+        meta = storage.create_job("a.xlsm", b"1")
+        storage.append_chat_message(
+            meta.job_id,
+            ChatMessage(
+                role="user",
+                content="入力シートの列追加について相談したい",
+                timestamp="2026-04-30T00:00:00Z",
+            ),
+        )
+
+        sessions = storage.list_chat_sessions(meta.job_id)
+
+        assert sessions[0].session_id == "default"
+        assert sessions[0].title == "入力シートの列追加について相談したい"
+        assert sessions[0].message_count == 1
+
+    def test_non_default_session_history_is_isolated(self, storage: Storage) -> None:
+        meta = storage.create_job("a.xlsm", b"1")
+        session = storage.create_chat_session(meta.job_id)
+        storage.append_chat_message(
+            meta.job_id,
+            ChatMessage(role="user", content="別相談", timestamp="2026-04-30T00:00:00Z"),
+            session_id=session.session_id,
+        )
+
+        assert storage.load_chat_history(meta.job_id) == []
+        loaded = storage.load_chat_history(meta.job_id, session_id=session.session_id)
+        assert [m.content for m in loaded] == ["別相談"]
+
+    def test_archived_session_hidden_by_default(self, storage: Storage) -> None:
+        meta = storage.create_job("a.xlsm", b"1")
+        session = storage.create_chat_session(meta.job_id, title="古い相談")
+        storage.update_chat_session(meta.job_id, session.session_id, archived=True)
+
+        visible_ids = {s.session_id for s in storage.list_chat_sessions(meta.job_id)}
+        all_ids = {
+            s.session_id for s in storage.list_chat_sessions(meta.job_id, include_archived=True)
+        }
+
+        assert session.session_id not in visible_ids
+        assert session.session_id in all_ids
 
 
 # ---------- env ----------

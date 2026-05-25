@@ -13,6 +13,8 @@ import {
   type AnalyzeResponse,
   type ChatMessage,
   type ChatReply,
+  type ChatSessionMeta,
+  type ChatSessionResponse,
   type DeleteResponse,
   type DiagramSet,
   type ExternalFunctionRegistry,
@@ -152,15 +154,14 @@ export function useBackend() {
     },
 
     /** POST /extract — multipart アップロード. 大きなファイルだと数分かかる. */
-    async extract(file: File): Promise<string> {
+    async extract(file: File): Promise<ExtractResponse> {
       const form = new FormData()
       form.append('file', file)
-      const res = await call<ExtractResponse>('extract', '/extract', {
+      return await call<ExtractResponse>('extract', '/extract', {
         method: 'POST',
         body: form,
         timeout: HEAVY_TIMEOUT_MS,
       })
-      return res.job_id
     },
 
     /** POST /analyze/{job_id} — LLM 注釈付与. 数分かかる場合がある. */
@@ -189,22 +190,61 @@ export function useBackend() {
     },
 
     /** POST /chat/{job_id} — LLM 応答 (tool ループあり). 数分かかる場合がある. */
-    async chat(jobId: string, message: string): Promise<ChatReply> {
+    async chat(jobId: string, message: string, sessionId = 'default'): Promise<ChatReply> {
       return await call<ChatReply>('chat', `/chat/${jobId}`, {
         method: 'POST',
         body: { message },
+        query: { session_id: sessionId },
         timeout: HEAVY_TIMEOUT_MS,
       })
     },
 
     /** GET /chat/{job_id}/history */
-    async getChatHistory(jobId: string): Promise<ChatMessage[]> {
+    async getChatHistory(jobId: string, sessionId = 'default'): Promise<ChatMessage[]> {
       const res = await call<{ history: ChatMessage[] }>(
         'getChatHistory',
         `/chat/${jobId}/history`,
-        { timeout: DEFAULT_TIMEOUT_MS },
+        { query: { session_id: sessionId }, timeout: DEFAULT_TIMEOUT_MS },
       )
       return res.history ?? []
+    },
+
+    /** GET /chat/{job_id}/sessions */
+    async listChatSessions(jobId: string, includeArchived = true): Promise<ChatSessionMeta[]> {
+      const res = await call<{ sessions: ChatSessionMeta[] }>(
+        'listChatSessions',
+        `/chat/${jobId}/sessions`,
+        { query: { include_archived: includeArchived }, timeout: DEFAULT_TIMEOUT_MS },
+      )
+      return res.sessions ?? []
+    },
+
+    /** POST /chat/{job_id}/sessions */
+    async createChatSession(jobId: string, title = '新しい相談'): Promise<ChatSessionMeta> {
+      const res = await call<ChatSessionResponse>('createChatSession', `/chat/${jobId}/sessions`, {
+        method: 'POST',
+        body: { title },
+        timeout: DEFAULT_TIMEOUT_MS,
+      })
+      return res.session
+    },
+
+    /** PATCH /chat/{job_id}/sessions/{session_id} */
+    async updateChatSession(
+      jobId: string,
+      sessionId: string,
+      patch: { title?: string; archived?: boolean },
+    ): Promise<ChatSessionMeta> {
+      const res = await call<ChatSessionResponse>(
+        'updateChatSession',
+        `/chat/${jobId}/sessions/${sessionId}`,
+        {
+          method: 'PATCH',
+          body: patch,
+          timeout: DEFAULT_TIMEOUT_MS,
+        },
+      )
+      return res.session
     },
 
     /** DELETE /jobs/{job_id} */

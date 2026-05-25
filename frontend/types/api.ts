@@ -12,6 +12,8 @@ export interface JobMeta {
   filename: string
   created_at: string
   status: JobStatus
+  file_sha256?: string | null
+  file_size?: number | null
 }
 
 export interface SpecResponse {
@@ -31,6 +33,16 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: string
+}
+
+export interface ChatSessionMeta {
+  session_id: string
+  title: string
+  created_at: string
+  updated_at: string
+  archived: boolean
+  last_message_preview: string
+  message_count: number
 }
 
 // ---------- feedback ----------
@@ -69,8 +81,14 @@ export interface ChatReply {
   tool_trace?: ToolTraceItem[]
 }
 
+export interface ChatSessionResponse {
+  session: ChatSessionMeta
+}
+
 export interface ExtractResponse {
   job_id: string
+  duplicate?: boolean
+  duplicate_of?: string | null
 }
 
 export interface AnalyzeResponse {

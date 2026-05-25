@@ -51,6 +51,22 @@ defineExpose({ runSearch: (t: string) => { target.value = t; return search() } }
         セルや範囲 (例: <code class="px-1 rounded bg-(--ui-bg-elevated) text-[10px]">Calc!H2</code>,
         <code class="px-1 rounded bg-(--ui-bg-elevated) text-[10px]">Input!A:A</code>) を参照している箇所を検索します.
       </p>
+      <details class="mt-2 text-xs text-(--ui-text-muted)">
+        <summary class="cursor-pointer select-none text-(--ui-text-toned)">
+          参照解析で分かること / 分からないこと
+        </summary>
+        <div class="mt-2 space-y-1 leading-relaxed">
+          <p>
+            数式参照と、VBA の静的に確定できる <code>Range</code> / <code>Cells</code> /
+            <code>[Sheet!A1]</code> 参照を対象にします。
+          </p>
+          <p>
+            <code>Range("A" &amp; row)</code>、<code>Range(addr)</code>、
+            <code>ActiveSheet</code>、<code>Selection</code> など実行時に決まる参照は
+            検出対象外です。結果が 0 件でも、動的参照まで含めて影響がないとは限りません。
+          </p>
+        </div>
+      </details>
     </template>
 
     <div class="flex gap-2">

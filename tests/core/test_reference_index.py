@@ -256,6 +256,65 @@ class TestVbaPatterns:
 
         assert "X1" not in idx.refs
 
+    def test_apostrophe_inside_string_is_not_comment(self) -> None:
+        """文字列内の `'` や Range 風文字列を参照として扱わない."""
+        code = 'Sub Foo()\n    MsgBox "can\'t touch Range(""X1"")"\nEnd Sub'
+        procs = [VbaProcedure(name="Foo", kind="Sub", start_line=1, end_line=3, code=code)]
+        idx = build_reference_index(_wb_with_module(_module_with_code(code, procs)))
+
+        assert "X1" not in idx.refs
+
+    def test_dynamic_range_expression_is_skipped(self) -> None:
+        """`Range("A" & row)` を静的参照 `A` と誤登録しない."""
+        code = 'Sub Foo()\n    Range("A" & row)\nEnd Sub'
+        procs = [VbaProcedure(name="Foo", kind="Sub", start_line=1, end_line=3, code=code)]
+        idx = build_reference_index(_wb_with_module(_module_with_code(code, procs)))
+
+        assert idx.refs == {}
+
+    def test_sheet_variable_and_with_context(self) -> None:
+        """シート変数と With 文から静的に分かる参照先を補う."""
+        code = (
+            "Sub Foo()\n"
+            '    Set ws = Worksheets("Calc")\n'
+            '    ws.Range("A1")\n'
+            '    With Sheets("Input")\n'
+            "        .Cells(2, 8)\n"
+            "    End With\n"
+            "End Sub\n"
+        )
+        procs = [VbaProcedure(name="Foo", kind="Sub", start_line=1, end_line=7, code=code)]
+        idx = build_reference_index(_wb_with_module(_module_with_code(code, procs)))
+
+        assert "Calc!A1" in idx.refs
+        assert "Input!H2" in idx.refs
+
+    def test_document_module_bare_range_uses_matching_sheet_name(self) -> None:
+        """シート名と一致する Document モジュールでは bare Range をシート修飾する."""
+        module = VbaModule(
+            name="Calc",
+            type="Document",
+            code='Sub Change()\n    Range("A1")\nEnd Sub',
+            procedures=[
+                VbaProcedure(
+                    name="Change",
+                    kind="Sub",
+                    start_line=1,
+                    end_line=3,
+                    code='Sub Change()\n    Range("A1")\nEnd Sub',
+                )
+            ],
+        )
+        wb = Workbook(
+            filename="t.xlsm",
+            sheets=[SheetInfo(name="Calc", rows=10, cols=10)],
+            vba_modules=[module],
+        )
+        idx = build_reference_index(wb)
+
+        assert "Calc!A1" in idx.refs
+        assert "A1" not in idx.refs
+
 
 # ---------- 空入力 ----------
 

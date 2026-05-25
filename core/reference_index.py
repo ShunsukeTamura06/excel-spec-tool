@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from core.models import Reference, ReferenceIndex, VbaModule, Workbook
@@ -180,39 +181,19 @@ def _normalize_target(raw: str, owner_sheet: str | None = None) -> tuple[str, Pa
     return _canonical_key(parsed), parsed
 
 
-# --- VBA 参照パターン ---------------------------------------------------------
-# 完璧なパースは目指さない。CLAUDE.md §4 の最低限テスト要件を満たすことが目標。
+# --- VBA 参照抽出 -------------------------------------------------------------
+# VBA は実行時に参照先を組み立てられるため、静的解析だけで完全な依存関係は作れない。
+# ここでは正規表現で文字列断片を拾うのではなく、コメント/文字列/括弧を理解する
+# 軽いスキャナで「静的に確定できる参照」だけを登録する。
 
-# `Worksheets("Calc").Range("A1:B2")` または `Sheets("Calc").Range("A1")`
-_RE_SHEETS_RANGE = re.compile(
-    r"""
-    (?:Worksheets|Sheets)\s*\(\s*"(?P<sheet>[^"]+)"\s*\)
-    \s*\.\s*Range\s*\(\s*"(?P<range>[^"]+)"\s*\)
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
 
-# `Sheets("Calc").Cells(2, 8)` → 行2列8 = H2
-_RE_SHEETS_CELLS = re.compile(
-    r"""
-    (?:Worksheets|Sheets)\s*\(\s*"(?P<sheet>[^"]+)"\s*\)
-    \s*\.\s*Cells\s*\(\s*(?P<row>\d+)\s*,\s*(?P<col>\d+)\s*\)
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
+@dataclass(frozen=True)
+class _VbaRefHit:
+    """VBA コード内で見つかった静的参照."""
 
-# `[Calc!A1]` 短縮表記
-_RE_BRACKET = re.compile(r"\[(?P<sheet>[^\[\]!]+)!(?P<range>[^\[\]]+)\]")
-
-# `Range("A1:J100")` シート修飾なし (現在のシート)
-# 上の SHEETS_RANGE が消費した後の残りに対して適用するため、最後に走らせる。
-_RE_RANGE_BARE = re.compile(
-    r"""
-    (?<![A-Za-z0-9_\.])    # 直前が識別子でない (Worksheets(...).Range は除外)
-    Range\s*\(\s*"(?P<range>[^"]+)"\s*\)
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
+    sheet: str | None
+    ref: str
+    code: str
 
 
 def _col_num_to_letters(col: int) -> str:
@@ -249,85 +230,480 @@ def _from_label(module: VbaModule, line_num: int) -> str:
     return f"{module.name}:L{line_num}"
 
 
-def _mask_span(buf: list[str], span: tuple[int, int]) -> None:
-    """`buf` の `span` 範囲 (開始, 終了) を空白で塗りつぶす (in-place)."""
-    start, end = span
-    for i in range(start, end):
-        if 0 <= i < len(buf):
-            buf[i] = " "
+def _strip_vba_comment(line: str) -> str:
+    """VBA のコメント部分を除いたコード行を返す.
+
+    Args:
+        line: VBA ソース 1 行.
+
+    Returns:
+        文字列リテラル内の `'` をコメントと誤認せずに、実コード部分だけを返す。
+    """
+    in_string = False
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == '"':
+            if in_string and i + 1 < len(line) and line[i + 1] == '"':
+                i += 2
+                continue
+            in_string = not in_string
+        elif ch == "'" and not in_string:
+            return line[:i]
+        i += 1
+    return line
 
 
-def _scan_vba_module(module: VbaModule) -> list[Reference]:
+def _split_vba_statements(line: str) -> list[str]:
+    """1 行を VBA の `:` 区切りステートメントに分割する.
+
+    Args:
+        line: コメント除去済みの VBA ソース 1 行.
+
+    Returns:
+        文字列リテラル内の `:` は区切りと見なさないステートメント一覧。
+    """
+    statements: list[str] = []
+    in_string = False
+    start = 0
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == '"':
+            if in_string and i + 1 < len(line) and line[i + 1] == '"':
+                i += 2
+                continue
+            in_string = not in_string
+        elif ch == ":" and not in_string:
+            statements.append(line[start:i])
+            start = i + 1
+        i += 1
+    statements.append(line[start:])
+    return statements
+
+
+def _find_top_level_equals(statement: str) -> int | None:
+    """トップレベルの `=` 位置を返す.
+
+    Args:
+        statement: VBA ステートメント.
+
+    Returns:
+        文字列・括弧の内側を除いた `=` の位置。なければ None。
+    """
+    in_string = False
+    depth = 0
+    i = 0
+    while i < len(statement):
+        ch = statement[i]
+        if ch == '"':
+            if in_string and i + 1 < len(statement) and statement[i + 1] == '"':
+                i += 2
+                continue
+            in_string = not in_string
+        elif not in_string:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth = max(0, depth - 1)
+            elif ch == "=" and depth == 0:
+                return i
+        i += 1
+    return None
+
+
+def _iter_vba_identifiers(code: str) -> Iterable[tuple[str, int, int]]:
+    """コード上の識別子トークンを文字列リテラル外から列挙する.
+
+    Args:
+        code: VBA コード片.
+
+    Yields:
+        `(識別子, 開始位置, 終了位置)`。
+    """
+    in_string = False
+    i = 0
+    while i < len(code):
+        ch = code[i]
+        if ch == '"':
+            if in_string and i + 1 < len(code) and code[i + 1] == '"':
+                i += 2
+                continue
+            in_string = not in_string
+            i += 1
+            continue
+        if in_string:
+            i += 1
+            continue
+        if ch.isalpha() or ch == "_":
+            start = i
+            i += 1
+            while i < len(code) and (code[i].isalnum() or code[i] == "_"):
+                i += 1
+            yield code[start:i], start, i
+            continue
+        i += 1
+
+
+def _read_call_arguments(code: str, ident_end: int) -> tuple[str, int] | None:
+    """識別子直後の呼び出し括弧から引数文字列を読む.
+
+    Args:
+        code: VBA コード片.
+        ident_end: 関数/メソッド名識別子の終了位置.
+
+    Returns:
+        `(括弧内の文字列, 呼び出し全体の終了位置)`。呼び出しでなければ None。
+    """
+    i = ident_end
+    while i < len(code) and code[i].isspace():
+        i += 1
+    if i >= len(code) or code[i] != "(":
+        return None
+
+    start = i + 1
+    depth = 1
+    in_string = False
+    i += 1
+    while i < len(code):
+        ch = code[i]
+        if ch == '"':
+            if in_string and i + 1 < len(code) and code[i + 1] == '"':
+                i += 2
+                continue
+            in_string = not in_string
+        elif not in_string:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return code[start:i], i + 1
+        i += 1
+    return None
+
+
+def _literal_string_arg(arg_text: str) -> str | None:
+    """引数が単一の文字列リテラルなら値を返す.
+
+    Args:
+        arg_text: 呼び出し括弧内の引数文字列.
+
+    Returns:
+        `"A1"` のように静的に確定できる単一文字列。`"A" & row` は None。
+    """
+    s = arg_text.strip()
+    if not s.startswith('"'):
+        return None
+
+    chars: list[str] = []
+    i = 1
+    while i < len(s):
+        ch = s[i]
+        if ch == '"':
+            if i + 1 < len(s) and s[i + 1] == '"':
+                chars.append('"')
+                i += 2
+                continue
+            tail = s[i + 1 :].strip()
+            return "".join(chars) if tail == "" else None
+        chars.append(ch)
+        i += 1
+    return None
+
+
+def _split_top_level_args(arg_text: str) -> list[str]:
+    """呼び出し引数をトップレベルのカンマで分割する.
+
+    Args:
+        arg_text: 呼び出し括弧内の引数文字列.
+
+    Returns:
+        文字列・括弧の内側を分割しない引数一覧。
+    """
+    args: list[str] = []
+    in_string = False
+    depth = 0
+    start = 0
+    i = 0
+    while i < len(arg_text):
+        ch = arg_text[i]
+        if ch == '"':
+            if in_string and i + 1 < len(arg_text) and arg_text[i + 1] == '"':
+                i += 2
+                continue
+            in_string = not in_string
+        elif not in_string:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth = max(0, depth - 1)
+            elif ch == "," and depth == 0:
+                args.append(arg_text[start:i].strip())
+                start = i + 1
+        i += 1
+    args.append(arg_text[start:].strip())
+    return args
+
+
+def _sheet_from_expression(
+    expr: str,
+    sheet_vars: dict[str, str],
+    *,
+    require_terminal: bool = False,
+) -> str | None:
+    """VBA 式から静的に分かるシート名を解決する.
+
+    Args:
+        expr: `Worksheets("Calc")` や `ws` などの式.
+        sheet_vars: `Set ws = Worksheets("Calc")` で分かった変数表.
+        require_terminal: True の場合、式全体がシートオブジェクトで終わる時だけ
+            解決する。`Worksheets("Calc").Range("A1")` は除外する。
+
+    Returns:
+        シート名。インデックス指定や動的式など確定できない場合は None。
+    """
+    s = expr.strip()
+    if not s:
+        return None
+    var_name = s.lower()
+    if var_name in sheet_vars:
+        return sheet_vars[var_name]
+
+    found: str | None = None
+    for ident, _start, end in _iter_vba_identifiers(s):
+        if ident.lower() not in {"worksheets", "sheets"}:
+            continue
+        call = _read_call_arguments(s, end)
+        if call is None:
+            continue
+        if require_terminal and s[call[1] :].strip():
+            continue
+        value = _literal_string_arg(call[0])
+        if value:
+            found = value
+    return found
+
+
+def _update_sheet_variable(statement: str, sheet_vars: dict[str, str]) -> None:
+    """`Set ws = Worksheets("X")` 形式の単純なシート変数を追跡する.
+
+    Args:
+        statement: VBA ステートメント.
+        sheet_vars: 更新対象の変数表。
+    """
+    stripped = statement.strip()
+    lower = stripped.lower()
+    if not lower.startswith("set "):
+        return
+
+    eq_pos = _find_top_level_equals(stripped)
+    if eq_pos is None:
+        return
+
+    lhs = stripped[4:eq_pos].strip()
+    rhs = stripped[eq_pos + 1 :].strip()
+    if not lhs or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", lhs):
+        return
+    sheet = _sheet_from_expression(rhs, sheet_vars, require_terminal=True)
+    key = lhs.lower()
+    if sheet is None:
+        sheet_vars.pop(key, None)
+    else:
+        sheet_vars[key] = sheet
+
+
+def _call_owner_sheet(
+    statement: str,
+    ident_start: int,
+    sheet_vars: dict[str, str],
+    with_stack: list[str | None],
+    owner_sheet: str | None,
+) -> str | None:
+    """`Range` / `Cells` 呼び出しの所有シートを解決する.
+
+    Args:
+        statement: VBA ステートメント.
+        ident_start: `Range` / `Cells` 識別子の開始位置.
+        sheet_vars: 単純なシート変数表.
+        with_stack: `With Worksheets("X")` のネスト.
+        owner_sheet: シートモジュールなどから推定できる所有シート.
+
+    Returns:
+        静的に分かるシート名。不明なら None。
+    """
+    i = ident_start - 1
+    while i >= 0 and statement[i].isspace():
+        i -= 1
+    if i < 0 or statement[i] != ".":
+        return owner_sheet
+
+    expr = statement[:i].strip()
+    if not expr:
+        return with_stack[-1] if with_stack else owner_sheet
+
+    sheet = _sheet_from_expression(expr, sheet_vars)
+    if sheet is not None:
+        return sheet
+
+    # `foo(ws.Range("A1"))` のように前置式が長い場合は末尾の識別子も見る。
+    matches = list(_iter_vba_identifiers(expr))
+    if matches:
+        last_ident = matches[-1][0].lower()
+        if last_ident in sheet_vars:
+            return sheet_vars[last_ident]
+    return None
+
+
+def _iter_bracket_refs(statement: str, owner_sheet: str | None) -> Iterable[_VbaRefHit]:
+    """`[Sheet!A1]` / `[A1]` の短縮参照を列挙する.
+
+    Args:
+        statement: VBA ステートメント.
+        owner_sheet: シートモジュールなどから推定できる所有シート.
+
+    Yields:
+        静的参照ヒット。
+    """
+    in_string = False
+    i = 0
+    while i < len(statement):
+        ch = statement[i]
+        if ch == '"':
+            if in_string and i + 1 < len(statement) and statement[i + 1] == '"':
+                i += 2
+                continue
+            in_string = not in_string
+        elif ch == "[" and not in_string:
+            end = statement.find("]", i + 1)
+            if end == -1:
+                return
+            content = statement[i + 1 : end].strip()
+            if content:
+                parsed = _parse_ref(content, owner_sheet=owner_sheet)
+                if parsed is not None:
+                    yield _VbaRefHit(
+                        parsed.sheet,
+                        _canonical_key(parsed).split("!", 1)[-1],
+                        statement[i : end + 1],
+                    )
+            i = end
+        i += 1
+
+
+def _extract_refs_from_statement(
+    statement: str,
+    sheet_vars: dict[str, str],
+    with_stack: list[str | None],
+    owner_sheet: str | None,
+) -> list[_VbaRefHit]:
+    """1 ステートメントから静的な Range/Cells 参照を抽出する.
+
+    Args:
+        statement: VBA ステートメント.
+        sheet_vars: 単純なシート変数表.
+        with_stack: `With` 文で解決済みのシート名スタック.
+        owner_sheet: シートモジュールなどから推定できる所有シート.
+
+    Returns:
+        見つかった静的参照。動的に組み立てる参照は返さない。
+    """
+    refs = list(_iter_bracket_refs(statement, owner_sheet))
+
+    for ident, start, end in _iter_vba_identifiers(statement):
+        ident_lower = ident.lower()
+        if ident_lower not in {"range", "cells"}:
+            continue
+        call = _read_call_arguments(statement, end)
+        if call is None:
+            continue
+        args_text, call_end = call
+        sheet = _call_owner_sheet(statement, start, sheet_vars, with_stack, owner_sheet)
+        code = statement[start:call_end].strip()
+
+        if ident_lower == "range":
+            ref = _literal_string_arg(args_text)
+            if ref:
+                refs.append(_VbaRefHit(sheet, ref, code))
+            continue
+
+        args = _split_top_level_args(args_text)
+        if len(args) < 2:
+            continue
+        if not args[0].isdigit() or not args[1].isdigit():
+            continue
+        row = int(args[0])
+        col = int(args[1])
+        cell_ref = f"{_col_num_to_letters(col)}{row}"
+        if cell_ref:
+            refs.append(_VbaRefHit(sheet, cell_ref, code))
+
+    return refs
+
+
+def _module_owner_sheet(module: VbaModule, sheet_names: set[str]) -> str | None:
+    """モジュール名からシート所有者を推定する.
+
+    Args:
+        module: VBA モジュール.
+        sheet_names: ブック内のワークシート名集合.
+
+    Returns:
+        Document モジュール名がシート名と一致する場合のみ、そのシート名。
+    """
+    if module.type == "Document" and module.name in sheet_names:
+        return module.name
+    return None
+
+
+def _scan_vba_module(module: VbaModule, sheet_names: set[str] | None = None) -> list[Reference]:
     """1モジュールの code を走査して Reference を抽出する.
 
-    重複検出を避けるため、長く特異なパターンから順にマッチを記録し、
-    マッチ済み区間は後段のパターンが拾わないように line ごとにマスクする。
+    Args:
+        module: 走査対象の VBA モジュール.
+        sheet_names: ブック内シート名。Document モジュールの bare 参照を
+            シートに補正できる場合に使う。
+
+    Returns:
+        静的に確定できるセル/範囲参照。
     """
     refs: list[Reference] = []
     if not module.code:
         return refs
 
+    owner_sheet = _module_owner_sheet(module, sheet_names or set())
+    sheet_vars: dict[str, str] = {}
+    with_stack: list[str | None] = []
+
     lines = module.code.splitlines()
     for idx, raw_line in enumerate(lines, start=1):
-        # コメント (`'`) より右側は除外する.
-        # 文字列リテラル内の `'` は誤検出するが、簡素化のためスキップ。
-        line = raw_line.split("'", 1)[0]
+        for statement in _split_vba_statements(_strip_vba_comment(raw_line)):
+            stripped = statement.strip()
+            lower = stripped.lower()
+            if not stripped:
+                continue
 
-        # マスク用 (マッチした範囲を空白で塗りつぶし、後段パターンの誤検出を防ぐ)
-        masked = list(line)
+            if lower == "end with":
+                if with_stack:
+                    with_stack.pop()
+                continue
 
-        # 1. Worksheets/Sheets("...").Range("...")
-        for m in _RE_SHEETS_RANGE.finditer(line):
-            refs.append(
-                Reference(
-                    kind="vba",
-                    from_=_from_label(module, idx),
-                    to=_qualify(m.group("sheet"), m.group("range")),
-                    code=m.group(0),
+            if lower.startswith("with "):
+                with_stack.append(
+                    _sheet_from_expression(stripped[5:], sheet_vars, require_terminal=True)
                 )
-            )
-            _mask_span(masked, m.span())
+                continue
 
-        # 2. Worksheets/Sheets("...").Cells(r, c)
-        cur = "".join(masked)
-        for m in _RE_SHEETS_CELLS.finditer(cur):
-            row = int(m.group("row"))
-            col = int(m.group("col"))
-            cell_ref = f"{_col_num_to_letters(col)}{row}"
-            refs.append(
-                Reference(
-                    kind="vba",
-                    from_=_from_label(module, idx),
-                    to=_qualify(m.group("sheet"), cell_ref),
-                    code=m.group(0),
+            _update_sheet_variable(stripped, sheet_vars)
+            for hit in _extract_refs_from_statement(stripped, sheet_vars, with_stack, owner_sheet):
+                refs.append(
+                    Reference(
+                        kind="vba",
+                        from_=_from_label(module, idx),
+                        to=_qualify(hit.sheet, hit.ref),
+                        code=hit.code,
+                    )
                 )
-            )
-            _mask_span(masked, m.span())
-
-        # 3. [Calc!A1] 短縮表記
-        cur = "".join(masked)
-        for m in _RE_BRACKET.finditer(cur):
-            refs.append(
-                Reference(
-                    kind="vba",
-                    from_=_from_label(module, idx),
-                    to=_qualify(m.group("sheet").strip(), m.group("range").strip()),
-                    code=m.group(0),
-                )
-            )
-            _mask_span(masked, m.span())
-
-        # 4. Range("...") シート修飾なし
-        cur = "".join(masked)
-        for m in _RE_RANGE_BARE.finditer(cur):
-            refs.append(
-                Reference(
-                    kind="vba",
-                    from_=_from_label(module, idx),
-                    to=m.group("range"),
-                    code=m.group(0),
-                )
-            )
 
     return refs
 
@@ -361,10 +737,11 @@ def build_reference_index(wb: Workbook) -> ReferenceIndex:
                     )
                 )
 
-    # VBA側: code を正規表現で走査. _scan_vba_module が返した raw `to` を
-    # canonical キーに置換して登録する.
+    # VBA側: code を軽量スキャナで走査. _scan_vba_module が返した raw `to` を
+    # canonical キーに置換して登録する。静的に確定できない動的参照は登録しない。
+    sheet_names = {sheet.name for sheet in wb.sheets}
     for module in wb.vba_modules:
-        for ref in _scan_vba_module(module):
+        for ref in _scan_vba_module(module, sheet_names=sheet_names):
             key, _ = _normalize_target(ref.to, owner_sheet=None)
             bucket[key].append(
                 Reference(

@@ -115,6 +115,32 @@ class TestExtract:
         # =SUM(A1:A2) が逆引きインデックスに登場する. キーはオーナーシート修飾済み.
         assert "Calc!A1:A2" in idx.refs
 
+    def test_extract_reuses_existing_job_for_duplicate_file(
+        self,
+        client: TestClient,
+        sample_xlsx_bytes: bytes,
+        backend_storage: Storage,
+    ) -> None:
+        first = client.post(
+            "/extract",
+            files={"file": ("sample.xlsx", sample_xlsx_bytes, "application/octet-stream")},
+        )
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        analyze = client.post(f"/analyze/{first_body['job_id']}")
+        assert analyze.status_code == 200, analyze.text
+
+        second = client.post(
+            "/extract",
+            files={"file": ("renamed.xlsx", sample_xlsx_bytes, "application/octet-stream")},
+        )
+        assert second.status_code == 200, second.text
+        second_body = second.json()
+
+        assert second_body["duplicate"] is True
+        assert second_body["job_id"] == first_body["job_id"]
+        assert len(backend_storage.list_jobs()) == 1
+
 
 # ---------- /analyze ----------
 
@@ -298,6 +324,57 @@ class TestChat:
         assert r.status_code == 200
         assert r.json() == {"history": []}
 
+    def test_chat_sessions_can_be_created_and_used(
+        self, client: TestClient, sample_xlsx_bytes: bytes
+    ) -> None:
+        job_id = self._new_analyzed_job(client, sample_xlsx_bytes)
+        created = client.post(f"/chat/{job_id}/sessions", json={"title": "列追加の相談"})
+        assert created.status_code == 200, created.text
+        session = created.json()["session"]
+
+        r = client.post(
+            f"/chat/{job_id}",
+            params={"session_id": session["session_id"]},
+            json={"message": "first session message"},
+        )
+        assert r.status_code == 200, r.text
+
+        default_history = client.get(f"/chat/{job_id}/history").json()["history"]
+        session_history = client.get(
+            f"/chat/{job_id}/history",
+            params={"session_id": session["session_id"]},
+        ).json()["history"]
+        assert default_history == []
+        assert session_history[0]["content"] == "first session message"
+
+    def test_chat_sessions_archive_and_restore(
+        self, client: TestClient, sample_xlsx_bytes: bytes
+    ) -> None:
+        job_id = self._new_analyzed_job(client, sample_xlsx_bytes)
+        session = client.post(f"/chat/{job_id}/sessions", json={"title": "古い相談"}).json()[
+            "session"
+        ]
+        archived = client.patch(
+            f"/chat/{job_id}/sessions/{session['session_id']}",
+            json={"archived": True},
+        )
+        assert archived.status_code == 200, archived.text
+
+        visible = client.get(f"/chat/{job_id}/sessions").json()["sessions"]
+        all_sessions = client.get(
+            f"/chat/{job_id}/sessions",
+            params={"include_archived": True},
+        ).json()["sessions"]
+        assert session["session_id"] not in {s["session_id"] for s in visible}
+        assert session["session_id"] in {s["session_id"] for s in all_sessions}
+
+        restored = client.patch(
+            f"/chat/{job_id}/sessions/{session['session_id']}",
+            json={"archived": False},
+        )
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["session"]["archived"] is False
+
 
 # ---------- /jobs ----------
 
@@ -306,15 +383,9 @@ class TestJobs:
     def test_list_empty(self, client: TestClient) -> None:
         assert client.get("/jobs").json() == {"jobs": []}
 
-    def test_list_returns_created_jobs(self, client: TestClient, sample_xlsx_bytes: bytes) -> None:
-        client.post(
-            "/extract",
-            files={"file": ("a.xlsx", sample_xlsx_bytes, "application/octet-stream")},
-        )
-        client.post(
-            "/extract",
-            files={"file": ("b.xlsx", sample_xlsx_bytes, "application/octet-stream")},
-        )
+    def test_list_returns_created_jobs(self, client: TestClient, backend_storage: Storage) -> None:
+        backend_storage.create_job("a.xlsx", b"a")
+        backend_storage.create_job("b.xlsx", b"b")
         body = client.get("/jobs").json()
         assert len(body["jobs"]) == 2
         names = {j["filename"] for j in body["jobs"]}

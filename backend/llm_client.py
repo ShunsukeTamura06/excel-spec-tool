@@ -414,7 +414,7 @@ class OpenAICompatibleLLMClient:
         }
         if tools:
             kwargs["tools"] = tools
-        response = self._client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
+        response = self._client.chat.completions.create(**kwargs)
         usage = self._extract_usage(getattr(response, "usage", None))
 
         content: str | None = None
