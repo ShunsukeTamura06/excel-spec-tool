@@ -18,6 +18,7 @@ from backend.dependencies import get_llm_client, get_storage
 from backend.llm_client import LLMClient
 from backend.storage import JobNotFoundError, Storage
 from core.models import ReferenceIndex, Workbook
+from core.risk_analyzer import detect_analysis_risks
 from core.spec_generator import generate_spec
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ def _run_analysis(
         生成された spec.md の文字数 (ログ用).
     """
     annotated_wb = annotate_workbook(wb, llm)
+    annotated_wb.analysis_risks = detect_analysis_risks(annotated_wb)
     storage.save_workbook(job_id, annotated_wb)
     spec_md = generate_spec(annotated_wb, idx)
     storage.save_spec(job_id, spec_md)

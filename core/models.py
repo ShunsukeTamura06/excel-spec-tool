@@ -137,6 +137,28 @@ class PowerQueryInfo(BaseModel):
     confidence: Literal["explicit", "inferred", "unknown"] = "explicit"
 
 
+class AnalysisRisk(BaseModel):
+    """静的解析では断定できない未解析リスク 1件.
+
+    LLM が「影響なし」と誤断定しないためのガードレールとして使う。
+    """
+
+    category: Literal[
+        "dynamic_vba",
+        "runtime_state",
+        "dynamic_formula",
+        "external_dependency",
+        "event_macro",
+        "unknown_object_dependency",
+    ]
+    severity: Literal["high", "medium", "low"]
+    location: str
+    evidence: str
+    description: str
+    recommendation: str
+    confidence: Literal["explicit", "inferred", "unknown"] = "explicit"
+
+
 class DataValidation(BaseModel):
     """セルに設定された入力規則 (リスト / 数値範囲 / 日付 等).
 
@@ -204,6 +226,7 @@ class Workbook(BaseModel):
     vba_modules: list[VbaModule] = Field(default_factory=list)
     external_links: list[str] = Field(default_factory=list)
     power_queries: list[PowerQueryInfo] = Field(default_factory=list)
+    analysis_risks: list[AnalysisRisk] = Field(default_factory=list)
 
 
 class Reference(BaseModel):

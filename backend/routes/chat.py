@@ -61,6 +61,8 @@ _TOOL_PROGRESS_MESSAGES = {
     "list_vba_modules": "VBAモジュール一覧を確認中",
     "get_vba_procedure": "VBAコードを確認中",
     "list_sheet_formulas": "シートの数式を確認中",
+    "list_workbook_objects": "Excelオブジェクトを確認中",
+    "list_analysis_risks": "未解析リスクを確認中",
     "lookup_external_function": "外部関数の定義を確認中",
     "list_external_functions_used": "外部関数の使用箇所を確認中",
 }
@@ -268,6 +270,7 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "- 設計書の preview に映っていない領域 (例: 50 行目以降、20 列目以降) の値は"
         "決して推測しない。必ずツールで取得する",
         "- 波及範囲を述べる前に lookup_references を呼んで実際の参照元を確認する",
+        "- 改修可否や安全性を述べる前に list_analysis_risks を呼び、未解析リスクを確認する",
         "- lookup_references の結果が 0 件でも、動的 VBA 参照まで含めて影響がないとは断定しない",
         "",
         "## 3. 分からないことは素直に認める",
@@ -290,6 +293,7 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "- 波及範囲を聞かれたら参照元を網羅する (件数 + 主要箇所)",
         "- 参照解析で検出できない動的参照の可能性が残る場合は、"
         "「静的解析で確認できた範囲」と「未確認の可能性」を分けて書く",
+        "- 未解析リスクがある場合は、回答の最後ではなく波及範囲の直後に明示する",
         "- 不明な部分があってもそれを「不明」として明示すれば回答漏れにはならない",
         "",
         "# 参照解析の前提",
@@ -308,14 +312,25 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "影響が完全に無いとは断定しない",
         "- VBA の波及範囲が重要な場合は、lookup_references だけで終えず、"
         "list_vba_modules と get_vba_procedure で該当コードを確認する",
+        "- グラフ、ピボット、Power Query / 外部接続への波及があり得る場合は、"
+        "list_workbook_objects で棚卸しを確認する",
+        "- 未解析リスクは list_analysis_risks で確認し、手動確認対象として扱う",
         "",
         "# 応答フォーマット",
         "",
         "通常の回答には以下のセクションを必ず含めてください:",
         "",
-        "1. **改修手順**: ユーザーの操作レベル (どのセル/タブを開き、何を入力するか) を具体的に",
-        "2. **波及範囲**: 影響を受けるセルや VBA を一覧 "
+        "1. **確認できた事実**: ツールや設計書から直接確認できた情報と根拠",
+        "2. **波及範囲**: 影響を受けるセル / VBA / グラフ / ピボット / 接続を一覧 "
         "(件数 + 主要箇所、調査根拠としてどのツールを呼んだか)",
+        "3. **未解析リスク**: list_analysis_risks の結果や、静的解析で断定できない点",
+        "4. **改修手順**: ユーザーの操作レベル (どのセル/タブを開き、何を入力するか) を具体的に",
+        "5. **手動確認チェックリスト**: 改修後に Excel 上で確認すべき"
+        "操作・再計算・更新・ボタン押下",
+        "",
+        "禁止表現:",
+        "- 「影響ありません」「使われていません」「安全です」と断定しない",
+        "- 代わりに「静的解析で確認できた範囲では」「未解析リスクとして」を使う",
         "",
         "ただし、まずユーザーに質問する必要がある場合は、"
         "フォーマットに従わず質問だけを返してください。",
@@ -352,6 +367,14 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "- `list_sheet_formulas(sheet, pattern?, limit?)`:",
         '    例: list_sheet_formulas("Calc", pattern="SUMIF")',
         "    シートの数式一覧 (設計書 TOP10 から漏れた数式や特定関数の検索) を返す。",
+        "- `list_workbook_objects(sheet?, kind?)`:",
+        '    例: list_workbook_objects(kind="pivot")',
+        "    グラフ / ピボット / Power Query・外部接続の棚卸しを返す。",
+        "    表や列の変更が可視化・集計・外部接続に波及するか確認するときに使う。",
+        "- `list_analysis_risks(severity?, category?, limit?)`:",
+        '    例: list_analysis_risks(severity="high")',
+        "    動的 VBA 参照、イベント処理、INDIRECT/OFFSET、外部接続など、"
+        "静的解析では断定できない未解析リスクを返す。",
         "- `lookup_external_function(name)`:",
         '    例: lookup_external_function("BDH")',
         "    Bloomberg / Refinitiv 等の Excel Add-In 関数の定義 "

@@ -36,14 +36,19 @@ class TestSystemPromptContainsCoreGuidelines:
 
     def test_includes_response_format_sections(self) -> None:
         prompt = _build_system_prompt("")
+        assert "確認できた事実" in prompt
         assert "改修手順" in prompt
         assert "波及範囲" in prompt
+        assert "未解析リスク" in prompt
+        assert "手動確認チェックリスト" in prompt
 
     def test_includes_tool_names(self) -> None:
         prompt = _build_system_prompt("")
         assert "get_cells_range" in prompt
         assert "find_cells" in prompt
         assert "lookup_references" in prompt
+        assert "list_workbook_objects" in prompt
+        assert "list_analysis_risks" in prompt
 
     def test_includes_reference_analysis_limitations(self) -> None:
         prompt = _build_system_prompt("")
@@ -51,6 +56,7 @@ class TestSystemPromptContainsCoreGuidelines:
         assert "静的に確定できる" in prompt
         assert "Range(addr)" in prompt
         assert "影響が完全に無いとは断定しない" in prompt
+        assert "影響ありません" in prompt
 
     def test_includes_spec_when_provided(self) -> None:
         prompt = _build_system_prompt("# 設計書: x.xlsm\n本文")

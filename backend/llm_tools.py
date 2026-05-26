@@ -11,6 +11,7 @@ LLM に渡す `tools` 配列を取得、`execute_tool_call()` で実行する。
 - get_vba_procedure: 指定プロシージャのソースコード本体を取得
 - list_sheet_formulas: シート内の数式一覧 (オプションでテキストフィルタ)
 - list_workbook_objects: グラフ / ピボット / Power Query・外部接続の棚卸しを取得
+- list_analysis_risks: 動的参照など、静的解析では断定できない未解析リスクを取得
 - lookup_external_function: Bloomberg BDH/BDP/BDS 等の Add-In 関数定義を引く
 - list_external_functions_used: 当該ブックで使われている外部関数とその箇所を列挙
 """
@@ -215,6 +216,37 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "list_analysis_risks",
+            "description": (
+                "静的解析では影響範囲を断定できない未解析リスクを返す。"
+                "動的 VBA 参照、ActiveSheet/Selection、イベントマクロ、"
+                "INDIRECT/OFFSET、外部接続、元データ不明のグラフ/ピボットなどが対象。"
+                "改修手順や波及範囲を答える前に、手動確認が必要なリスクを把握するために使う。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "severity": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low", "all"],
+                        "description": "重大度で絞る。未指定なら all。",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "カテゴリで絞る場合に指定。",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "最大件数 (デフォルト 100, 上限 500)",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "lookup_external_function",
             "description": (
                 "Bloomberg / Refinitiv 等の Excel Add-In 関数の定義を引く。"
@@ -318,6 +350,8 @@ def execute_tool_call(
             result = _exec_list_sheet_formulas(storage, job_id, arguments)
         elif name == "list_workbook_objects":
             result = _exec_list_workbook_objects(storage, job_id, arguments)
+        elif name == "list_analysis_risks":
+            result = _exec_list_analysis_risks(storage, job_id, arguments)
         elif name == "lookup_external_function":
             result = _exec_lookup_external_function(arguments)
         elif name == "list_external_functions_used":
@@ -537,6 +571,55 @@ def _exec_list_workbook_objects(storage: Storage, job_id: str, args: dict[str, A
             "analysis_scope": (
                 "グラフ系列参照とピボット元データは OOXML から明示的に取れた範囲。"
                 "Power Query は接続定義と queryTable 出力先の棚卸しで、M コード本文は未解析。"
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def _exec_list_analysis_risks(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
+    """静的解析で断定できない未解析リスクを返す."""
+    severity = str(args.get("severity") or "all")
+    if severity not in {"high", "medium", "low", "all"}:
+        raise ToolExecutionError("severity must be high, medium, low, or all")
+    category_raw = args.get("category")
+    category = str(category_raw) if category_raw else None
+    limit_raw = args.get("limit", 100)
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(500, limit))
+
+    try:
+        wb = storage.load_workbook(job_id)
+    except JobNotFoundError as e:
+        raise ToolExecutionError(f"job not found: {e}") from e
+    except FileNotFoundError as e:
+        raise ToolExecutionError(f"workbook not extracted: {e}") from e
+
+    risks = list(wb.analysis_risks)
+    if severity != "all":
+        risks = [risk for risk in risks if risk.severity == severity]
+    if category:
+        risks = [risk for risk in risks if risk.category == category]
+
+    counts = {
+        "high": sum(1 for risk in wb.analysis_risks if risk.severity == "high"),
+        "medium": sum(1 for risk in wb.analysis_risks if risk.severity == "medium"),
+        "low": sum(1 for risk in wb.analysis_risks if risk.severity == "low"),
+    }
+    sliced = risks[:limit]
+    return json.dumps(
+        {
+            "risks": [risk.model_dump() for risk in sliced],
+            "counts": counts,
+            "total": len(risks),
+            "returned": len(sliced),
+            "truncated": len(risks) > limit,
+            "analysis_scope": (
+                "ここに出る項目は静的解析では影響範囲を断定できない箇所。"
+                "回答時は確認済み事実と未解析リスクを分け、手動確認対象として扱う。"
             ),
         },
         ensure_ascii=False,

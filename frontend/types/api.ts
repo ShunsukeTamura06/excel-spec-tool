@@ -176,6 +176,22 @@ export interface PowerQueryItem {
   confidence: 'explicit' | 'inferred' | 'unknown'
 }
 
+export interface AnalysisRiskItem {
+  category:
+    | 'dynamic_vba'
+    | 'runtime_state'
+    | 'dynamic_formula'
+    | 'external_dependency'
+    | 'event_macro'
+    | 'unknown_object_dependency'
+  severity: 'high' | 'medium' | 'low'
+  location: string
+  evidence: string
+  description: string
+  recommendation: string
+  confidence: 'explicit' | 'inferred' | 'unknown'
+}
+
 export interface DataValidationItem {
   range: string
   type: string
@@ -243,6 +259,7 @@ export interface WorkbookData {
   vba_modules: VbaModule[]
   external_links: string[]
   power_queries: PowerQueryItem[]
+  analysis_risks: AnalysisRiskItem[]
 }
 
 // ---------- external functions ----------

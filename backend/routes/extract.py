@@ -23,6 +23,7 @@ from core.extractors.cells import extract_cells_to_sqlite
 from core.extractors.vba import extract_vba
 from core.extractors.workbook import extract_workbook
 from core.reference_index import build_reference_index
+from core.risk_analyzer import detect_analysis_risks
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -71,6 +72,7 @@ def _run_extraction(storage: Storage, job_id: str, filename: str) -> None:
             # ストレージ上の保存名 (original.xlsx 等) ではなく、ユーザー提供のファイル名を保持する
             wb.filename = filename
             wb.vba_modules = extract_vba(path)
+            wb.analysis_risks = detect_analysis_risks(wb)
             idx = build_reference_index(wb)
             storage.save_workbook(job_id, wb)
             storage.save_references(job_id, idx)

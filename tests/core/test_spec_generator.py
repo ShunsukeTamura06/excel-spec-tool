@@ -1,6 +1,7 @@
 """core.spec_generator のテスト."""
 
 from core.models import (
+    AnalysisRisk,
     CellFormula,
     ConditionalFormat,
     NamedRange,
@@ -304,6 +305,29 @@ class TestObservationsSection:
         md = generate_spec(wb, _empty_index())
         assert "用途が推定されたシート: 1 / 2" in md
         assert "注釈付きプロシージャ: 1" in md
+
+    def test_includes_analysis_risks(self) -> None:
+        wb = Workbook(
+            filename="t.xlsm",
+            analysis_risks=[
+                AnalysisRisk(
+                    category="dynamic_vba",
+                    severity="high",
+                    location="Module1:L10",
+                    evidence="Range(addr)",
+                    description="動的参照です。",
+                    recommendation="変数 addr の値を確認してください。",
+                )
+            ],
+        )
+
+        md = generate_spec(wb, _empty_index())
+
+        assert "未解析リスク" in md
+        assert "high: 1 件" in md
+        assert "Module1:L10" in md
+        assert "Range(addr)" in md
+        assert "影響なし" in md or "断定してはいけない" in md
 
 
 class TestEscaping:

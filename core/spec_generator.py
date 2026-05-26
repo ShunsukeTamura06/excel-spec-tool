@@ -625,18 +625,48 @@ def _section_diagrams(wb: Workbook) -> str:
 def _section_observations(wb: Workbook) -> str:
     """## 8. 注意点・観察事項.
 
-    現状はプレースホルダ. LLM 注釈ステップで埋める想定。
-    SheetInfo.purpose / VbaProcedure.annotation など既に埋まっている注釈の
-    総数だけ簡易サマリで出す。
+    未解析リスクと LLM 注釈の付与状況を出す。
     """
     sheet_with_purpose = sum(1 for s in wb.sheets if s.purpose)
     proc_with_annot = sum(1 for m in wb.vba_modules for p in m.procedures if p.annotation)
     formulas_with_annot = sum(1 for s in wb.sheets for f in s.formulas if f.annotation)
+    high_risks = [r for r in wb.analysis_risks if r.severity == "high"]
+    medium_risks = [r for r in wb.analysis_risks if r.severity == "medium"]
+    low_risks = [r for r in wb.analysis_risks if r.severity == "low"]
 
     lines = [
         "## 8. 注意点・観察事項",
         "",
-        "_LLM注釈ステップで追記される予定。_",
+        "### 8.1 未解析リスク",
+        "",
+        "ここに出る項目は「影響なし」と断定してはいけない箇所です。"
+        "改修時は手動確認の対象にしてください。",
+        "",
+        f"- high: {len(high_risks)} 件",
+        f"- medium: {len(medium_risks)} 件",
+        f"- low: {len(low_risks)} 件",
+    ]
+    if not wb.analysis_risks:
+        lines += ["", "_検出された未解析リスクはありません。_"]
+    else:
+        lines += [
+            "",
+            "| 重大度 | 種別 | 場所 | 根拠 | 推奨確認 |",
+            "|---|---|---|---|---|",
+        ]
+        for risk in wb.analysis_risks[:50]:
+            lines.append(
+                f"| {risk.severity} | {risk.category} | `{_md_escape(risk.location)}` | "
+                f"{_md_escape(risk.evidence)} | {_md_escape(risk.recommendation)} |"
+            )
+        if len(wb.analysis_risks) > 50:
+            lines.append(
+                f"| ... | ... | ... | 他 {len(wb.analysis_risks) - 50} 件 | ... |"
+            )
+
+    lines += [
+        "",
+        "### 8.2 LLM注釈の付与状況",
         "",
         f"- 用途が推定されたシート: {sheet_with_purpose} / {len(wb.sheets)}",
         f"- 注釈付きプロシージャ: {proc_with_annot}",

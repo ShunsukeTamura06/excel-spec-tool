@@ -224,8 +224,26 @@ def build_reference_index(wb: Workbook) -> ReferenceIndex
     - `Sheets("Calc").Cells(2, 8)` → 指定シート + 行列
     - `[Calc!A1]` → 短縮表記
   - 検出した参照は `Reference(kind="vba", from_="Module1.UpdateDaily:L47", to="Calc!A1:J100", code='Range("A1:J100")')` で登録
-- **完璧なパースは目指さない**。捕捉漏れはLLMが補う前提
+- **完璧なパースは目指さない**。捕捉漏れの可能性は未解析リスクとして明示し、
+  LLM は推測で補完しない
 - 必ずテストケースで「最低限これだけは捕捉する」を担保する
+
+### 4.5 `core/risk_analyzer.py`
+
+```python
+def detect_analysis_risks(wb: Workbook) -> list[AnalysisRisk]
+```
+
+- 静的解析では影響範囲を断定できない箇所を検出する
+- 対象例:
+  - 動的 VBA 参照: `Range(addr)`, `Cells(row, col)`, `Worksheets(sheetName)`
+  - 実行時状態依存: `ActiveSheet`, `Selection`, `CurrentRegion`, `UsedRange`, `Offset`, `Resize`
+  - 暗黙実行: `Worksheet_Change`, `Workbook_Open` 等のイベントプロシージャ
+  - 動的数式: `INDIRECT`, `OFFSET`, `CELL`, `INFO`
+  - 外部依存: 外部リンク、Power Query / 外部接続、外部 Add-In 関数
+  - 依存先不明のグラフ / ピボット
+- 目的は完全解析ではなく、チャット回答で「影響なし」と誤断定しないための
+  手動確認リストを作ること
 
 ### 4.4 `core/spec_generator.py`
 

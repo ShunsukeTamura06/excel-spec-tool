@@ -14,6 +14,7 @@ from backend.llm_tools import (
 from backend.storage import Storage
 from core.extractors.cells import extract_cells_to_sqlite
 from core.models import (
+    AnalysisRisk,
     CellFormula,
     ChartObject,
     ChartSeries,
@@ -70,6 +71,7 @@ class TestToolDefinitions:
             "get_vba_procedure",
             "list_sheet_formulas",
             "list_workbook_objects",
+            "list_analysis_risks",
             "lookup_external_function",
             "list_external_functions_used",
         }
@@ -285,6 +287,24 @@ def job_with_workbook(tmp_path: Path) -> tuple[Storage, str]:
                 source="Provider=Microsoft.Mashup.OleDb.1",
             )
         ],
+        analysis_risks=[
+            AnalysisRisk(
+                category="dynamic_vba",
+                severity="high",
+                location="Module1:L2",
+                evidence="Range(addr)",
+                description="動的な Range 参照です。",
+                recommendation="変数 addr の値を確認してください。",
+            ),
+            AnalysisRisk(
+                category="external_dependency",
+                severity="medium",
+                location="Connection:Query - Sales",
+                evidence="Provider=Microsoft.Mashup.OleDb.1",
+                description="Power Query 接続があります。",
+                recommendation="更新結果を確認してください。",
+            ),
+        ],
     )
     storage.save_workbook(meta.job_id, wb)
     return storage, meta.job_id
@@ -451,6 +471,33 @@ class TestExecuteListWorkbookObjects:
         storage, job_id = job_with_workbook
         result = json.loads(
             execute_tool_call(storage, job_id, "list_workbook_objects", {"kind": "bad"})
+        )
+        assert "error" in result
+
+
+class TestExecuteListAnalysisRisks:
+    def test_returns_risks(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(execute_tool_call(storage, job_id, "list_analysis_risks", {}))
+
+        assert result["counts"] == {"high": 1, "medium": 1, "low": 0}
+        assert result["total"] == 2
+        assert result["risks"][0]["category"] == "dynamic_vba"
+        assert "手動確認" in result["analysis_scope"]
+
+    def test_filters_by_severity(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(storage, job_id, "list_analysis_risks", {"severity": "high"})
+        )
+
+        assert result["total"] == 1
+        assert result["risks"][0]["severity"] == "high"
+
+    def test_invalid_severity_returns_error(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(storage, job_id, "list_analysis_risks", {"severity": "bad"})
         )
         assert "error" in result
 
