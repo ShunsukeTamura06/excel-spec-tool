@@ -671,6 +671,7 @@ def _persist_chat_turn(
     session_id: str,
     user_message: str,
     reply: str,
+    tool_trace: list[dict[str, Any]],
 ) -> list[ChatMessage]:
     """ユーザー発話とアシスタント応答を履歴に保存して再読込する.
 
@@ -680,6 +681,7 @@ def _persist_chat_turn(
         session_id: チャットセッション ID。
         user_message: 今回のユーザー発話。
         reply: アシスタント応答。
+        tool_trace: アシスタント応答の根拠として表示するツール実行結果。
 
     Returns:
         保存後のチャット履歴。
@@ -692,7 +694,7 @@ def _persist_chat_turn(
     )
     storage.append_chat_message(
         job_id,
-        ChatMessage(role="assistant", content=reply, timestamp=now),
+        ChatMessage(role="assistant", content=reply, timestamp=now, tool_trace=tool_trace),
         session_id=session_id,
     )
     return storage.load_chat_history(job_id, session_id=session_id)
@@ -725,6 +727,7 @@ async def chat(
         session_id,
         body.message,
         reply,
+        tool_trace,
     )
     return {
         "reply": reply,
@@ -763,7 +766,14 @@ async def chat_stream(
                     messages,
                     emit_progress=_emit,
                 )
-                new_history = _persist_chat_turn(storage, job_id, session_id, body.message, reply)
+                new_history = _persist_chat_turn(
+                    storage,
+                    job_id,
+                    session_id,
+                    body.message,
+                    reply,
+                    tool_trace,
+                )
                 _emit(
                     "final",
                     {

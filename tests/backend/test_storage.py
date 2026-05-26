@@ -239,6 +239,27 @@ class TestChat:
         loaded = storage.load_chat_history(meta.job_id)
         assert loaded == [m1, m2]
 
+    def test_assistant_message_persists_tool_trace(self, storage: Storage) -> None:
+        meta = storage.create_job("a.xlsm", b"1")
+        message = ChatMessage(
+            role="assistant",
+            content="F1です",
+            timestamp="2026-04-30T00:00:01Z",
+            tool_trace=[
+                {
+                    "name": "find_cells",
+                    "arguments": {"query": "実現損益"},
+                    "result_preview": '{"count": 1}',
+                    "result": {"count": 1},
+                }
+            ],
+        )
+        storage.append_chat_message(meta.job_id, message)
+
+        loaded = storage.load_chat_history(meta.job_id)
+        assert loaded[0].tool_trace[0]["name"] == "find_cells"
+        assert loaded[0].tool_trace[0]["result"] == {"count": 1}
+
     def test_empty_history(self, storage: Storage) -> None:
         meta = storage.create_job("a.xlsm", b"1")
         assert storage.load_chat_history(meta.job_id) == []

@@ -33,6 +33,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: string
+  tool_trace?: ToolTraceItem[]
 }
 
 export interface ChatSessionMeta {
