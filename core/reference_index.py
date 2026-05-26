@@ -736,6 +736,41 @@ def build_reference_index(wb: Workbook) -> ReferenceIndex:
                         code=f.formula,
                     )
                 )
+        for chart in sheet.charts:
+            chart_name = chart.title or chart.name or chart.chart_type or "chart"
+            for idx, series in enumerate(chart.series, start=1):
+                refs = [series.values_ref, series.categories_ref]
+                for raw_target in refs:
+                    if not raw_target:
+                        continue
+                    key, _ = _normalize_target(raw_target, owner_sheet=sheet.name)
+                    bucket[key].append(
+                        Reference(
+                            kind="chart",
+                            from_=f"{sheet.name}!Chart:{chart_name}:S{idx}",
+                            to=key,
+                            code=series.name or chart.chart_type,
+                        )
+                    )
+        for pivot in sheet.pivot_tables:
+            raw_source = ""
+            if pivot.source_sheet and pivot.source_ref:
+                raw_source = f"{pivot.source_sheet}!{pivot.source_ref}"
+            elif pivot.source_ref:
+                raw_source = pivot.source_ref
+            elif pivot.source_name:
+                raw_source = pivot.source_name
+            if not raw_source:
+                continue
+            key, _ = _normalize_target(raw_source, owner_sheet=sheet.name)
+            bucket[key].append(
+                Reference(
+                    kind="pivot",
+                    from_=f"{sheet.name}!Pivot:{pivot.name}",
+                    to=key,
+                    code=", ".join(pivot.value_fields) or pivot.name,
+                )
+            )
 
     # VBA側: code を軽量スキャナで走査. _scan_vba_module が返した raw `to` を
     # canonical キーに置換して登録する。静的に確定できない動的参照は登録しない。

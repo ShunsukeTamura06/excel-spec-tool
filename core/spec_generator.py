@@ -25,6 +25,7 @@ _REFERENCE_ANALYSIS_NOTE = (
     "参照解析は静的解析です。数式参照と、VBA の静的に確定できる "
     '`Range("A1")` / `Worksheets("Sheet").Range("A1")` / '
     '`Sheets("Sheet").Cells(2, 8)` / `[Sheet!A1]` などを対象にします。'
+    "加えて、OOXML から明示的に取れたグラフ系列参照とピボット元データを対象にします。"
     '`Range("A" & row)`、`Range(addr)`、`ActiveSheet`、`Selection`、'
     "`Offset` / `Resize` など実行時に決まる参照は検出対象外です。"
     "参照が 0 件でも、動的参照まで含めて影響がないとは限りません。"
@@ -59,12 +60,17 @@ def _md_cell_list(values: Iterable[str], *, limit: int = 3, empty: str = "-") ->
 def _section_overview(wb: Workbook) -> str:
     """## 1. 概要 を生成."""
     ext_links_str = ", ".join(wb.external_links) if wb.external_links else "なし"
+    chart_count = sum(len(s.charts) for s in wb.sheets)
+    pivot_count = sum(len(s.pivot_tables) for s in wb.sheets)
     lines = [
         "## 1. 概要",
         "",
         f"- ファイル名: `{wb.filename}`",
         f"- シート数: {len(wb.sheets)}",
         f"- VBAモジュール数: {len(wb.vba_modules)}",
+        f"- グラフ数: {chart_count}",
+        f"- ピボットテーブル数: {pivot_count}",
+        f"- Power Query / 外部接続数: {len(wb.power_queries)}",
         f"- 外部リンク: {ext_links_str}",
     ]
     return "\n".join(lines)
@@ -75,18 +81,21 @@ def _section_sheet_list(wb: Workbook) -> str:
     lines = [
         "## 2. シート一覧",
         "",
-        "| シート名 | 行数 | 列数 | 数式数 | 名前付き範囲 | 条件付き書式 | 用途 |",
-        "|---|---:|---:|---:|---:|---:|---|",
+        "| シート名 | 行数 | 列数 | 数式数 | グラフ | ピボット | "
+        "名前付き範囲 | 条件付き書式 | 用途 |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     if not wb.sheets:
-        lines.append("| (なし) | - | - | - | - | - | - |")
+        lines.append("| (なし) | - | - | - | - | - | - | - | - |")
     for s in wb.sheets:
         lines.append(
-            "| {name} | {rows} | {cols} | {f} | {nr} | {cf} | {purpose} |".format(
+            "| {name} | {rows} | {cols} | {f} | {ch} | {pt} | {nr} | {cf} | {purpose} |".format(
                 name=_md_escape(s.name),
                 rows=s.rows,
                 cols=s.cols,
                 f=len(s.formulas),
+                ch=len(s.charts),
+                pt=len(s.pivot_tables),
                 nr=len(s.named_ranges),
                 cf=len(s.conditional_formats),
                 purpose=_md_escape(s.purpose) if s.purpose else "-",
@@ -206,6 +215,37 @@ def _section_sheet_details(wb: Workbook) -> str:
             asset_rows.append(
                 f"| {_md_escape(s.name)} | フォーム | {target} | {macro} | 配置: {anchor} |"
             )
+        for chart in s.charts:
+            target = _md_escape(chart.title or chart.name or chart.chart_type or "グラフ")
+            refs = []
+            for series in chart.series[:5]:
+                if series.values_ref:
+                    refs.append(series.values_ref)
+                if series.categories_ref:
+                    refs.append(series.categories_ref)
+            refs_str = _md_cell_list(refs, limit=5)
+            anchor = f"`{_md_escape(chart.anchor)}`" if chart.anchor else "-"
+            asset_rows.append(
+                f"| {_md_escape(s.name)} | グラフ | {target} | "
+                f"{_md_escape(chart.chart_type) or '-'} | 系列参照: {refs_str}<br>配置: {anchor} |"
+            )
+        for pivot in s.pivot_tables:
+            source = pivot.source_name or (
+                f"{pivot.source_sheet}!{pivot.source_ref}"
+                if pivot.source_sheet and pivot.source_ref
+                else pivot.source_ref
+            )
+            source = source or "-"
+            fields = (
+                f"行: {_md_cell_list(pivot.row_fields, limit=4)}<br>"
+                f"列: {_md_cell_list(pivot.column_fields, limit=4)}<br>"
+                f"値: {_md_cell_list(pivot.value_fields, limit=4)}"
+            )
+            anchor = f"`{_md_escape(pivot.anchor)}`" if pivot.anchor else "-"
+            asset_rows.append(
+                f"| {_md_escape(s.name)} | ピボットテーブル | `{_md_escape(pivot.name)}` | "
+                f"`{_md_escape(source)}` | {fields}<br>配置: {anchor} |"
+            )
         for t in s.tables:
             asset_rows.append(
                 f"| {_md_escape(s.name)} | Excel テーブル | `{_md_escape(t.name)}` | "
@@ -238,6 +278,36 @@ def _section_sheet_details(wb: Workbook) -> str:
             preview_blocks += ["", f"#### {s.name}"] + block
     if preview_blocks:
         lines += ["", "### 3.5 冒頭プレビュー", *preview_blocks]
+
+    if wb.power_queries:
+        lines += [
+            "",
+            "### 3.6 Power Query / 外部データ接続",
+            "",
+            "| 名前 | 種別 | 接続ID | 出力先 | ソース | コマンド | 信頼度 |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for query in wb.power_queries:
+            target = ""
+            if query.target_sheet and query.target_name:
+                target = f"{query.target_sheet} / {query.target_name}"
+            elif query.target_sheet:
+                target = query.target_sheet
+            else:
+                target = "-"
+            query_name = _md_escape(query.name)
+            connection_id = _md_escape(query.connection_id)
+            source = _md_escape(query.source) if query.source else "-"
+            command = _md_escape(query.command) if query.command else "-"
+            lines.append(
+                f"| {query_name} | {query.kind} | `{connection_id}` | "
+                f"{_md_escape(target)} | {source} | {command} | {query.confidence} |"
+            )
+        lines += [
+            "",
+            "_Power Query の M コード本文は初期対応では解析対象外です。"
+            "依存関係は、接続定義や出力先から明示的に取れる範囲だけを扱います。_",
+        ]
 
     return "\n".join(lines)
 

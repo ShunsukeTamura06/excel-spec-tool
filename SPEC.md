@@ -199,6 +199,12 @@ def extract_workbook(file_path: Path) -> Workbook
   - 数式は `openpyxl.formula.Tokenizer` で分解し、`subtype == "RANGE"` のトークンを `refs` に詰める
   - 名前付き範囲は `wb.defined_names` から取得
   - 条件付き書式は `ws.conditional_formatting` から
+  - Excel テーブル、入力規則、フォームコントロール、グラフ、ピボットテーブルを抽出
+- グラフ / ピボット / Power Query・外部接続は OOXML パーツを直接読む:
+  - グラフは `xl/drawings/*.xml` と `xl/charts/chart*.xml` から種類・配置・系列参照を取得
+  - ピボットは `xl/pivotTables/` と `xl/pivotCache/` から配置・元データ・主要フィールドを取得
+  - Power Query は `xl/connections.xml` と `queryTable` から接続・出力先を棚卸しする
+  - 接続文字列内のパスワード / トークン等は必ずマスクする
 - `.xls` は `openpyxl` で読めない。`.xls` が来た場合は `extract_vba` のみ実行し、`Workbook.sheets` は空で返す。READMEでも明記
 - 外部リンクは `wb._external_links` から（プライベートAPI使用、バージョン依存に注意）
 
@@ -209,6 +215,8 @@ def build_reference_index(wb: Workbook) -> ReferenceIndex
 ```
 
 - 数式側: `wb.sheets[*].formulas[*].refs` を逆引きする
+- グラフ側: chart XML から明示的に取れた系列値・カテゴリ範囲を逆引きする
+- ピボット側: pivot cache から明示的に取れた元データ範囲を逆引きする
 - VBA側: `wb.vba_modules[*].code` を正規表現で走査
   - 対象パターン:
     - `Range("A1:J100")` → 現在のシート

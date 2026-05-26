@@ -14,17 +14,22 @@ import re
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 from xml.etree import ElementTree as ET
 
 from core.exceptions import ExtractionError
 from core.external_functions import detect_in_formula
 from core.models import (
     CellFormula,
+    ChartObject,
+    ChartSeries,
     ConditionalFormat,
     DataValidation,
     ExcelTable,
     FormControl,
     NamedRange,
+    PivotTableInfo,
+    PowerQueryInfo,
     SheetInfo,
     Workbook,
 )
@@ -728,6 +733,519 @@ def _drawing_control_macros(zf: zipfile.ZipFile, drawing_path: str) -> dict[str,
     return out
 
 
+def _part_relationship_targets(
+    zf: zipfile.ZipFile,
+    part_path: str,
+    predicate: Callable[[ET.Element], bool],
+) -> dict[str, str]:
+    """任意パーツの relationship から条件に合う `r:id -> target path` を返す.
+
+    Args:
+        zf: xlsx/xlsm を開いた ZipFile。
+        part_path: relationship 所有パーツのパス。
+        predicate: Relationship 要素を受け取り対象判定する関数。
+
+    Returns:
+        relationship id をキー、zip 内パーツパスを値にしたマップ。
+    """
+    if "/" in part_path:
+        dir_part, file_part = part_path.rsplit("/", 1)
+    else:
+        dir_part, file_part = "", part_path
+    rels_path = f"{dir_part}/_rels/{file_part}.rels"
+    try:
+        rels_xml = zf.read(rels_path)
+        rels_root = ET.fromstring(rels_xml)
+    except (KeyError, ET.ParseError):
+        return {}
+
+    out: dict[str, str] = {}
+    for rel in rels_root.iter(
+        "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+    ):
+        if not predicate(rel):
+            continue
+        rid = rel.attrib.get("Id", "")
+        target = rel.attrib.get("Target", "")
+        if rid and target:
+            out[rid] = _resolve_package_part(dir_part, target)
+    return out
+
+
+def _drawing_chart_targets(zf: zipfile.ZipFile, drawing_path: str) -> dict[str, str]:
+    """DrawingML relationship から chart パーツを返す."""
+
+    def _is_chart(rel: ET.Element) -> bool:
+        target = rel.attrib.get("Target", "")
+        rel_type = rel.attrib.get("Type", "")
+        return target.lower().endswith(".xml") and (
+            "charts/chart" in target.lower() or rel_type.endswith("/chart")
+        )
+
+    return _part_relationship_targets(zf, drawing_path, _is_chart)
+
+
+def _direct_child(el: ET.Element, local_name: str) -> ET.Element | None:
+    """指定ローカル名の直接子要素を1件返す."""
+    return next((c for c in el if _local_name(c.tag) == local_name), None)
+
+
+def _direct_children(el: ET.Element, local_name: str) -> list[ET.Element]:
+    """指定ローカル名の直接子要素を全件返す."""
+    return [c for c in el if _local_name(c.tag) == local_name]
+
+
+def _first_formula(el: ET.Element) -> str:
+    """要素配下の最初の `f` テキストを返す."""
+    f = _first_descendant(el, "f")
+    return (f.text or "").strip() if f is not None and f.text else ""
+
+
+def _first_value(el: ET.Element) -> str:
+    """要素配下の最初の `v` テキストを返す."""
+    v = _first_descendant(el, "v")
+    return (v.text or "").strip() if v is not None and v.text else ""
+
+
+def _chart_text(el: ET.Element) -> str:
+    """chart パーツ内のリッチテキストを結合して返す."""
+    parts = [d.text or "" for d in el.iter() if _local_name(d.tag) == "t" and d.text]
+    return re.sub(r"\s+", " ", "".join(parts)).strip()[:120]
+
+
+def _parse_chart_xml(chart_bytes: bytes) -> tuple[str, str, list[ChartSeries]]:
+    """chart*.xml からタイトル・種類・系列参照を抽出する.
+
+    Returns:
+        (title, chart_type, series)。
+    """
+    try:
+        root = ET.fromstring(chart_bytes)
+    except ET.ParseError:
+        return "", "", []
+
+    title = ""
+    title_el = _first_descendant(root, "title")
+    if title_el is not None:
+        title = _chart_text(title_el)
+
+    chart_type = ""
+    for el in root.iter():
+        local = _local_name(el.tag)
+        if local.endswith("Chart") and local not in {"chart", "chartSpace"}:
+            chart_type = local
+            break
+
+    series: list[ChartSeries] = []
+    for ser in root.iter():
+        if _local_name(ser.tag) != "ser":
+            continue
+        tx = _direct_child(ser, "tx")
+        name = ""
+        if tx is not None:
+            name = _first_formula(tx) or _first_value(tx) or _chart_text(tx)
+
+        cat = _direct_child(ser, "cat")
+        val = _direct_child(ser, "val")
+        series.append(
+            ChartSeries(
+                name=name,
+                values_ref=_first_formula(val) if val is not None else "",
+                categories_ref=_first_formula(cat) if cat is not None else "",
+            )
+        )
+    return title, chart_type, series
+
+
+def _extract_charts(file_path: Path, sheet_names: list[str]) -> dict[str, list[ChartObject]]:
+    """Excel ファイルからシート別のグラフ情報を抽出する.
+
+    DrawingML の chart relationship と chart*.xml を直接読む。取れるのは
+    チャート種別・タイトル・配置セル・系列セル参照に限定する。
+    """
+    out: dict[str, list[ChartObject]] = {sn: [] for sn in sheet_names}
+    if file_path.suffix.lower() not in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        return out
+    try:
+        with zipfile.ZipFile(file_path) as zf:
+            sheet_to_drawings = _xlsm_sheet_to_drawing_map(zf)
+            for sheet_name, drawing_paths in sheet_to_drawings.items():
+                if sheet_name not in out:
+                    continue
+                for drawing_path in drawing_paths:
+                    chart_targets = _drawing_chart_targets(zf, drawing_path)
+                    if not chart_targets:
+                        continue
+                    try:
+                        drawing_root = ET.fromstring(zf.read(drawing_path))
+                    except (KeyError, ET.ParseError):
+                        continue
+                    for anchor in drawing_root.iter():
+                        if _local_name(anchor.tag) not in {"twoCellAnchor", "oneCellAnchor"}:
+                            continue
+                        chart_el = _first_descendant(anchor, "chart")
+                        if chart_el is None:
+                            continue
+                        rid = _relationship_id(chart_el)
+                        chart_path = chart_targets.get(rid)
+                        if not chart_path:
+                            continue
+                        c_nv_pr = _first_descendant(anchor, "cNvPr")
+                        name = ""
+                        if c_nv_pr is not None:
+                            name = c_nv_pr.attrib.get("name", "") or c_nv_pr.attrib.get(
+                                "descr", ""
+                            )
+                        try:
+                            title, chart_type, series = _parse_chart_xml(zf.read(chart_path))
+                        except KeyError:
+                            continue
+                        out[sheet_name].append(
+                            ChartObject(
+                                name=name,
+                                chart_type=chart_type,
+                                title=title,
+                                anchor=_drawing_anchor_to_cell(anchor),
+                                series=series,
+                            )
+                        )
+    except (zipfile.BadZipFile, OSError) as e:
+        logger.warning("failed to read charts from %s: %s", file_path.name, e)
+    return out
+
+
+def _xlsm_sheet_to_pivot_table_map(zf: zipfile.ZipFile) -> dict[str, list[str]]:
+    """xlsx/xlsm zip から「シート名 → pivotTableDefinition パーツ一覧」を返す."""
+
+    def _is_pivot(rel: ET.Element) -> bool:
+        target = rel.attrib.get("Target", "")
+        rel_type = rel.attrib.get("Type", "")
+        return target.lower().endswith(".xml") and (
+            "pivottables/pivottable" in target.lower() or rel_type.endswith("/pivotTable")
+        )
+
+    return _sheet_related_parts(zf, _is_pivot)
+
+
+def _parse_pivot_cache(cache_bytes: bytes) -> tuple[str, str, str, str, list[str]]:
+    """pivotCacheDefinition から元データとフィールド名を抽出する."""
+    try:
+        root = ET.fromstring(cache_bytes)
+    except ET.ParseError:
+        return "", "", "", "", []
+
+    source_type = ""
+    source_sheet = ""
+    source_ref = ""
+    source_name = ""
+    cache_source = _first_descendant(root, "cacheSource")
+    if cache_source is not None:
+        source_type = cache_source.attrib.get("type", "")
+        worksheet_source = _first_descendant(cache_source, "worksheetSource")
+        if worksheet_source is not None:
+            source_sheet = worksheet_source.attrib.get("sheet", "")
+            source_ref = worksheet_source.attrib.get("ref", "")
+            source_name = worksheet_source.attrib.get("name", "")
+
+    fields = [
+        field.attrib.get("name", "")
+        for field in root.iter()
+        if _local_name(field.tag) == "cacheField"
+    ]
+    return source_type, source_sheet, source_ref, source_name, fields
+
+
+def _workbook_pivot_caches(
+    zf: zipfile.ZipFile,
+) -> dict[str, tuple[str, str, str, str, list[str]]]:
+    """workbook.xml の pivotCaches から `cacheId -> cache info` を返す."""
+    try:
+        wb_xml = zf.read("xl/workbook.xml")
+        wb_rels_xml = zf.read("xl/_rels/workbook.xml.rels")
+        wb_root = ET.fromstring(wb_xml)
+        rels_root = ET.fromstring(wb_rels_xml)
+    except (KeyError, ET.ParseError):
+        return {}
+
+    rid_to_target: dict[str, str] = {}
+    for rel in rels_root.iter(
+        "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+    ):
+        rel_type = rel.attrib.get("Type", "")
+        target = rel.attrib.get("Target", "")
+        if rel_type.endswith("/pivotCacheDefinition") or "pivotcachedefinition" in target.lower():
+            rid_to_target[rel.attrib.get("Id", "")] = _resolve_package_part("xl", target)
+
+    out: dict[str, tuple[str, str, str, str, list[str]]] = {}
+    for pivot_cache in wb_root.iter(
+        "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}pivotCache"
+    ):
+        cache_id = pivot_cache.attrib.get("cacheId", "")
+        rid = _relationship_id(pivot_cache)
+        cache_target = rid_to_target.get(rid)
+        if not cache_id or not cache_target:
+            continue
+        try:
+            out[cache_id] = _parse_pivot_cache(zf.read(cache_target))
+        except KeyError:
+            continue
+    return out
+
+
+def _field_name(fields: list[str], raw_index: str) -> str:
+    """pivot field index をフィールド名へ変換する."""
+    try:
+        idx = int(raw_index)
+    except ValueError:
+        return raw_index
+    if 0 <= idx < len(fields) and fields[idx]:
+        return fields[idx]
+    return raw_index
+
+
+def _pivot_axis_fields(root: ET.Element, axis_name: str, fields: list[str]) -> list[str]:
+    """rowFields / colFields / pageFields からフィールド名一覧を返す."""
+    axis = _direct_child(root, axis_name)
+    if axis is None:
+        return []
+    values: list[str] = []
+    for field in _direct_children(axis, "field"):
+        raw = field.attrib.get("x", "")
+        if raw:
+            values.append(_field_name(fields, raw))
+    return values
+
+
+def _pivot_value_fields(root: ET.Element, fields: list[str]) -> list[str]:
+    """dataFields から値フィールド名一覧を返す."""
+    data_fields = _direct_child(root, "dataFields")
+    if data_fields is None:
+        return []
+    values: list[str] = []
+    for field in _direct_children(data_fields, "dataField"):
+        raw = field.attrib.get("fld", "")
+        field_name = _field_name(fields, raw) if raw else ""
+        display_name = field.attrib.get("name", "")
+        subtotal = field.attrib.get("subtotal", "")
+        label = display_name or field_name
+        if field_name and display_name and field_name not in display_name:
+            label = f"{display_name} ({field_name})"
+        if subtotal and subtotal != "sum":
+            label = f"{label} [{subtotal}]"
+        if label:
+            values.append(label)
+    return values
+
+
+def _parse_pivot_table_xml(
+    pivot_bytes: bytes,
+    cache_info: tuple[str, str, str, str, list[str]] | None,
+) -> PivotTableInfo | None:
+    """pivotTableDefinition を PivotTableInfo に変換する."""
+    try:
+        root = ET.fromstring(pivot_bytes)
+    except ET.ParseError:
+        return None
+
+    name = root.attrib.get("name", "")
+    cache_id = root.attrib.get("cacheId", "")
+    if not name:
+        return None
+
+    source_type = source_sheet = source_ref = source_name = ""
+    fields: list[str] = []
+    if cache_info is not None:
+        source_type, source_sheet, source_ref, source_name, fields = cache_info
+
+    location = _direct_child(root, "location")
+    anchor = location.attrib.get("ref", "") if location is not None else ""
+    return PivotTableInfo(
+        name=name,
+        anchor=anchor,
+        cache_id=cache_id,
+        source_type=source_type,
+        source_sheet=source_sheet,
+        source_ref=source_ref,
+        source_name=source_name,
+        row_fields=_pivot_axis_fields(root, "rowFields", fields),
+        column_fields=_pivot_axis_fields(root, "colFields", fields),
+        value_fields=_pivot_value_fields(root, fields),
+        filter_fields=_pivot_axis_fields(root, "pageFields", fields),
+    )
+
+
+def _extract_pivot_tables(
+    file_path: Path,
+    sheet_names: list[str],
+) -> dict[str, list[PivotTableInfo]]:
+    """Excel ファイルからシート別のピボットテーブル情報を抽出する."""
+    out: dict[str, list[PivotTableInfo]] = {sn: [] for sn in sheet_names}
+    if file_path.suffix.lower() not in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        return out
+    try:
+        with zipfile.ZipFile(file_path) as zf:
+            cache_map = _workbook_pivot_caches(zf)
+            sheet_to_pivots = _xlsm_sheet_to_pivot_table_map(zf)
+            for sheet_name, pivot_paths in sheet_to_pivots.items():
+                if sheet_name not in out:
+                    continue
+                for pivot_path in pivot_paths:
+                    try:
+                        pivot_root = ET.fromstring(zf.read(pivot_path))
+                    except (KeyError, ET.ParseError):
+                        continue
+                    cache_id = pivot_root.attrib.get("cacheId", "")
+                    info = _parse_pivot_table_xml(
+                        ET.tostring(pivot_root),
+                        cache_map.get(cache_id),
+                    )
+                    if info is not None:
+                        out[sheet_name].append(info)
+    except (zipfile.BadZipFile, OSError) as e:
+        logger.warning("failed to read pivot tables from %s: %s", file_path.name, e)
+    return out
+
+
+_SENSITIVE_CONNECTION_RE = re.compile(
+    r"(?i)\b(password|pwd|token|access\s*token|secret|api[_ -]?key|client[_ -]?secret)"
+    r"\s*=\s*[^;,\s]+"
+)
+
+
+def _redact_connection_text(text: str) -> str:
+    """接続文字列から秘匿値をマスクする."""
+    if not text:
+        return ""
+    redacted = _SENSITIVE_CONNECTION_RE.sub(lambda m: f"{m.group(1)}=***", text)
+    redacted = re.sub(r"(?i)([?&](?:password|pwd|token|key|secret)=)[^&#]+", r"\1***", redacted)
+    return redacted[:1000]
+
+
+def _connection_kind(name: str, source: str, command: str) -> Literal["power_query", "connection"]:
+    """接続名・接続文字列から Power Query らしさを判定する."""
+    haystack = f"{name}\n{source}\n{command}".lower()
+    if (
+        name.lower().startswith("query - ")
+        or "microsoft.mashup" in haystack
+        or "mashup" in haystack
+    ):
+        return "power_query"
+    return "connection"
+
+
+def _parse_connections_xml(connections_bytes: bytes) -> dict[str, PowerQueryInfo]:
+    """connections.xml から Power Query / 外部接続を抽出する."""
+    try:
+        root = ET.fromstring(connections_bytes)
+    except ET.ParseError:
+        return {}
+
+    out: dict[str, PowerQueryInfo] = {}
+    for conn in root.iter():
+        if _local_name(conn.tag) != "connection":
+            continue
+        cid = conn.attrib.get("id", "")
+        name = conn.attrib.get("name", "") or cid
+        connection_type = conn.attrib.get("type", "")
+        description = conn.attrib.get("description", "")
+        refresh_on_load = conn.attrib.get("refreshOnLoad", "0") in {"1", "true", "True"}
+        source = ""
+        command = ""
+        for child in conn:
+            local = _local_name(child.tag)
+            if local in {"dbPr", "olapPr"}:
+                source = child.attrib.get("connection", "") or source
+                command = child.attrib.get("command", "") or command
+            elif local == "webPr":
+                source = child.attrib.get("url", "") or source
+            elif local == "textPr":
+                source = child.attrib.get("sourceFile", "") or source
+        source = _redact_connection_text(source)
+        command = _redact_connection_text(command)
+        out[cid] = PowerQueryInfo(
+            name=name,
+            kind=_connection_kind(name, source, command),
+            connection_id=cid,
+            connection_type=connection_type,
+            description=description,
+            refresh_on_load=refresh_on_load,
+            source=source,
+            command=command,
+            confidence="explicit",
+        )
+    return out
+
+
+def _xlsm_sheet_to_query_table_map(zf: zipfile.ZipFile) -> dict[str, list[str]]:
+    """xlsx/xlsm zip から「シート名 → queryTable パーツ一覧」を返す."""
+
+    def _is_query_table(rel: ET.Element) -> bool:
+        target = rel.attrib.get("Target", "")
+        rel_type = rel.attrib.get("Type", "")
+        return target.lower().endswith(".xml") and (
+            "querytables/querytable" in target.lower() or rel_type.endswith("/queryTable")
+        )
+
+    return _sheet_related_parts(zf, _is_query_table)
+
+
+def _attach_query_table_targets(
+    zf: zipfile.ZipFile,
+    connections: dict[str, PowerQueryInfo],
+) -> None:
+    """queryTable パーツから接続の出力先シート/名前を補完する."""
+    sheet_to_query_tables = _xlsm_sheet_to_query_table_map(zf)
+    for sheet_name, query_paths in sheet_to_query_tables.items():
+        for query_path in query_paths:
+            try:
+                root = ET.fromstring(zf.read(query_path))
+            except (KeyError, ET.ParseError):
+                continue
+            cid = root.attrib.get("connectionId", "")
+            query_name = root.attrib.get("name", "")
+            refresh_on_load = root.attrib.get("refreshOnLoad", "0") in {"1", "true", "True"}
+            if cid in connections:
+                current = connections[cid]
+                connections[cid] = current.model_copy(
+                    update={
+                        "target_sheet": sheet_name,
+                        "target_name": query_name,
+                        "refresh_on_load": current.refresh_on_load or refresh_on_load,
+                    }
+                )
+            elif query_name:
+                connections[f"queryTable:{query_path}"] = PowerQueryInfo(
+                    name=query_name,
+                    kind="connection",
+                    connection_id=cid,
+                    target_sheet=sheet_name,
+                    target_name=query_name,
+                    refresh_on_load=refresh_on_load,
+                    confidence="explicit" if cid else "unknown",
+                )
+
+
+def _extract_power_queries(file_path: Path) -> list[PowerQueryInfo]:
+    """Power Query / 外部接続の棚卸し情報を抽出する.
+
+    初期対応では `xl/connections.xml` と queryTable の出力先だけを読む。
+    M コード解析は保存形式差分が大きいためここでは行わない。
+    """
+    if file_path.suffix.lower() not in {".xlsx", ".xlsm", ".xltx", ".xltm"}:
+        return []
+    try:
+        with zipfile.ZipFile(file_path) as zf:
+            try:
+                connections = _parse_connections_xml(zf.read("xl/connections.xml"))
+            except KeyError:
+                connections = {}
+            _attach_query_table_targets(zf, connections)
+            return list(connections.values())
+    except (zipfile.BadZipFile, OSError) as e:
+        logger.warning("failed to read data connections from %s: %s", file_path.name, e)
+        return []
+
+
 def _parse_drawing_form_controls(
     drawing_bytes: bytes,
     control_macros: dict[str, str] | None = None,
@@ -952,6 +1470,16 @@ def extract_workbook(file_path: Path) -> Workbook:
 
     _attach_named_ranges(wb, sheets_by_name)
 
+    chart_map = _extract_charts(file_path, list(sheets_by_name.keys()))
+    for sn, charts in chart_map.items():
+        if sn in sheets_by_name and charts:
+            sheets_by_name[sn].charts = charts
+
+    pivot_map = _extract_pivot_tables(file_path, list(sheets_by_name.keys()))
+    for sn, pivot_tables in pivot_map.items():
+        if sn in sheets_by_name and pivot_tables:
+            sheets_by_name[sn].pivot_tables = pivot_tables
+
     # フォームコントロール (ボタン → マクロ紐付け) は xlsm の VML を直接読む.
     # openpyxl は VML を解釈しないので zipfile + XML パースで自前抽出.
     fc_map = _extract_form_controls(file_path, list(sheets_by_name.keys()))
@@ -963,4 +1491,5 @@ def extract_workbook(file_path: Path) -> Workbook:
         filename=file_path.name,
         sheets=sheets,
         external_links=_extract_external_links(wb),
+        power_queries=_extract_power_queries(file_path),
     )

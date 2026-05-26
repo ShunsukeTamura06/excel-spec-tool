@@ -67,6 +67,8 @@ const selected = computed<SheetInfo | null>(
             <p class="text-xs text-(--ui-text-muted) mt-0.5">
               {{ selected.rows }} 行 × {{ selected.cols }} 列
               <span v-if="selected.tables.length" class="ml-1">・ テーブル {{ selected.tables.length }} 件</span>
+              <span v-if="selected.charts.length" class="ml-1">・ グラフ {{ selected.charts.length }} 件</span>
+              <span v-if="selected.pivot_tables.length" class="ml-1">・ ピボット {{ selected.pivot_tables.length }} 件</span>
               <span v-if="selected.merged_ranges.length" class="ml-1">・ 結合セル {{ selected.merged_ranges.length }} 件</span>
             </p>
           </div>
@@ -190,6 +192,100 @@ const selected = computed<SheetInfo | null>(
         <p v-if="selected.formulas.length > 200" class="mt-2 text-xs text-(--ui-text-muted) text-center">
           (先頭 200 件のみ表示)
         </p>
+      </UCard>
+
+      <!-- グラフ -->
+      <UCard v-if="selected.charts.length">
+        <template #header>
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-chart-column" class="size-4 text-amber-600" />
+            <span class="font-medium">グラフ ({{ selected.charts.length }} 件)</span>
+          </div>
+        </template>
+        <div class="overflow-x-auto -mx-4">
+          <table class="w-full text-xs">
+            <thead class="bg-(--ui-bg-elevated)">
+              <tr>
+                <th class="px-3 py-2 text-left font-semibold">名前 / タイトル</th>
+                <th class="px-3 py-2 text-left font-semibold w-28">種類</th>
+                <th class="px-3 py-2 text-left font-semibold w-20">配置</th>
+                <th class="px-3 py-2 text-left font-semibold">系列参照</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(chart, i) in selected.charts"
+                :key="`chart-${i}`"
+                class="border-t border-(--ui-border)"
+              >
+                <td class="px-3 py-1.5">{{ chart.title || chart.name || '-' }}</td>
+                <td class="px-3 py-1.5">
+                  <UBadge color="warning" variant="subtle" size="sm">{{ chart.chart_type || '-' }}</UBadge>
+                </td>
+                <td class="px-3 py-1.5 font-mono text-[10px]">{{ chart.anchor || '-' }}</td>
+                <td class="px-3 py-1.5">
+                  <div class="flex flex-wrap gap-1">
+                    <UBadge
+                      v-for="(series, si) in chart.series.slice(0, 6)"
+                      :key="`series-${si}`"
+                      color="neutral"
+                      variant="subtle"
+                      size="sm"
+                      class="font-mono text-[10px]"
+                    >
+                      {{ series.values_ref || series.categories_ref || series.name || '-' }}
+                    </UBadge>
+                    <span v-if="chart.series.length > 6" class="text-[10px] text-(--ui-text-muted)">+{{ chart.series.length - 6 }}</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </UCard>
+
+      <!-- ピボットテーブル -->
+      <UCard v-if="selected.pivot_tables.length">
+        <template #header>
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-table-2" class="size-4 text-cyan-600" />
+            <span class="font-medium">ピボットテーブル ({{ selected.pivot_tables.length }} 件)</span>
+          </div>
+        </template>
+        <div class="overflow-x-auto -mx-4">
+          <table class="w-full text-xs">
+            <thead class="bg-(--ui-bg-elevated)">
+              <tr>
+                <th class="px-3 py-2 text-left font-semibold">名前</th>
+                <th class="px-3 py-2 text-left font-semibold">元データ</th>
+                <th class="px-3 py-2 text-left font-semibold">フィールド</th>
+                <th class="px-3 py-2 text-left font-semibold w-20">配置</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(pivot, i) in selected.pivot_tables"
+                :key="`pivot-${i}`"
+                class="border-t border-(--ui-border)"
+              >
+                <td class="px-3 py-1.5 font-medium">{{ pivot.name }}</td>
+                <td class="px-3 py-1.5 font-mono text-[10px]">
+                  {{ pivot.source_name || (pivot.source_sheet && pivot.source_ref ? `${pivot.source_sheet}!${pivot.source_ref}` : pivot.source_ref || '-') }}
+                </td>
+                <td class="px-3 py-1.5">
+                  <div class="space-y-0.5">
+                    <p v-if="pivot.row_fields.length">行: {{ pivot.row_fields.join(', ') }}</p>
+                    <p v-if="pivot.column_fields.length">列: {{ pivot.column_fields.join(', ') }}</p>
+                    <p v-if="pivot.value_fields.length">値: {{ pivot.value_fields.join(', ') }}</p>
+                    <p v-if="pivot.filter_fields.length">フィルタ: {{ pivot.filter_fields.join(', ') }}</p>
+                    <p v-if="!pivot.row_fields.length && !pivot.column_fields.length && !pivot.value_fields.length && !pivot.filter_fields.length" class="text-(--ui-text-muted)">-</p>
+                  </div>
+                </td>
+                <td class="px-3 py-1.5 font-mono text-[10px]">{{ pivot.anchor || '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </UCard>
 
       <!-- フォームコントロール (ボタン → マクロ) -->

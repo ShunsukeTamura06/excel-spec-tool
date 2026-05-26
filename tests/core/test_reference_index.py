@@ -2,6 +2,9 @@
 
 from core.models import (
     CellFormula,
+    ChartObject,
+    ChartSeries,
+    PivotTableInfo,
     Reference,
     ReferenceIndex,
     SheetInfo,
@@ -152,6 +155,67 @@ class TestFormulaSide:
         assert len(idx.refs["Calc!H2"]) == 2
         froms = {r.from_ for r in idx.refs["Calc!H2"]}
         assert froms == {"Out!A1", "Out!A2"}
+
+
+class TestVisualAndPivotSide:
+    def test_chart_series_refs_are_indexed(self) -> None:
+        wb = Workbook(
+            filename="chart.xlsx",
+            sheets=[
+                SheetInfo(
+                    name="Report",
+                    rows=10,
+                    cols=6,
+                    charts=[
+                        ChartObject(
+                            name="Chart 1",
+                            chart_type="lineChart",
+                            series=[
+                                ChartSeries(
+                                    name="売上",
+                                    values_ref="Data!$B$2:$B$10",
+                                    categories_ref="Data!$A$2:$A$10",
+                                )
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )
+
+        idx = build_reference_index(wb)
+
+        assert "Data!B2:B10" in idx.refs
+        assert "Data!A2:A10" in idx.refs
+        assert idx.refs["Data!B2:B10"][0].kind == "chart"
+        assert idx.refs["Data!B2:B10"][0].from_ == "Report!Chart:Chart 1:S1"
+
+    def test_pivot_source_ref_is_indexed(self) -> None:
+        wb = Workbook(
+            filename="pivot.xlsx",
+            sheets=[
+                SheetInfo(
+                    name="Pivot",
+                    rows=20,
+                    cols=6,
+                    pivot_tables=[
+                        PivotTableInfo(
+                            name="PivotTable1",
+                            source_sheet="Data",
+                            source_ref="A1:C100",
+                            value_fields=["合計 / 売上"],
+                        )
+                    ],
+                )
+            ],
+        )
+
+        idx = build_reference_index(wb)
+
+        assert "Data!A1:C100" in idx.refs
+        ref = idx.refs["Data!A1:C100"][0]
+        assert ref.kind == "pivot"
+        assert ref.from_ == "Pivot!Pivot:PivotTable1"
 
 
 # ---------- VBA側 ----------

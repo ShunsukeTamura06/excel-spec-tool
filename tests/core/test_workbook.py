@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from openpyxl import Workbook as OpyWorkbook
+from openpyxl.chart import BarChart, Reference
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import PatternFill
 from openpyxl.workbook.defined_name import DefinedName
@@ -16,6 +17,8 @@ from openpyxl.workbook.defined_name import DefinedName
 from core.exceptions import ExtractionError
 from core.extractors.workbook import (
     _extract_formula_refs,
+    _extract_pivot_tables,
+    _extract_power_queries,
     _extract_sheet_name,
     extract_workbook,
 )
@@ -318,6 +321,162 @@ class TestPreview:
         # empty_xlsx の A1 に "hello" が入っているので最低限1セル
         assert sheet.preview_rows
         assert sheet.preview_rows[0][0] == "hello"
+
+
+# ---------- グラフ / ピボット / Power Query ----------
+
+
+class TestCharts:
+    def test_extracts_chart_series_refs(self, tmp_path: Path) -> None:
+        """グラフの種類・配置・系列参照が抽出される."""
+        wb = OpyWorkbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "Data"
+        ws.append(["月", "売上"])
+        ws.append(["Jan", 10])
+        ws.append(["Feb", 20])
+
+        chart = BarChart()
+        chart.title = "月次売上"
+        chart.add_data(Reference(ws, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+        chart.set_categories(Reference(ws, min_col=1, min_row=2, max_row=3))
+        ws.add_chart(chart, "D2")
+
+        out = tmp_path / "chart.xlsx"
+        wb.save(out)
+
+        result = extract_workbook(out)
+        sheet = result.sheets[0]
+        assert len(sheet.charts) == 1
+        extracted = sheet.charts[0]
+        assert extracted.chart_type == "barChart"
+        assert extracted.anchor == "D2"
+        assert extracted.series
+        assert "Data" in extracted.series[0].values_ref
+        assert "B2:B3" in extracted.series[0].values_ref.replace("$", "")
+        assert "A2:A3" in extracted.series[0].categories_ref.replace("$", "")
+
+
+class TestPivotTables:
+    def test_extracts_pivot_table_definition_and_cache_source(self, tmp_path: Path) -> None:
+        """合成 OOXML からピボット名・元データ・フィールドを抽出する."""
+        workbook_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Pivot" sheetId="1" r:id="rIdSheet"/></sheets>
+  <pivotCaches><pivotCache cacheId="7" r:id="rIdCache"/></pivotCaches>
+</workbook>
+"""
+        workbook_rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdSheet"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+                Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rIdCache"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition"
+                Target="pivotCache/pivotCacheDefinition1.xml"/>
+</Relationships>
+"""
+        sheet_rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdPivot"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable"
+                Target="../pivotTables/pivotTable1.xml"/>
+</Relationships>
+"""
+        pivot_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                      name="PivotTable1" cacheId="7">
+  <location ref="A3:C8"/>
+  <rowFields><field x="0"/></rowFields>
+  <colFields><field x="1"/></colFields>
+  <dataFields><dataField name="合計 / 売上" fld="2" subtotal="sum"/></dataFields>
+</pivotTableDefinition>
+"""
+        cache_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cacheSource type="worksheet"><worksheetSource sheet="Data" ref="A1:C100"/></cacheSource>
+  <cacheFields count="3">
+    <cacheField name="部門"/><cacheField name="月"/><cacheField name="売上"/>
+  </cacheFields>
+</pivotCacheDefinition>
+"""
+        xlsx = tmp_path / "pivot_parts.xlsx"
+        with zipfile.ZipFile(xlsx, "w") as zf:
+            zf.writestr("xl/workbook.xml", workbook_xml)
+            zf.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+            zf.writestr("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels)
+            zf.writestr("xl/pivotTables/pivotTable1.xml", pivot_xml)
+            zf.writestr("xl/pivotCache/pivotCacheDefinition1.xml", cache_xml)
+
+        result = _extract_pivot_tables(xlsx, ["Pivot"])
+
+        assert len(result["Pivot"]) == 1
+        pivot = result["Pivot"][0]
+        assert pivot.name == "PivotTable1"
+        assert pivot.anchor == "A3:C8"
+        assert pivot.source_sheet == "Data"
+        assert pivot.source_ref == "A1:C100"
+        assert pivot.row_fields == ["部門"]
+        assert pivot.column_fields == ["月"]
+        assert pivot.value_fields == ["合計 / 売上"]
+
+
+class TestPowerQueries:
+    def test_extracts_connections_and_masks_secrets(self, tmp_path: Path) -> None:
+        """connections.xml と queryTable から接続棚卸しを作り、秘匿値をマスクする."""
+        workbook_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Output" sheetId="1" r:id="rIdSheet"/></sheets>
+</workbook>
+"""
+        workbook_rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdSheet"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+                Target="worksheets/sheet1.xml"/>
+</Relationships>
+"""
+        sheet_rels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdQuery"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/queryTable"
+                Target="../queryTables/queryTable1.xml"/>
+</Relationships>
+"""
+        connections_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<connections xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <connection id="3" name="Query - Sales" type="5" refreshOnLoad="1">
+    <dbPr connection="Provider=Microsoft.Mashup.OleDb.1;Password=super-secret;Token=abc"
+          command="SELECT * FROM [Sales]"/>
+  </connection>
+</connections>
+"""
+        query_table_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<queryTable xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            name="SalesTable" connectionId="3"/>
+"""
+        xlsx = tmp_path / "connections.xlsx"
+        with zipfile.ZipFile(xlsx, "w") as zf:
+            zf.writestr("xl/workbook.xml", workbook_xml)
+            zf.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+            zf.writestr("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels)
+            zf.writestr("xl/connections.xml", connections_xml)
+            zf.writestr("xl/queryTables/queryTable1.xml", query_table_xml)
+
+        result = _extract_power_queries(xlsx)
+
+        assert len(result) == 1
+        query = result[0]
+        assert query.kind == "power_query"
+        assert query.target_sheet == "Output"
+        assert query.target_name == "SalesTable"
+        assert query.refresh_on_load is True
+        assert "super-secret" not in query.source
+        assert "Password=***" in query.source
+        assert "Token=***" in query.source
 
 
 # ---------- データ検証 (入力規則) ----------

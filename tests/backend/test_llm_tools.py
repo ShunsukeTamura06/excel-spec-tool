@@ -15,6 +15,10 @@ from backend.storage import Storage
 from core.extractors.cells import extract_cells_to_sqlite
 from core.models import (
     CellFormula,
+    ChartObject,
+    ChartSeries,
+    PivotTableInfo,
+    PowerQueryInfo,
     Reference,
     ReferenceIndex,
     SheetInfo,
@@ -65,6 +69,7 @@ class TestToolDefinitions:
             "list_vba_modules",
             "get_vba_procedure",
             "list_sheet_formulas",
+            "list_workbook_objects",
             "lookup_external_function",
             "list_external_functions_used",
         }
@@ -216,8 +221,36 @@ def job_with_workbook(tmp_path: Path) -> tuple[Storage, str]:
                     ),
                     CellFormula(coord="Calc!A3", formula="=B1+B2", refs=["B1", "B2"]),
                 ],
+                charts=[
+                    ChartObject(
+                        name="Chart 1",
+                        chart_type="barChart",
+                        title="売上推移",
+                        anchor="E2",
+                        series=[
+                            ChartSeries(
+                                name="売上",
+                                values_ref="Input!B2:B5",
+                                categories_ref="Input!A2:A5",
+                            )
+                        ],
+                    )
+                ],
             ),
-            SheetInfo(name="Input", rows=5, cols=5),
+            SheetInfo(
+                name="Input",
+                rows=5,
+                cols=5,
+                pivot_tables=[
+                    PivotTableInfo(
+                        name="PivotTable1",
+                        anchor="A10:C20",
+                        source_sheet="Input",
+                        source_ref="A1:E100",
+                        value_fields=["合計 / 金額"],
+                    )
+                ],
+            ),
         ],
         vba_modules=[
             VbaModule(
@@ -240,6 +273,16 @@ def job_with_workbook(tmp_path: Path) -> tuple[Storage, str]:
                         code="",
                     ),
                 ],
+            )
+        ],
+        power_queries=[
+            PowerQueryInfo(
+                name="Query - Sales",
+                kind="power_query",
+                connection_id="3",
+                target_sheet="Input",
+                target_name="SalesTable",
+                source="Provider=Microsoft.Mashup.OleDb.1",
             )
         ],
     )
@@ -368,6 +411,47 @@ class TestExecuteListSheetFormulas:
     def test_missing_sheet_arg(self, job_with_workbook: tuple[Storage, str]) -> None:
         storage, job_id = job_with_workbook
         result = json.loads(execute_tool_call(storage, job_id, "list_sheet_formulas", {}))
+        assert "error" in result
+
+
+class TestExecuteListWorkbookObjects:
+    def test_returns_all_workbook_objects(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(execute_tool_call(storage, job_id, "list_workbook_objects", {}))
+
+        assert result["counts"] == {"charts": 1, "pivot_tables": 1, "power_queries": 1}
+        assert result["charts"][0]["title"] == "売上推移"
+        assert result["pivot_tables"][0]["name"] == "PivotTable1"
+        assert result["power_queries"][0]["name"] == "Query - Sales"
+        assert "M コード本文は未解析" in result["analysis_scope"]
+
+    def test_sheet_filter_excludes_workbook_level_connections(
+        self,
+        job_with_workbook: tuple[Storage, str],
+    ) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(storage, job_id, "list_workbook_objects", {"sheet": "Calc"})
+        )
+
+        assert result["counts"] == {"charts": 1, "pivot_tables": 0, "power_queries": 0}
+        assert result["charts"][0]["sheet"] == "Calc"
+
+    def test_kind_filter(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(storage, job_id, "list_workbook_objects", {"kind": "pivot"})
+        )
+
+        assert result["counts"]["charts"] == 0
+        assert result["counts"]["pivot_tables"] == 1
+        assert result["counts"]["power_queries"] == 0
+
+    def test_invalid_kind_returns_error(self, job_with_workbook: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(storage, job_id, "list_workbook_objects", {"kind": "bad"})
+        )
         assert "error" in result
 
 

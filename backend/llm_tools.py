@@ -10,6 +10,7 @@ LLM に渡す `tools` 配列を取得、`execute_tool_call()` で実行する。
 - list_vba_modules: VBA モジュールとプロシージャのメタ情報一覧
 - get_vba_procedure: 指定プロシージャのソースコード本体を取得
 - list_sheet_formulas: シート内の数式一覧 (オプションでテキストフィルタ)
+- list_workbook_objects: グラフ / ピボット / Power Query・外部接続の棚卸しを取得
 - lookup_external_function: Bloomberg BDH/BDP/BDS 等の Add-In 関数定義を引く
 - list_external_functions_used: 当該ブックで使われている外部関数とその箇所を列挙
 """
@@ -189,6 +190,31 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "list_workbook_objects",
+            "description": (
+                "グラフ / ピボットテーブル / Power Query・外部接続の棚卸しを返す。"
+                "表や列の変更がチャート、ピボット、外部データ接続に波及するか確認するときに使う。"
+                "依存関係は OOXML から明示的に取れた範囲だけで、"
+                "Power Query の M コード本文は含まない。"
+                "`sheet` を渡すとそのシート上のグラフ・ピボットに絞り込める。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sheet": {"type": "string", "description": "シート名で絞る場合に指定"},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["chart", "pivot", "power_query", "all"],
+                        "description": "取得対象。未指定なら all。",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "lookup_external_function",
             "description": (
                 "Bloomberg / Refinitiv 等の Excel Add-In 関数の定義を引く。"
@@ -230,11 +256,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "lookup_references",
             "description": (
-                "あるセルまたは範囲を参照している箇所 (数式 / VBA) を返す。"
+                "あるセルまたは範囲を参照している箇所 (数式 / VBA / グラフ / ピボット) を返す。"
                 "改修の波及範囲を調べるときに使う。"
                 "完全一致だけでなく範囲交差でヒットする (例: target='Input!A5' は "
                 "'Input!A:A' を参照している数式も返す)。"
                 "シート修飾を付けて呼ぶこと (例: 'Calc!H2')。"
+                "グラフ系列参照とピボット元データは OOXML から明示的に取れた範囲だけが対象。"
                 "VBA は静的に確定できる Range/Cells/短縮参照だけが対象で、"
                 'Range("A" & row), Range(addr), ActiveSheet, Selection, Offset, Resize '
                 "など実行時に決まる参照は検出対象外。"
@@ -289,6 +316,8 @@ def execute_tool_call(
             result = _exec_get_vba_procedure(storage, job_id, arguments)
         elif name == "list_sheet_formulas":
             result = _exec_list_sheet_formulas(storage, job_id, arguments)
+        elif name == "list_workbook_objects":
+            result = _exec_list_workbook_objects(storage, job_id, arguments)
         elif name == "lookup_external_function":
             result = _exec_lookup_external_function(arguments)
         elif name == "list_external_functions_used":
@@ -449,6 +478,71 @@ def _exec_list_sheet_formulas(storage: Storage, job_id: str, args: dict[str, Any
     )
 
 
+def _exec_list_workbook_objects(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
+    """グラフ / ピボット / Power Query・外部接続の棚卸しを返す."""
+    sheet_filter_raw = args.get("sheet")
+    sheet_filter = str(sheet_filter_raw) if sheet_filter_raw else None
+    kind_raw = args.get("kind") or "all"
+    kind = str(kind_raw)
+    if kind not in {"chart", "pivot", "power_query", "all"}:
+        raise ToolExecutionError("kind must be chart, pivot, power_query, or all")
+
+    try:
+        wb = storage.load_workbook(job_id)
+    except JobNotFoundError as e:
+        raise ToolExecutionError(f"job not found: {e}") from e
+    except FileNotFoundError as e:
+        raise ToolExecutionError(f"workbook not extracted: {e}") from e
+
+    charts: list[dict[str, Any]] = []
+    pivots: list[dict[str, Any]] = []
+    for sheet in wb.sheets:
+        if sheet_filter and sheet.name != sheet_filter:
+            continue
+        if kind in {"chart", "all"}:
+            charts.extend(
+                {
+                    "sheet": sheet.name,
+                    "name": chart.name,
+                    "title": chart.title,
+                    "chart_type": chart.chart_type,
+                    "anchor": chart.anchor,
+                    "series": [series.model_dump() for series in chart.series],
+                }
+                for chart in sheet.charts
+            )
+        if kind in {"pivot", "all"}:
+            pivots.extend(
+                {
+                    "sheet": sheet.name,
+                    **pivot.model_dump(),
+                }
+                for pivot in sheet.pivot_tables
+            )
+
+    power_queries: list[dict[str, Any]] = []
+    if kind in {"power_query", "all"} and not sheet_filter:
+        power_queries = [query.model_dump() for query in wb.power_queries]
+
+    return json.dumps(
+        {
+            "charts": charts,
+            "pivot_tables": pivots,
+            "power_queries": power_queries,
+            "counts": {
+                "charts": len(charts),
+                "pivot_tables": len(pivots),
+                "power_queries": len(power_queries),
+            },
+            "analysis_scope": (
+                "グラフ系列参照とピボット元データは OOXML から明示的に取れた範囲。"
+                "Power Query は接続定義と queryTable 出力先の棚卸しで、M コード本文は未解析。"
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
 def _exec_lookup_external_function(args: dict[str, Any]) -> str:
     """Bloomberg/Refinitiv 等の外部 Add-In 関数の定義をレジストリから引く."""
     name_raw = args.get("name")
@@ -521,7 +615,8 @@ def _exec_lookup_references(storage: Storage, job_id: str, args: dict[str, Any])
             "refs": [r.model_dump(by_alias=True) for r in refs],
             "count": len(refs),
             "analysis_scope": (
-                "静的解析で検出できる数式参照と VBA の静的 Range/Cells/短縮参照が対象。"
+                "静的解析で検出できる数式参照、VBA の静的 Range/Cells/短縮参照、"
+                "グラフ系列参照、ピボット元データが対象。"
                 "動的に組み立てる VBA 参照や実行時状態依存の参照は含まれない。"
             ),
         },

@@ -22,7 +22,7 @@ export interface SpecResponse {
 }
 
 export interface ReferenceItem {
-  kind: 'formula' | 'vba'
+  kind: 'formula' | 'vba' | 'chart' | 'pivot' | 'power_query'
   /** Pydantic 側で `from_` を alias `from` で吐く. JSON では `from`. */
   from: string
   to: string
@@ -133,6 +133,49 @@ export interface ExcelTable {
   header_row_count: number
 }
 
+export interface ChartSeriesItem {
+  name: string
+  values_ref: string
+  categories_ref: string
+}
+
+export interface ChartObjectItem {
+  name: string
+  chart_type: string
+  title: string
+  anchor: string
+  series: ChartSeriesItem[]
+}
+
+export interface PivotTableItem {
+  name: string
+  anchor: string
+  cache_id: string
+  source_type: string
+  source_sheet: string
+  source_ref: string
+  source_name: string
+  row_fields: string[]
+  column_fields: string[]
+  value_fields: string[]
+  filter_fields: string[]
+}
+
+export interface PowerQueryItem {
+  name: string
+  kind: 'power_query' | 'connection'
+  connection_id: string
+  connection_type: string
+  description: string
+  refresh_on_load: boolean
+  target_sheet: string
+  target_name: string
+  source: string
+  command: string
+  m_code: string
+  confidence: 'explicit' | 'inferred' | 'unknown'
+}
+
 export interface DataValidationItem {
   range: string
   type: string
@@ -159,6 +202,8 @@ export interface SheetInfo {
   named_ranges: NamedRange[]
   conditional_formats: ConditionalFormat[]
   tables: ExcelTable[]
+  charts: ChartObjectItem[]
+  pivot_tables: PivotTableItem[]
   merged_ranges: string[]
   data_validations: DataValidationItem[]
   form_controls: FormControlItem[]
@@ -197,6 +242,7 @@ export interface WorkbookData {
   sheets: SheetInfo[]
   vba_modules: VbaModule[]
   external_links: string[]
+  power_queries: PowerQueryItem[]
 }
 
 // ---------- external functions ----------

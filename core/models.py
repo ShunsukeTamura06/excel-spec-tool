@@ -71,6 +71,72 @@ class ExcelTable(BaseModel):
     header_row_count: int = 1
 
 
+class ChartSeries(BaseModel):
+    """グラフ系列 1件.
+
+    `values_ref` / `categories_ref` は OOXML の `c:f` から直接取れたセル参照。
+    取得できない場合は空文字にする。
+    """
+
+    name: str = ""
+    values_ref: str = ""
+    categories_ref: str = ""
+
+
+class ChartObject(BaseModel):
+    """シート上の Excel グラフ 1件.
+
+    OOXML の DrawingML / chart パーツから best-effort で抽出する。
+    """
+
+    name: str = ""
+    chart_type: str = ""
+    title: str = ""
+    anchor: str = ""
+    series: list[ChartSeries] = Field(default_factory=list)
+
+
+class PivotTableInfo(BaseModel):
+    """ピボットテーブル 1件.
+
+    `source_*` は pivotCacheDefinition から直接取れた元データ情報。
+    取れない場合は空文字のままにする。
+    """
+
+    name: str
+    anchor: str = ""
+    cache_id: str = ""
+    source_type: str = ""
+    source_sheet: str = ""
+    source_ref: str = ""
+    source_name: str = ""
+    row_fields: list[str] = Field(default_factory=list)
+    column_fields: list[str] = Field(default_factory=list)
+    value_fields: list[str] = Field(default_factory=list)
+    filter_fields: list[str] = Field(default_factory=list)
+
+
+class PowerQueryInfo(BaseModel):
+    """Power Query / 外部データ接続の棚卸し情報.
+
+    Power Query は保存形式の揺れが大きいため、初期対応では接続定義と
+    出力先 queryTable から明示的に取れた情報だけを持つ。
+    """
+
+    name: str
+    kind: Literal["power_query", "connection"] = "connection"
+    connection_id: str = ""
+    connection_type: str = ""
+    description: str = ""
+    refresh_on_load: bool = False
+    target_sheet: str = ""
+    target_name: str = ""
+    source: str = ""
+    command: str = ""
+    m_code: str = ""
+    confidence: Literal["explicit", "inferred", "unknown"] = "explicit"
+
+
 class DataValidation(BaseModel):
     """セルに設定された入力規則 (リスト / 数値範囲 / 日付 等).
 
@@ -111,6 +177,8 @@ class SheetInfo(BaseModel):
     named_ranges: list[NamedRange] = Field(default_factory=list)
     conditional_formats: list[ConditionalFormat] = Field(default_factory=list)
     tables: list[ExcelTable] = Field(default_factory=list)
+    charts: list[ChartObject] = Field(default_factory=list)
+    pivot_tables: list[PivotTableInfo] = Field(default_factory=list)
     merged_ranges: list[str] = Field(default_factory=list)
     data_validations: list[DataValidation] = Field(default_factory=list)
     form_controls: list[FormControl] = Field(default_factory=list)
@@ -135,6 +203,7 @@ class Workbook(BaseModel):
     sheets: list[SheetInfo] = Field(default_factory=list)
     vba_modules: list[VbaModule] = Field(default_factory=list)
     external_links: list[str] = Field(default_factory=list)
+    power_queries: list[PowerQueryInfo] = Field(default_factory=list)
 
 
 class Reference(BaseModel):
@@ -142,7 +211,7 @@ class Reference(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    kind: Literal["formula", "vba"]
+    kind: Literal["formula", "vba", "chart", "pivot", "power_query"]
     from_: str = Field(alias="from")
     to: str
     code: str = ""
