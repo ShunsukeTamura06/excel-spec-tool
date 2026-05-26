@@ -105,6 +105,7 @@ class TestToolLoop:
         assert len(body["tool_trace"]) == 1
         assert body["tool_trace"][0]["name"] == "find_cells"
         assert body["tool_trace"][0]["arguments"] == {"query": "実現損益"}
+        assert body["tool_trace"][0]["result"]["count"] >= 1
 
     def test_stream_returns_progress_events_and_final_reply(
         self, app_client: TestClient, xlsx_bytes: bytes, scripted_llm: MockLLMClient
@@ -140,6 +141,7 @@ class TestToolLoop:
         final_json = json.loads(final_payload.removeprefix("data: "))
         assert final_json["reply"] == "実現損益は F1 です"
         assert final_json["tool_trace"][0]["name"] == "find_cells"
+        assert "result" in final_json["tool_trace"][0]
 
     def test_multiple_tool_calls(
         self, app_client: TestClient, xlsx_bytes: bytes, scripted_llm: MockLLMClient
