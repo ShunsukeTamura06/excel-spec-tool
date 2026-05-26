@@ -95,6 +95,57 @@ uv run uvicorn backend.main:app --reload --port 8001
 cd frontend && pnpm dev
 ```
 
+### ローカル本番系 / 開発系を分離して同時起動
+
+ユーザー検証用の本番系と、改修作業用の開発系を同じPC上で分けて起動できる。
+ポート、ジョブ保存先、ログ、PID はすべて分離される。
+
+| 系統 | Frontend | Backend | Jobs | Backend | Frontend |
+|---|---:|---:|---|---|---|
+| prod | 3001 | 8001 | `runtime/prod/jobs` | reload なし | `pnpm generate` + `pnpm preview` |
+| dev | 3002 | 8002 | `runtime/dev/jobs` | reload あり | `pnpm dev` |
+
+```bash
+# ユーザーに触ってもらう本番系
+scripts/local_stack.sh start prod
+# http://127.0.0.1:3001
+
+# 開発しながら確認する開発系
+scripts/local_stack.sh start dev
+# http://127.0.0.1:3002
+
+# 状態確認
+scripts/local_stack.sh status prod
+scripts/local_stack.sh status dev
+
+# 停止
+scripts/local_stack.sh stop prod
+scripts/local_stack.sh stop dev
+```
+
+本番系と開発系は別オリジン (`127.0.0.1:3001` / `127.0.0.1:3002`) なので、
+ブラウザの `localStorage` に保存される現在ジョブIDも分離される。
+
+同じ作業ツリーで両方を起動した場合も、prod は backend reload なし・frontend
+静的 preview のため、起動中のユーザー検証は開発中のファイル変更から切り離される。
+ただし、prod を再起動するとその時点の作業ツリーのコードを読む。
+
+コード変更まで完全に分ける場合は Git worktree を使う。
+
+```bash
+git worktree add worktrees/prod-main main
+git worktree add worktrees/dev-codex-chat-evidence-cards codex-chat-evidence-cards
+
+cd worktrees/prod-main
+scripts/local_stack.sh start prod
+
+cd ../dev-codex-chat-evidence-cards
+scripts/local_stack.sh start dev
+```
+
+dev で確認後に PR/merge し、prod 側 worktree で `git pull` してから
+`scripts/local_stack.sh stop prod`、`scripts/local_stack.sh start prod` を実行する。
+
 サンプル `.xlsx` が手元になければ、ホーム画面の「サンプルをダウンロード」
 ボタンから `inventory_sample.xlsx` (Input / Calc / Output の 3 シート構成、
 名前付き範囲・条件付き書式入り) を取得して試せる。

@@ -17,6 +17,19 @@ pnpm dev
 
 Backend (FastAPI) は別ターミナルで `uv run uvicorn backend.main:app --reload --port 8001` を起動しておくこと。
 
+## ローカル環境の分離
+
+リポジトリルートの `scripts/local_stack.sh` を使うと、本番系と開発系を
+別ポート・別ジョブ保存先で同時起動できる。
+
+```bash
+# 本番系: Frontend 3001 / Backend 8001 / runtime/prod/jobs
+../scripts/local_stack.sh start prod
+
+# 開発系: Frontend 3002 / Backend 8002 / runtime/dev/jobs
+../scripts/local_stack.sh start dev
+```
+
 ## 環境変数
 
 | 変数 | 既定 | 用途 |
