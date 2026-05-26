@@ -99,14 +99,11 @@ async function sendVote(kind: 'thumbs_up' | 'thumbs_down') {
           !isUser && !isAssistant && 'bg-amber-50 dark:bg-amber-950 text-amber-900 dark:text-amber-200',
         ]"
       >
-        <div v-if="isAssistant" class="spec-prose text-sm">
-          <ClientOnly>
-            <MDC :value="message.content" tag="div" />
-            <template #fallback>
-              <pre class="whitespace-pre-wrap text-sm">{{ message.content }}</pre>
-            </template>
-          </ClientOnly>
-        </div>
+        <ChatMarkdown
+          v-if="isAssistant"
+          :markdown="message.content"
+          :evidence-items="evidenceItems"
+        />
         <p v-else class="whitespace-pre-wrap text-sm leading-relaxed">{{ message.content }}</p>
       </div>
       <div
