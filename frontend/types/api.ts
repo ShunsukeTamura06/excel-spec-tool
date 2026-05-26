@@ -73,6 +73,7 @@ export interface ToolTraceItem {
   name: string
   arguments: Record<string, unknown>
   result_preview: string
+  result?: unknown
 }
 
 export interface ChatReply {
