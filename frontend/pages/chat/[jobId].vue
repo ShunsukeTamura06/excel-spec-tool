@@ -4,10 +4,10 @@
  *
  * - 左: 同じ Excel ジョブ配下の相談セッション一覧
  * - 中央: 選択中セッションのメッセージ履歴
- * - 下部: 直近ツール呼び出し + メッセージ入力欄
+ * - 下部: メッセージ入力欄
  */
 
-import type { ChatMessage, ChatProgressEvent, ChatSessionMeta, ToolTraceItem } from '~/types/api'
+import type { ChatMessage, ChatProgressEvent, ChatSessionMeta } from '~/types/api'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: 'チャット — Excelツール改修支援AI' })
@@ -88,7 +88,6 @@ onMounted(() => {
 
 async function selectSession(session: ChatSessionMeta) {
   activeSessionId.value = session.session_id
-  lastToolTrace.value = []
   await updateSessionQuery(session.session_id)
   loading.value = true
   loadError.value = ''
@@ -190,7 +189,6 @@ async function saveTitle() {
 const input = ref('')
 const sending = ref(false)
 const sendError = ref('')
-const lastToolTrace = ref<ToolTraceItem[]>([])
 const scrollContainer = ref<HTMLElement | null>(null)
 type ProgressItem = {
   id: string
@@ -245,7 +243,6 @@ async function send() {
       },
     })
     history.value = r.history
-    lastToolTrace.value = r.tool_trace ?? []
     await refreshSessionsOnly()
     scrollToBottom()
   } catch (e) {
@@ -525,9 +522,6 @@ const examples = [
             </div>
           </div>
         </UCard>
-
-        <!-- 直近のツール呼び出し -->
-        <ToolTraceList :items="lastToolTrace" />
 
         <!-- 入力欄 -->
         <UCard :ui="{ body: 'p-2 sm:p-3' }">

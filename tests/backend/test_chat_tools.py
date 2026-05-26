@@ -106,6 +106,9 @@ class TestToolLoop:
         assert body["tool_trace"][0]["name"] == "find_cells"
         assert body["tool_trace"][0]["arguments"] == {"query": "実現損益"}
         assert body["tool_trace"][0]["result"]["count"] >= 1
+        assistant_messages = [m for m in body["history"] if m["role"] == "assistant"]
+        assert assistant_messages[-1]["tool_trace"][0]["name"] == "find_cells"
+        assert assistant_messages[-1]["tool_trace"][0]["result"]["count"] >= 1
 
     def test_stream_returns_progress_events_and_final_reply(
         self, app_client: TestClient, xlsx_bytes: bytes, scripted_llm: MockLLMClient
@@ -142,6 +145,9 @@ class TestToolLoop:
         assert final_json["reply"] == "実現損益は F1 です"
         assert final_json["tool_trace"][0]["name"] == "find_cells"
         assert "result" in final_json["tool_trace"][0]
+        assistant_messages = [m for m in final_json["history"] if m["role"] == "assistant"]
+        assert assistant_messages[-1]["tool_trace"][0]["name"] == "find_cells"
+        assert "result" in assistant_messages[-1]["tool_trace"][0]
 
     def test_multiple_tool_calls(
         self, app_client: TestClient, xlsx_bytes: bytes, scripted_llm: MockLLMClient

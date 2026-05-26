@@ -94,19 +94,13 @@ start_backend() {
   assert_port_free "$BACKEND_PORT" "$ENV_NAME backend"
   : > "$BACKEND_LOG"
   if [[ "$BACKEND_RELOAD" == "1" ]]; then
-    (
-      cd "$ROOT_DIR"
-      JOBS_DIR="$JOBS_DIR" \
-      CORS_ALLOW_ORIGINS="$CORS_ORIGINS" \
-      uv run uvicorn backend.main:app --reload --host 127.0.0.1 --port "$BACKEND_PORT"
-    ) >> "$BACKEND_LOG" 2>&1 &
+    nohup bash -c \
+      'cd "$1" && JOBS_DIR="$2" CORS_ALLOW_ORIGINS="$3" uv run uvicorn backend.main:app --reload --host 127.0.0.1 --port "$4"' \
+      _ "$ROOT_DIR" "$JOBS_DIR" "$CORS_ORIGINS" "$BACKEND_PORT" >> "$BACKEND_LOG" 2>&1 &
   else
-    (
-      cd "$ROOT_DIR"
-      JOBS_DIR="$JOBS_DIR" \
-      CORS_ALLOW_ORIGINS="$CORS_ORIGINS" \
-      uv run uvicorn backend.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
-    ) >> "$BACKEND_LOG" 2>&1 &
+    nohup bash -c \
+      'cd "$1" && JOBS_DIR="$2" CORS_ALLOW_ORIGINS="$3" uv run uvicorn backend.main:app --host 127.0.0.1 --port "$4"' \
+      _ "$ROOT_DIR" "$JOBS_DIR" "$CORS_ORIGINS" "$BACKEND_PORT" >> "$BACKEND_LOG" 2>&1 &
   fi
   echo $! > "$BACKEND_PID"
   echo "$ENV_NAME backend started: $BACKEND_URL (pid $(cat "$BACKEND_PID"))"
@@ -120,17 +114,13 @@ start_frontend() {
   assert_port_free "$FRONTEND_PORT" "$ENV_NAME frontend"
   : > "$FRONTEND_LOG"
   if [[ "$FRONTEND_MODE" == "preview" ]]; then
-    (
-      cd "$ROOT_DIR/frontend"
-      NUXT_PUBLIC_BACKEND_URL="$BACKEND_URL" NUXT_PORT="$FRONTEND_PORT" pnpm generate
-      NUXT_PUBLIC_BACKEND_URL="$BACKEND_URL" pnpm preview --host 127.0.0.1 --port "$FRONTEND_PORT"
-    ) >> "$FRONTEND_LOG" 2>&1 &
+    nohup bash -c \
+      'cd "$1/frontend" && NUXT_PUBLIC_BACKEND_URL="$2" NUXT_PORT="$3" pnpm generate && NUXT_PUBLIC_BACKEND_URL="$2" pnpm preview --host 127.0.0.1 --port "$3"' \
+      _ "$ROOT_DIR" "$BACKEND_URL" "$FRONTEND_PORT" >> "$FRONTEND_LOG" 2>&1 &
   else
-    (
-      cd "$ROOT_DIR/frontend"
-      NUXT_PUBLIC_BACKEND_URL="$BACKEND_URL" NUXT_PORT="$FRONTEND_PORT" \
-      pnpm dev --host 127.0.0.1 --port "$FRONTEND_PORT"
-    ) >> "$FRONTEND_LOG" 2>&1 &
+    nohup bash -c \
+      'cd "$1/frontend" && NUXT_PUBLIC_BACKEND_URL="$2" NUXT_PORT="$3" pnpm dev --host 127.0.0.1 --port "$3"' \
+      _ "$ROOT_DIR" "$BACKEND_URL" "$FRONTEND_PORT" >> "$FRONTEND_LOG" 2>&1 &
   fi
   echo $! > "$FRONTEND_PID"
   echo "$ENV_NAME frontend starting: http://127.0.0.1:$FRONTEND_PORT (pid $(cat "$FRONTEND_PID"))"

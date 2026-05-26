@@ -64,7 +64,12 @@ type VbaProcedureResult = {
   annotation?: string
 }
 
-const props = defineProps<{ items: ToolTraceItem[] }>()
+const props = withDefaults(defineProps<{
+  items: ToolTraceItem[]
+  title?: string
+}>(), {
+  title: '根拠カード',
+})
 
 const open = ref(true)
 
@@ -191,12 +196,15 @@ function codeLines(code: string | undefined, limit = 80): string {
     >
       <span class="flex items-center gap-2">
         <UIcon name="i-lucide-clipboard-check" class="size-3.5" />
-        直近応答の根拠カード ({{ props.items.length }} 件)
+        {{ props.title }} ({{ props.items.length }} 件)
       </span>
       <UIcon :name="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" class="size-3.5" />
     </button>
 
-    <div v-if="open" class="border-t border-(--ui-border) p-3 space-y-3">
+    <div
+      v-if="open"
+      class="border-t border-(--ui-border) p-3 space-y-3 max-h-[min(32rem,60vh)] overflow-y-auto overscroll-contain"
+    >
       <div
         v-for="(t, i) in props.items"
         :key="i"
