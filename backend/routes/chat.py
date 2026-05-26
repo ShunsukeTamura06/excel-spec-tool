@@ -178,6 +178,21 @@ def _tool_signature(name: str, arguments: dict[str, Any]) -> str:
     return f"{name}:{json.dumps(arguments, ensure_ascii=False, sort_keys=True)}"
 
 
+def _tool_trace_result(result_str: str) -> Any:
+    """tool 結果を UI 用の構造化値に変換する.
+
+    Args:
+        result_str: tool が返した JSON 文字列。
+
+    Returns:
+        JSON として読めれば dict/list 等を返す。切り詰め済みなどで読めない場合は None。
+    """
+    try:
+        return json.loads(result_str)
+    except json.JSONDecodeError:
+        return None
+
+
 def _sse_event(event: str, data: dict[str, Any]) -> str:
     """Server-Sent Events 形式の文字列へ変換する.
 
@@ -534,7 +549,12 @@ def _run_tool_loop(
                 result_str[:120].replace("\n", " "),
             )
             tool_trace.append(
-                {"name": tc.name, "arguments": tc.arguments, "result_preview": result_str[:200]}
+                {
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                    "result_preview": result_str[:200],
+                    "result": _tool_trace_result(result_str),
+                }
             )
             _emit_progress(
                 emit_progress,
