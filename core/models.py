@@ -3,7 +3,7 @@
 docs/SPEC.ja.md §3 に基づく Pydantic モデル群。Core / Backend / Frontend で共有する。
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -270,6 +270,7 @@ class ChatMessage(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
     timestamp: str
+    tool_trace: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ChatSessionMeta(BaseModel):

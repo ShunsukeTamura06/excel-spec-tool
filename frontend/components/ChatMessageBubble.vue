@@ -7,7 +7,7 @@
  * 心理的負担を最小化するため、コメント記入は要求しない (詳細は FAB から).
  */
 
-import type { ChatMessage, FeedbackKind } from '~/types/api'
+import type { ChatMessage, FeedbackKind, ToolTraceItem } from '~/types/api'
 
 const props = defineProps<{
   message: ChatMessage
@@ -17,6 +17,9 @@ const props = defineProps<{
 
 const isUser = computed(() => props.message.role === 'user')
 const isAssistant = computed(() => props.message.role === 'assistant')
+const evidenceItems = computed<ToolTraceItem[]>(() => {
+  return isAssistant.value ? props.message.tool_trace ?? [] : []
+})
 
 const timeLabel = computed(() => {
   const t = props.message.timestamp
@@ -155,6 +158,12 @@ async function sendVote(kind: 'thumbs_up' | 'thumbs_down') {
           </button>
         </div>
       </div>
+      <ToolTraceList
+        v-if="evidenceItems.length > 0"
+        :items="evidenceItems"
+        title="この回答の根拠カード"
+        class="mt-2"
+      />
     </div>
   </div>
 </template>
