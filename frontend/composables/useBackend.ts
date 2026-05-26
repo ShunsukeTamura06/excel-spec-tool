@@ -164,9 +164,27 @@ function parseSseEvent(raw: string): { event: ChatStreamEventName; data: unknown
   return { event, data: JSON.parse(dataLines.join('\n')) }
 }
 
+function backendUrlForCurrentPort(configuredUrl: string): string {
+  if (!import.meta.client) return configuredUrl
+
+  const portMap: Record<string, string> = {
+    '3001': '8001',
+    '3002': '8002',
+  }
+  const backendPort = portMap[window.location.port]
+  if (!backendPort) return configuredUrl
+
+  const localDefault = configuredUrl === 'http://localhost:8001'
+    || configuredUrl === 'http://127.0.0.1:8001'
+    || configuredUrl === ''
+  if (!localDefault) return configuredUrl
+
+  return `${window.location.protocol}//${window.location.hostname}:${backendPort}`
+}
+
 export function useBackend() {
   const config = useRuntimeConfig()
-  const baseURL = config.public.backendUrl
+  const baseURL = backendUrlForCurrentPort(String(config.public.backendUrl || ''))
 
   /** 共通呼び出しラッパ. 失敗時は BackendError を throw する. */
   async function call<T>(
