@@ -7,7 +7,7 @@
  * - 下部: メッセージ入力欄
  */
 
-import type { ChatMessage, ChatProgressEvent, ChatSessionMeta } from '~/types/api'
+import type { ChatMessage, ChatProgressEvent, ChatSessionMeta, WorkbookData } from '~/types/api'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: 'チャット — Excelツール改修支援AI' })
@@ -25,6 +25,7 @@ const showArchived = ref(false)
 const history = ref<ChatMessage[]>([])
 const loading = ref(false)
 const loadError = ref('')
+const workbook = ref<WorkbookData | null>(null)
 
 const activeSession = computed(() => {
   return sessions.value.find(s => s.session_id === activeSessionId.value) ?? null
@@ -58,6 +59,14 @@ async function loadHistory() {
   history.value = await backend.getChatHistory(jobId.value, activeSessionId.value)
 }
 
+async function loadWorkbook() {
+  try {
+    workbook.value = await backend.getWorkbook(jobId.value)
+  } catch {
+    workbook.value = null
+  }
+}
+
 async function loadChatState() {
   loading.value = true
   loadError.value = ''
@@ -72,7 +81,10 @@ async function loadChatState() {
     if (route.query.session !== activeSessionId.value) {
       await updateSessionQuery(activeSessionId.value)
     }
-    await loadHistory()
+    await Promise.all([
+      loadHistory(),
+      loadWorkbook(),
+    ])
   } catch (e) {
     loadError.value = friendlyMessage(e)
   } finally {
@@ -493,6 +505,7 @@ const examples = [
               :key="i"
               :message="m"
               :job-id="jobId"
+              :workbook="workbook"
             />
 
             <!-- アシスタント応答中インジケータ -->
