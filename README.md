@@ -148,15 +148,19 @@ dev で確認後に PR/merge し、prod 側 worktree で `git pull` してから
 
 ### サーバーIP配下で本番 / 開発をパス分離する
 
-クライアントPCから `8001` / `8002` へ直接アクセスさせず、サーバーの標準HTTP(S)
-ポートでパス分離する。プロキシ制約がある環境ではこの形を標準とする。
+クライアントPCから `8001` / `8002` へ直接アクセスさせず、nginx を公開ポート
+`3001` に置いてパス分離する。`80` が既に使われている環境ではこの形を標準とする。
 
 | URL | 用途 | 内部転送先 |
 |---|---|---|
-| `http://<server-ip>/` | 本番 Frontend | prod の静的ファイル |
-| `http://<server-ip>/api/` | 本番 Backend API | `127.0.0.1:8001` |
-| `http://<server-ip>/dev/` | 開発 Frontend | dev の静的ファイル |
-| `http://<server-ip>/dev/api/` | 開発 Backend API | `127.0.0.1:8002` |
+| `http://<server-ip>:3001/` | 本番 Frontend | prod の静的ファイル |
+| `http://<server-ip>:3001/api/` | 本番 Backend API | `127.0.0.1:8001` |
+| `http://<server-ip>:3001/dev/` | 開発 Frontend | dev の静的ファイル |
+| `http://<server-ip>:3001/dev/api/` | 開発 Backend API | `127.0.0.1:8002` |
+
+この運用では `3001` は nginx 専用ポートにする。prod の Nuxt preview や Nuxt dev
+server を同時に `3001` で起動しない。Frontend は `pnpm generate` で静的化し、
+nginx が `.output/public` を配信する。
 
 Frontend は相対パスで API を呼ぶ。本番ビルドは `/api`、開発ビルドは `/dev/api`
 を指定する。

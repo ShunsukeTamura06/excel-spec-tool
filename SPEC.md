@@ -385,7 +385,8 @@ Nuxt の `$fetch` を typed client にラップ。Backend URL は `runtimeConfig
 開発時の CORS: Backend は `http://localhost:3001` (Nuxt dev server) を許可する
 `CORSMiddleware` を設定する。本番ではフロントを backend と同一オリジンにデプロイ
 する想定 (静的書き出しを同一ホストの reverse proxy 配下で配信)。サーバーIP運用では
-本番を `/` + `/api`、開発を `/dev/` + `/dev/api` に分離できる。
+nginx を `3001` に置き、本番を `/` + `/api`、開発を `/dev/` + `/dev/api`
+に分離できる。`3001` は nginx 専用とし、Nuxt preview/dev server とは併用しない。
 
 ## 7. 依存パッケージ
 
