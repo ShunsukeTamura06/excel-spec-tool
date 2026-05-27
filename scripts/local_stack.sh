@@ -56,6 +56,7 @@ BACKEND_LOG="$LOG_DIR/backend.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
 CORS_ORIGINS="http://localhost:$FRONTEND_PORT,http://127.0.0.1:$FRONTEND_PORT"
+FRONTEND_BASE_URL="/"
 
 ensure_dirs() {
   mkdir -p "$JOBS_DIR" "$LOG_DIR" "$PID_DIR"
@@ -115,12 +116,12 @@ start_frontend() {
   : > "$FRONTEND_LOG"
   if [[ "$FRONTEND_MODE" == "preview" ]]; then
     nohup bash -c \
-      'cd "$1/frontend" && NUXT_PUBLIC_BACKEND_URL="$2" NUXT_PORT="$3" pnpm generate && NUXT_PUBLIC_BACKEND_URL="$2" pnpm preview --host 127.0.0.1 --port "$3"' \
-      _ "$ROOT_DIR" "$BACKEND_URL" "$FRONTEND_PORT" >> "$FRONTEND_LOG" 2>&1 &
+      'cd "$1/frontend" && NUXT_PUBLIC_BACKEND_URL="$2" NUXT_PORT="$3" NUXT_APP_BASE_URL="$4" pnpm generate && NUXT_PUBLIC_BACKEND_URL="$2" NUXT_APP_BASE_URL="$4" pnpm preview --host 127.0.0.1 --port "$3"' \
+      _ "$ROOT_DIR" "$BACKEND_URL" "$FRONTEND_PORT" "$FRONTEND_BASE_URL" >> "$FRONTEND_LOG" 2>&1 &
   else
     nohup bash -c \
-      'cd "$1/frontend" && NUXT_PUBLIC_BACKEND_URL="$2" NUXT_PORT="$3" pnpm dev --host 127.0.0.1 --port "$3"' \
-      _ "$ROOT_DIR" "$BACKEND_URL" "$FRONTEND_PORT" >> "$FRONTEND_LOG" 2>&1 &
+      'cd "$1/frontend" && NUXT_PUBLIC_BACKEND_URL="$2" NUXT_PORT="$3" NUXT_APP_BASE_URL="$4" pnpm dev --host 127.0.0.1 --port "$3"' \
+      _ "$ROOT_DIR" "$BACKEND_URL" "$FRONTEND_PORT" "$FRONTEND_BASE_URL" >> "$FRONTEND_LOG" 2>&1 &
   fi
   echo $! > "$FRONTEND_PID"
   echo "$ENV_NAME frontend starting: http://127.0.0.1:$FRONTEND_PORT (pid $(cat "$FRONTEND_PID"))"

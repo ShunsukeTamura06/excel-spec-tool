@@ -176,6 +176,7 @@ function backendUrlForCurrentPort(configuredUrl: string): string {
 
   const localDefault = configuredUrl === 'http://localhost:8001'
     || configuredUrl === 'http://127.0.0.1:8001'
+    || configuredUrl === '/api'
     || configuredUrl === ''
   if (!localDefault) return configuredUrl
 

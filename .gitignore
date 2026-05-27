@@ -40,6 +40,7 @@ node_modules/
 frontend/.nuxt/
 frontend/.output/
 frontend/.data/
+frontend/dist
 frontend/dist/
 frontend/.env
 *.log

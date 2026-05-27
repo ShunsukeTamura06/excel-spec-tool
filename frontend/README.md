@@ -34,7 +34,8 @@ Backend (FastAPI) は別ターミナルで `uv run uvicorn backend.main:app --re
 
 | 変数 | 既定 | 用途 |
 |---|---|---|
-| `NUXT_PUBLIC_BACKEND_URL` | `http://localhost:8001` | Backend ベース URL |
+| `NUXT_PUBLIC_BACKEND_URL` | `/api` | Backend ベース URL。パス分離devは `/dev/api` |
+| `NUXT_APP_BASE_URL` | `/` | Frontend の配信ベースパス。パス分離devは `/dev/` |
 | `NUXT_PORT` | `3001` | dev サーバの待受ポート |
 
 ## ビルド
@@ -43,6 +44,16 @@ Backend (FastAPI) は別ターミナルで `uv run uvicorn backend.main:app --re
 pnpm build      # SSR ビルド
 pnpm generate   # 静的書き出し (SPA)
 pnpm preview    # ビルド成果物プレビュー
+```
+
+サーバーIP配下で本番 `/` と開発 `/dev/` を分ける場合:
+
+```bash
+# 本番
+NUXT_APP_BASE_URL=/ NUXT_PUBLIC_BACKEND_URL=/api pnpm generate
+
+# 開発
+NUXT_APP_BASE_URL=/dev/ NUXT_PUBLIC_BACKEND_URL=/dev/api pnpm generate
 ```
 
 ## ディレクトリ構成

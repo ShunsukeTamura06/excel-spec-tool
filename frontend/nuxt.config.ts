@@ -1,4 +1,6 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+const appBaseURL = process.env.NUXT_APP_BASE_URL || '/'
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
   devtools: { enabled: true },
@@ -22,7 +24,7 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     public: {
-      backendUrl: process.env.NUXT_PUBLIC_BACKEND_URL || 'http://localhost:8001',
+      backendUrl: process.env.NUXT_PUBLIC_BACKEND_URL || '/api',
     },
   },
 
@@ -54,6 +56,7 @@ export default defineNuxtConfig({
   },
 
   app: {
+    baseURL: appBaseURL.endsWith('/') ? appBaseURL : `${appBaseURL}/`,
     head: {
       title: 'Excelツール改修支援AI',
       htmlAttrs: { lang: 'ja' },

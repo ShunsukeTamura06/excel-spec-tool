@@ -146,6 +146,34 @@ scripts/local_stack.sh start dev
 dev で確認後に PR/merge し、prod 側 worktree で `git pull` してから
 `scripts/local_stack.sh stop prod`、`scripts/local_stack.sh start prod` を実行する。
 
+### サーバーIP配下で本番 / 開発をパス分離する
+
+クライアントPCから `8001` / `8002` へ直接アクセスさせず、サーバーの標準HTTP(S)
+ポートでパス分離する。プロキシ制約がある環境ではこの形を標準とする。
+
+| URL | 用途 | 内部転送先 |
+|---|---|---|
+| `http://<server-ip>/` | 本番 Frontend | prod の静的ファイル |
+| `http://<server-ip>/api/` | 本番 Backend API | `127.0.0.1:8001` |
+| `http://<server-ip>/dev/` | 開発 Frontend | dev の静的ファイル |
+| `http://<server-ip>/dev/api/` | 開発 Backend API | `127.0.0.1:8002` |
+
+Frontend は相対パスで API を呼ぶ。本番ビルドは `/api`、開発ビルドは `/dev/api`
+を指定する。
+
+```bash
+# prod frontend
+cd frontend
+NUXT_APP_BASE_URL=/ NUXT_PUBLIC_BACKEND_URL=/api pnpm generate
+
+# dev frontend
+cd frontend
+NUXT_APP_BASE_URL=/dev/ NUXT_PUBLIC_BACKEND_URL=/dev/api pnpm generate
+```
+
+Nginx の設定例は `deploy/nginx-path-split.conf` を参照。Backend の `8001` / `8002`
+はサーバー内部の待受にし、クライアントPCには公開しない。
+
 サンプル `.xlsx` が手元になければ、ホーム画面の「サンプルをダウンロード」
 ボタンから `inventory_sample.xlsx` (Input / Calc / Output の 3 シート構成、
 名前付き範囲・条件付き書式入り) を取得して試せる。
@@ -177,7 +205,8 @@ cd frontend && pnpm build    # SSR ビルド
 | `LLM_MODEL_FAST` | `LLM_MODEL` と同じ | 注釈バッチ用モデル (大量呼び出し) |
 | `CORS_ALLOW_ORIGINS` | `localhost:3001,3000` 等 | カンマ区切りで上書き可 |
 | `CHAT_HISTORY_LIMIT_PAIRS` | `10` | LLM 文脈に乗せる直近往復数 |
-| `NUXT_PUBLIC_BACKEND_URL` | `http://localhost:8001` | フロントが叩く Backend URL |
+| `NUXT_PUBLIC_BACKEND_URL` | `/api` | フロントが叩く Backend URL。本番は `/api`、パス分離devは `/dev/api` |
+| `NUXT_APP_BASE_URL` | `/` | Frontend の配信ベースパス。パス分離devは `/dev/` |
 | `NUXT_PORT` | `3001` | フロント dev サーバの待受ポート |
 
 LLM 系の環境変数が未設定の場合、Backend は `MockLLMClient` で起動する
@@ -211,14 +240,15 @@ LLM 系の環境変数が未設定の場合、Backend は `MockLLMClient` で起
 # 1. 開発機 (ネット可) でビルド
 cd frontend
 pnpm install
-NUXT_PUBLIC_BACKEND_URL=http://<本番backend>:8001 pnpm generate
+NUXT_APP_BASE_URL=/ NUXT_PUBLIC_BACKEND_URL=/api pnpm generate
 
 # 2. 出力された .output/public/ を閉鎖網ホストへ転送し、
 #    任意の静的配信サーバ (Nginx / IIS / `python -m http.server` 等) で配信
 ```
 
 Backend (Python) 側は `uv sync` 済みの環境で `uv run uvicorn backend.main:app`
-を直接起動する。フロントの SPA とは別プロセス。
+を直接起動する。フロントの SPA とは別プロセス。クライアントPCには Backend
+ポートを公開せず、reverse proxy で `/api` から内部 Backend へ転送する。
 
 ## ディレクトリ構成 (概略)
 

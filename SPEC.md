@@ -380,11 +380,12 @@ def annotate_text(prompt: str, content: str) -> str
 ### 6.4 API 呼び出し (composables/useBackend.ts)
 
 Nuxt の `$fetch` を typed client にラップ。Backend URL は `runtimeConfig.public.backendUrl`
-（環境変数 `NUXT_PUBLIC_BACKEND_URL` 由来、デフォルト `http://localhost:8001`）。
+（環境変数 `NUXT_PUBLIC_BACKEND_URL` 由来、デフォルト `/api`）。
 
 開発時の CORS: Backend は `http://localhost:3001` (Nuxt dev server) を許可する
 `CORSMiddleware` を設定する。本番ではフロントを backend と同一オリジンにデプロイ
-する想定 (静的書き出しを backend が配信、または同一ホストの reverse proxy 配下)。
+する想定 (静的書き出しを同一ホストの reverse proxy 配下で配信)。サーバーIP運用では
+本番を `/` + `/api`、開発を `/dev/` + `/dev/api` に分離できる。
 
 ## 7. 依存パッケージ
 
@@ -443,7 +444,8 @@ LLM_MODEL=gpt-5.2
 CORS_ALLOW_ORIGINS=http://localhost:3001  # カンマ区切り複数可
 
 # Frontend
-NUXT_PUBLIC_BACKEND_URL=http://localhost:8001
+NUXT_PUBLIC_BACKEND_URL=/api
+NUXT_APP_BASE_URL=/
 NUXT_PORT=3001
 ```
 
