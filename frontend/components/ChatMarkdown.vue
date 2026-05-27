@@ -1,6 +1,6 @@
 <script lang="ts">
 import { defineComponent, h, ref, type PropType, type VNode } from 'vue'
-import type { ToolTraceItem } from '~/types/api'
+import type { ToolTraceItem, WorkbookData } from '~/types/api'
 
 type Block =
   | { kind: 'paragraph'; text: string }
@@ -51,7 +51,7 @@ function addHint(
   index.set(key, [...current, hint])
 }
 
-function buildEvidenceIndex(items: ToolTraceItem[]): Map<string, EvidenceHint[]> {
+function buildToolTraceEvidenceIndex(items: ToolTraceItem[]): Map<string, EvidenceHint[]> {
   const index = new Map<string, EvidenceHint[]>()
 
   for (const item of items) {
@@ -181,6 +181,206 @@ function buildEvidenceIndex(items: ToolTraceItem[]): Map<string, EvidenceHint[]>
   return index
 }
 
+function joinLines(label: string, values: unknown[]): string {
+  const text = values.map(valueText).filter(Boolean).join(', ')
+  return text ? `${label}: ${text}` : ''
+}
+
+function previewRows(rows: (string | null)[][]): string[] {
+  return rows
+    .slice(0, 3)
+    .map(row => row.map(cell => cell ?? '').join(' | '))
+    .filter(Boolean)
+}
+
+function buildWorkbookEvidenceIndex(workbook: WorkbookData | null | undefined): Map<string, EvidenceHint[]> {
+  const index = new Map<string, EvidenceHint[]>()
+  if (!workbook) return index
+
+  for (const sheet of workbook.sheets ?? []) {
+    const sheetHint: EvidenceHint = {
+      title: `${sheet.name} シート`,
+      source: '設計書 / シート構造',
+      lines: [
+        `サイズ: ${sheet.rows} 行 x ${sheet.cols} 列`,
+        sheet.purpose && `用途: ${sheet.purpose}`,
+        joinLines('入力', sheet.inputs),
+        joinLines('出力', sheet.outputs),
+        joinLines('主な計算', sheet.main_calculations),
+        sheet.formulas.length ? `数式: ${sheet.formulas.length} 件` : '',
+        sheet.tables.length ? `テーブル: ${sheet.tables.map(t => t.name).join(', ')}` : '',
+        sheet.charts.length ? `グラフ: ${sheet.charts.length} 件` : '',
+        sheet.pivot_tables.length ? `ピボット: ${sheet.pivot_tables.length} 件` : '',
+      ].filter(Boolean),
+    }
+    addHint(index, sheet.name, sheetHint)
+
+    for (const formula of sheet.formulas) {
+      const location = `${sheet.name}!${formula.coord}`
+      const hint: EvidenceHint = {
+        title: location,
+        source: '設計書 / 数式',
+        lines: [
+          formula.formula,
+          formula.annotation && `注釈: ${formula.annotation}`,
+          joinLines('参照先', formula.refs),
+          joinLines('外部関数', formula.external_functions),
+        ].filter(Boolean),
+      }
+      addHint(index, formula.coord, hint)
+      addHint(index, location, hint)
+    }
+
+    for (const range of sheet.named_ranges) {
+      const hint: EvidenceHint = {
+        title: range.name,
+        source: '設計書 / 名前付き範囲',
+        lines: [`参照先: ${range.refers_to}`],
+      }
+      addHint(index, range.name, hint)
+      addHint(index, range.refers_to, hint)
+    }
+
+    for (const table of sheet.tables) {
+      addHint(index, table.name, {
+        title: table.name,
+        source: '設計書 / テーブル',
+        lines: [`シート: ${sheet.name}`, `範囲: ${table.ref}`],
+      })
+    }
+
+    for (const chart of sheet.charts) {
+      const name = chart.title || chart.name || chart.chart_type
+      addHint(index, name, {
+        title: name || 'グラフ',
+        source: '設計書 / グラフ',
+        lines: [
+          `シート: ${sheet.name}`,
+          chart.chart_type && `種類: ${chart.chart_type}`,
+          chart.anchor && `位置: ${chart.anchor}`,
+          ...chart.series.slice(0, 3).map(series => [
+            series.name && `系列: ${series.name}`,
+            series.values_ref && `値: ${series.values_ref}`,
+            series.categories_ref && `カテゴリ: ${series.categories_ref}`,
+          ].filter(Boolean).join(' / ')),
+        ].filter(Boolean),
+      })
+    }
+
+    for (const pivot of sheet.pivot_tables) {
+      addHint(index, pivot.name, {
+        title: pivot.name,
+        source: '設計書 / ピボットテーブル',
+        lines: [
+          `シート: ${sheet.name}`,
+          pivot.anchor && `位置: ${pivot.anchor}`,
+          pivot.source_sheet || pivot.source_ref
+            ? `元データ: ${pivot.source_sheet}!${pivot.source_ref}`
+            : '',
+          joinLines('行', pivot.row_fields),
+          joinLines('列', pivot.column_fields),
+          joinLines('値', pivot.value_fields),
+        ].filter(Boolean),
+      })
+    }
+
+    for (const control of sheet.form_controls) {
+      const name = control.name || control.text
+      addHint(index, name, {
+        title: name || 'フォームコントロール',
+        source: '設計書 / フォームコントロール',
+        lines: [
+          `シート: ${sheet.name}`,
+          control.kind && `種別: ${control.kind}`,
+          control.anchor && `位置: ${control.anchor}`,
+          control.macro && `実行マクロ: ${control.macro}`,
+        ].filter(Boolean),
+      })
+    }
+
+    if (sheet.preview_rows.length) {
+      addHint(index, sheet.preview_origin, {
+        title: `${sheet.name} プレビュー`,
+        source: '設計書 / シートプレビュー',
+        lines: [`範囲: ${sheet.preview_origin}`, ...previewRows(sheet.preview_rows)],
+      })
+    }
+  }
+
+  for (const module of workbook.vba_modules ?? []) {
+    const moduleHint: EvidenceHint = {
+      title: module.name,
+      source: '設計書 / VBAモジュール',
+      lines: [
+        `種別: ${module.type}`,
+        `プロシージャ: ${module.procedures.map(p => p.name).join(', ') || '-'}`,
+      ],
+    }
+    addHint(index, module.name, moduleHint)
+
+    for (const proc of module.procedures) {
+      const qualified = `${module.name}.${proc.name}`
+      const hint: EvidenceHint = {
+        title: qualified,
+        source: '設計書 / VBAプロシージャ',
+        lines: [
+          `${proc.kind} / 行 ${proc.start_line}-${proc.end_line}`,
+          proc.annotation && `注釈: ${proc.annotation}`,
+          joinLines('副作用', proc.side_effects),
+          joinLines('起動契機', proc.triggers),
+          joinLines('呼び出し先', proc.calls),
+        ].filter(Boolean),
+      }
+      addHint(index, proc.name, hint)
+      addHint(index, qualified, hint)
+    }
+  }
+
+  for (const query of workbook.power_queries ?? []) {
+    const target = query.target_sheet || query.target_name
+    const hint: EvidenceHint = {
+      title: query.name,
+      source: '設計書 / Power Query・外部接続',
+      lines: [
+        query.kind && `種別: ${query.kind}`,
+        target && `出力先: ${target}`,
+        query.source && `接続先: ${query.source}`,
+        query.command && `コマンド: ${query.command}`,
+        query.confidence && `確度: ${query.confidence}`,
+      ].filter(Boolean),
+    }
+    addHint(index, query.name, hint)
+    addHint(index, target, hint)
+  }
+
+  for (const risk of workbook.analysis_risks ?? []) {
+    addHint(index, risk.location, {
+      title: risk.location,
+      source: '設計書 / 未解析リスク',
+      lines: [
+        `${risk.severity}: ${risk.category}`,
+        risk.description,
+        risk.evidence && `根拠: ${risk.evidence}`,
+        risk.recommendation && `確認: ${risk.recommendation}`,
+      ].filter(Boolean),
+    })
+  }
+
+  return index
+}
+
+function mergeEvidenceIndexes(...indexes: Map<string, EvidenceHint[]>[]): Map<string, EvidenceHint[]> {
+  const merged = new Map<string, EvidenceHint[]>()
+  for (const index of indexes) {
+    for (const [key, hints] of index.entries()) {
+      for (const hint of hints) {
+        addHint(merged, key, hint)
+      }
+    }
+  }
+  return merged
+}
+
 function parseBlocks(markdown: string): Block[] {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n')
   const blocks: Block[] = []
@@ -271,8 +471,8 @@ function fallbackHint(token: string): EvidenceHint {
     title: token,
     source: '回答内の識別子',
     lines: [
-      'この回答に紐づく根拠カード内では、完全一致する実データを特定できませんでした。',
-      '必要に応じて下の根拠カードや設計書で確認してください。',
+      '設計書・解析結果では完全一致する項目を特定できませんでした。',
+      '必要に応じて設計書タブや根拠カードで確認してください。',
     ],
   }
 }
@@ -422,6 +622,10 @@ export default defineComponent({
       type: Array as PropType<ToolTraceItem[]>,
       default: () => [],
     },
+    workbook: {
+      type: Object as PropType<WorkbookData | null>,
+      default: null,
+    },
   },
   setup(props) {
     const activeTooltip = ref<ActiveTooltip | null>(null)
@@ -459,7 +663,10 @@ export default defineComponent({
     }
 
     return () => {
-      const evidenceIndex = buildEvidenceIndex(props.evidenceItems)
+      const evidenceIndex = mergeEvidenceIndexes(
+        buildWorkbookEvidenceIndex(props.workbook),
+        buildToolTraceEvidenceIndex(props.evidenceItems),
+      )
       return h('div', { class: 'chat-markdown spec-prose text-sm' }, [
         ...parseBlocks(props.markdown).map((block, index) => {
           switch (block.kind) {
