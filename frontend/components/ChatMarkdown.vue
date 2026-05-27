@@ -1,5 +1,5 @@
 <script lang="ts">
-import { defineComponent, h, type PropType, type VNode } from 'vue'
+import { defineComponent, h, ref, type PropType, type VNode } from 'vue'
 import type { ToolTraceItem } from '~/types/api'
 
 type Block =
@@ -12,6 +12,13 @@ type EvidenceHint = {
   title: string
   source: string
   lines: string[]
+}
+
+type ActiveTooltip = {
+  x: number
+  y: number
+  token: string
+  hints: EvidenceHint[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -259,28 +266,82 @@ function safeHref(value: string): string | null {
   return null
 }
 
-function renderEvidenceToken(token: string, hints: EvidenceHint[] | undefined): VNode {
-  if (!hints?.length) {
-    return h('code', token)
+function fallbackHint(token: string): EvidenceHint {
+  return {
+    title: token,
+    source: '回答内の識別子',
+    lines: [
+      'この回答に紐づく根拠カード内では、完全一致する実データを特定できませんでした。',
+      '必要に応じて下の根拠カードや設計書で確認してください。',
+    ],
+  }
+}
+
+function uniqueHints(hints: EvidenceHint[]): EvidenceHint[] {
+  const seen = new Set<string>()
+  return hints.filter((hint) => {
+    const key = `${hint.source}:${hint.title}:${hint.lines.join('\n')}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function resolveEvidenceHints(
+  token: string,
+  evidenceIndex: Map<string, EvidenceHint[]>,
+): EvidenceHint[] {
+  const exact = evidenceIndex.get(keyFor(token))
+  if (exact?.length) return exact
+
+  const hints: EvidenceHint[] = []
+  const parts = token.split('!')
+  if (parts.length === 2) {
+    hints.push(...(evidenceIndex.get(keyFor(parts[0])) ?? []))
+    hints.push(...(evidenceIndex.get(keyFor(parts[1])) ?? []))
   }
 
+  for (const [key, value] of evidenceIndex.entries()) {
+    if (key.endsWith(`!${keyFor(token)}`) || key.includes(keyFor(token))) {
+      hints.push(...value)
+    }
+  }
+
+  const resolved = uniqueHints(hints).slice(0, 3)
+  return resolved.length ? resolved : [fallbackHint(token)]
+}
+
+function tooltipTitle(token: string, hints: EvidenceHint[]): string {
+  return [token, ...hints.flatMap(hint => [hint.title, ...hint.lines])].join('\n')
+}
+
+function renderEvidenceToken(
+  token: string,
+  hints: EvidenceHint[],
+  showTooltip: (event: MouseEvent | FocusEvent, token: string, hints: EvidenceHint[]) => void,
+  moveTooltip: (event: MouseEvent) => void,
+  hideTooltip: () => void,
+): VNode {
   return h('span', { class: 'chat-evidence-token' }, [
-    h('code', { tabindex: '0' }, token),
-    h('span', { class: 'chat-evidence-popover', role: 'tooltip' }, [
-      ...hints.map((hint, index) => h('span', { class: 'block', key: `${hint.title}-${index}` }, [
-        h('span', { class: 'block text-[11px] font-semibold text-(--ui-text-highlighted)' }, hint.title),
-        h('span', { class: 'block text-[10px] text-(--ui-primary) mb-1' }, hint.source),
-        ...hint.lines.slice(0, 4).map((line, lineIndex) => h(
-          'span',
-          { class: 'block whitespace-pre-wrap break-words', key: `${line}-${lineIndex}` },
-          line,
-        )),
-      ])),
-    ]),
+    h('code', {
+      tabindex: '0',
+      title: tooltipTitle(token, hints),
+      onMouseenter: (event: MouseEvent) => showTooltip(event, token, hints),
+      onMousemove: (event: MouseEvent) => moveTooltip(event),
+      onMouseleave: hideTooltip,
+      onFocus: (event: FocusEvent) => showTooltip(event, token, hints),
+      onBlur: hideTooltip,
+    }, token),
   ])
 }
 
-function renderInline(text: string, evidenceIndex: Map<string, EvidenceHint[]>): VNode[] {
+function renderInline(
+  text: string,
+  evidenceIndex: Map<string, EvidenceHint[]>,
+  showTooltip: (event: MouseEvent | FocusEvent, token: string, hints: EvidenceHint[]) => void,
+  moveTooltip: (event: MouseEvent) => void,
+  hideTooltip: () => void,
+): VNode[] {
   const nodes: VNode[] = []
   let i = 0
 
@@ -297,7 +358,13 @@ function renderInline(text: string, evidenceIndex: Map<string, EvidenceHint[]>):
     if (text.startsWith('**', i)) {
       const end = text.indexOf('**', i + 2)
       if (end > i + 2) {
-        nodes.push(h('strong', renderInline(text.slice(i + 2, end), evidenceIndex)))
+        nodes.push(h('strong', renderInline(
+          text.slice(i + 2, end),
+          evidenceIndex,
+          showTooltip,
+          moveTooltip,
+          hideTooltip,
+        )))
         i = end + 2
         continue
       }
@@ -307,7 +374,13 @@ function renderInline(text: string, evidenceIndex: Map<string, EvidenceHint[]>):
       const end = text.indexOf('`', i + 1)
       if (end > i + 1) {
         const token = text.slice(i + 1, end)
-        nodes.push(renderEvidenceToken(token, evidenceIndex.get(keyFor(token))))
+        nodes.push(renderEvidenceToken(
+          token,
+          resolveEvidenceHints(token, evidenceIndex),
+          showTooltip,
+          moveTooltip,
+          hideTooltip,
+        ))
         i = end + 1
         continue
       }
@@ -351,25 +424,96 @@ export default defineComponent({
     },
   },
   setup(props) {
+    const activeTooltip = ref<ActiveTooltip | null>(null)
+
+    function tooltipPosition(event: MouseEvent | FocusEvent): { x: number; y: number } {
+      if ('clientX' in event && event.clientX > 0) {
+        return { x: event.clientX + 12, y: event.clientY + 16 }
+      }
+      const target = event.target instanceof HTMLElement ? event.target : null
+      const rect = target?.getBoundingClientRect()
+      return {
+        x: (rect?.left ?? 0) + 12,
+        y: (rect?.bottom ?? 0) + 8,
+      }
+    }
+
+    function showTooltip(
+      event: MouseEvent | FocusEvent,
+      token: string,
+      hints: EvidenceHint[],
+    ) {
+      activeTooltip.value = { ...tooltipPosition(event), token, hints }
+    }
+
+    function moveTooltip(event: MouseEvent) {
+      if (!activeTooltip.value) return
+      activeTooltip.value = {
+        ...activeTooltip.value,
+        ...tooltipPosition(event),
+      }
+    }
+
+    function hideTooltip() {
+      activeTooltip.value = null
+    }
+
     return () => {
       const evidenceIndex = buildEvidenceIndex(props.evidenceItems)
-      return h('div', { class: 'chat-markdown spec-prose text-sm' }, parseBlocks(props.markdown).map((block, index) => {
-        switch (block.kind) {
-          case 'heading':
-            return h(`h${block.level}`, { key: index }, renderInline(block.text, evidenceIndex))
-          case 'ul':
-          case 'ol':
-            return h(block.kind, { key: index }, block.items.map((item, itemIndex) => h(
-              'li',
-              { key: itemIndex },
-              renderInline(item, evidenceIndex),
-            )))
-          case 'code':
-            return h('pre', { key: index }, [h('code', block.code)])
-          case 'paragraph':
-            return h('p', { key: index }, renderInline(block.text, evidenceIndex))
-        }
-      }))
+      return h('div', { class: 'chat-markdown spec-prose text-sm' }, [
+        ...parseBlocks(props.markdown).map((block, index) => {
+          switch (block.kind) {
+            case 'heading':
+              return h(`h${block.level}`, { key: index }, renderInline(
+                block.text,
+                evidenceIndex,
+                showTooltip,
+                moveTooltip,
+                hideTooltip,
+              ))
+            case 'ul':
+            case 'ol':
+              return h(block.kind, { key: index }, block.items.map((item, itemIndex) => h(
+                'li',
+                { key: itemIndex },
+                renderInline(item, evidenceIndex, showTooltip, moveTooltip, hideTooltip),
+              )))
+            case 'code':
+              return h('pre', { key: index }, [h('code', block.code)])
+            case 'paragraph':
+              return h('p', { key: index }, renderInline(
+                block.text,
+                evidenceIndex,
+                showTooltip,
+                moveTooltip,
+                hideTooltip,
+              ))
+          }
+        }),
+        activeTooltip.value && h('div', {
+          class: 'chat-evidence-popover',
+          role: 'tooltip',
+          style: {
+            left: `${Math.min(activeTooltip.value.x, window.innerWidth - 340)}px`,
+            top: `${Math.min(activeTooltip.value.y, window.innerHeight - 260)}px`,
+          },
+        }, [
+          h('div', { class: 'chat-evidence-popover-token' }, activeTooltip.value.token),
+          ...activeTooltip.value.hints.map((hint, index) => h(
+            'div',
+            { class: 'chat-evidence-popover-item', key: `${hint.title}-${index}` },
+            [
+              h('div', { class: 'chat-evidence-popover-title' }, hint.title),
+              h('div', { class: 'chat-evidence-popover-source' }, hint.source),
+              ...hint.lines.slice(0, 4).map((line, lineIndex) => h(
+                'div',
+                { class: 'chat-evidence-popover-line', key: `${line}-${lineIndex}` },
+                line,
+              )),
+            ],
+          )),
+        ]),
+      ])
     }
   },
 })
@@ -377,8 +521,7 @@ export default defineComponent({
 
 <style scoped>
 .chat-evidence-token {
-  display: inline-block;
-  position: relative;
+  display: inline;
 }
 
 .chat-evidence-token code {
@@ -391,21 +534,44 @@ export default defineComponent({
   border-radius: 0.5rem;
   box-shadow: 0 12px 32px rgb(0 0 0 / 16%);
   color: var(--ui-text);
-  display: none;
   font-size: 0.75rem;
-  left: 0;
   line-height: 1.4;
   max-height: min(18rem, 50vh);
   overflow-y: auto;
   padding: 0.625rem;
-  position: absolute;
-  top: calc(100% + 0.35rem);
-  width: min(24rem, 80vw);
-  z-index: 40;
+  position: fixed;
+  width: min(24rem, calc(100vw - 1rem));
+  z-index: 1000;
 }
 
-.chat-evidence-token:hover .chat-evidence-popover,
-.chat-evidence-token:focus-within .chat-evidence-popover {
-  display: block;
+.chat-evidence-popover-token {
+  color: var(--ui-primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 0.375rem;
+}
+
+.chat-evidence-popover-item + .chat-evidence-popover-item {
+  border-top: 1px solid var(--ui-border);
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+}
+
+.chat-evidence-popover-title {
+  color: var(--ui-text-highlighted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.chat-evidence-popover-source {
+  color: var(--ui-primary);
+  font-size: 0.6875rem;
+  margin-bottom: 0.25rem;
+}
+
+.chat-evidence-popover-line {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 </style>
