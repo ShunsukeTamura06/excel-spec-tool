@@ -7,12 +7,14 @@
  * 心理的負担を最小化するため、コメント記入は要求しない (詳細は FAB から).
  */
 
-import type { ChatMessage, FeedbackKind, ToolTraceItem } from '~/types/api'
+import type { ChatMessage, FeedbackKind, ToolTraceItem, WorkbookData } from '~/types/api'
 
 const props = defineProps<{
   message: ChatMessage
   /** チャットページから現在の job_id を受け取る (フィードバック紐付け用) */
   jobId?: string
+  /** 設計書と同じ抽出済み Workbook 構造。回答内識別子の根拠表示に使う。 */
+  workbook?: WorkbookData | null
 }>()
 
 const isUser = computed(() => props.message.role === 'user')
@@ -103,6 +105,7 @@ async function sendVote(kind: 'thumbs_up' | 'thumbs_down') {
           v-if="isAssistant"
           :markdown="message.content"
           :evidence-items="evidenceItems"
+          :workbook="workbook ?? null"
         />
         <p v-else class="whitespace-pre-wrap text-sm leading-relaxed">{{ message.content }}</p>
       </div>
