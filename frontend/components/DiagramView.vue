@@ -68,10 +68,30 @@ const isEmpty = computed(() => props.diagram.nodes.length === 0)
     >
       <Background pattern-color="var(--ui-border)" :gap="20" :size="1" />
       <Controls position="bottom-left" />
-      <MiniMap pannable zoomable position="bottom-right" />
+      <MiniMap
+        pannable
+        zoomable
+        position="bottom-right"
+        mask-color="color-mix(in srgb, var(--ui-bg) 65%, transparent)"
+        :node-color="miniMapNodeColor"
+        :node-stroke-color="miniMapNodeColor"
+        :node-stroke-width="0"
+      />
     </VueFlow>
   </div>
 </template>
+
+<script lang="ts">
+// MiniMap のノード色を node-{kind} に揃える. テンプレ内で関数定義すると
+// 毎レンダ新インスタンスになって MiniMap が無駄に再描画されるので、
+// モジュールスコープに置く.
+function miniMapNodeColor(node: { class?: string }): string {
+  const cls = node.class ?? ''
+  if (cls.includes('node-procedure')) return '#0ea5e9'
+  if (cls.includes('node-module')) return '#6366f1'
+  return '#10b981' // sheet
+}
+</script>
 
 <style scoped>
 :deep(.spec-diagram-edge) {
@@ -89,5 +109,13 @@ const isEmpty = computed(() => props.diagram.nodes.length === 0)
 
 :deep(.edge-kind-call) {
   stroke-dasharray: 8 5;
+}
+
+/* MiniMap がデフォルトで真っ白の背景を出してダークテーマに浮くので、
+   コンテナ自体を bg-elevated に合わせる. */
+:deep(.vue-flow__minimap) {
+  background: color-mix(in srgb, var(--ui-bg-elevated) 92%, transparent);
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
 }
 </style>

@@ -25,10 +25,12 @@ export interface LayoutOptions {
 
 const DEFAULT_OPTS: Required<LayoutOptions> = {
   direction: 'LR',
-  nodeWidth: 200,
-  nodeHeight: 64,
-  rankSep: 150,
-  nodeSep: 70,
+  nodeWidth: 220,
+  // sample_formula + top_target を出すぶん高さを増やす. dagre は固定矩形で
+  // レイアウトするのでここで宣言した高さを基準に配置される.
+  nodeHeight: 110,
+  rankSep: 170,
+  nodeSep: 90,
 }
 
 const EDGE_PALETTE = [

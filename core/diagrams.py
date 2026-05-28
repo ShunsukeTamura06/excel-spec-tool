@@ -80,23 +80,6 @@ def build_sheet_dependency_graph(wb: Workbook) -> Diagram:
     Returns:
         Diagram(kind="sheet_deps").
     """
-    # 全シートをノードとして登録 (孤立シートも描画したい)
-    nodes: list[DiagramNode] = []
-    for s in wb.sheets:
-        nodes.append(
-            DiagramNode(
-                id=s.name,
-                label=s.name,
-                kind="sheet",
-                meta={
-                    "formulas": len(s.formulas),
-                    "rows": s.rows,
-                    "cols": s.cols,
-                    "purpose": s.purpose,
-                },
-            )
-        )
-
     pair_counts: Counter[tuple[str, str]] = Counter()
     sheet_names = {s.name for s in wb.sheets}
 
@@ -114,6 +97,37 @@ def build_sheet_dependency_graph(wb: Workbook) -> Diagram:
                     # ブック内に存在しないシート (外部参照や打ち間違い) はスキップ
                     continue
                 pair_counts[(src, dst)] += 1
+
+    # 各シートが「最も多く参照しているシート」を求める. ノード本体の表示に使う.
+    top_target_by_src: dict[str, tuple[str, int]] = {}
+    for (src, dst), count in pair_counts.most_common():
+        if src not in top_target_by_src:
+            top_target_by_src[src] = (dst, count)
+
+    # 全シートをノードとして登録 (孤立シートも描画したい)
+    nodes: list[DiagramNode] = []
+    for s in wb.sheets:
+        meta: dict[str, str | int] = {
+            "formulas": len(s.formulas),
+            "rows": s.rows,
+            "cols": s.cols,
+            "purpose": s.purpose,
+        }
+        # 代表数式: 最初の数式を 1 件だけ載せる. ノード本体で「このシートは何を
+        # しているのか」をひと目で推測できるようにする目的なので、種類ではなく
+        # 「具体的な例」を 1 つ出す方が分かりやすい.
+        if s.formulas:
+            sample = s.formulas[0]
+            meta["sample_formula"] = sample.formula[:60]
+            meta["sample_coord"] = sample.coord
+        # 最頻参照先シート (このシートが最も多く読んでいる相手)
+        if s.name in top_target_by_src:
+            dst, count = top_target_by_src[s.name]
+            meta["top_target"] = dst
+            meta["top_target_count"] = count
+        nodes.append(
+            DiagramNode(id=s.name, label=s.name, kind="sheet", meta=meta)
+        )
 
     edges = [
         DiagramEdge(src=s, dst=d, weight=w, kind="formula")

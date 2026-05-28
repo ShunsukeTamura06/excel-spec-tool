@@ -41,6 +41,27 @@ const purpose = computed(() => {
   const p = props.data.meta?.purpose
   return typeof p === 'string' && p.length > 0 ? p : ''
 })
+
+// シートノード用: 代表数式 (具体例 1 件) と「最も多く参照しているシート」.
+// purpose (LLM 推定の用途) が未設定でもノードに意味が出るよう、構造的な
+// 手がかりだけで何をしているシートかが推測できるようにする.
+const sampleFormula = computed(() => {
+  if (props.data.kind !== 'sheet') return null
+  const m = props.data.meta
+  const formula = m?.sample_formula
+  const coord = m?.sample_coord
+  if (typeof formula !== 'string' || formula.length === 0) return null
+  return { formula, coord: typeof coord === 'string' ? coord : '' }
+})
+
+const topTarget = computed(() => {
+  if (props.data.kind !== 'sheet') return null
+  const m = props.data.meta
+  const sheet = m?.top_target
+  const count = m?.top_target_count
+  if (typeof sheet !== 'string' || sheet.length === 0) return null
+  return { sheet, count: typeof count === 'number' ? count : 0 }
+})
 </script>
 
 <template>
@@ -78,6 +99,28 @@ const purpose = computed(() => {
     >
       {{ purpose }}
     </p>
+    <!-- シートノード: 代表数式 (1 件) と最頻参照先. purpose 未設定でも構造的
+         手がかりだけでノードに意味が出るようにする. -->
+    <div
+      v-if="sampleFormula || topTarget"
+      class="mt-1.5 space-y-1 border-t border-(--ui-border)/40 pt-1.5"
+    >
+      <div
+        v-if="sampleFormula"
+        class="flex items-baseline gap-1 text-[10px] font-mono text-(--ui-text-muted) truncate"
+        :title="`${sampleFormula.coord}: ${sampleFormula.formula}`"
+      >
+        <span class="text-(--ui-text-muted)/70 shrink-0">例</span>
+        <span class="truncate text-(--ui-text)">{{ sampleFormula.formula }}</span>
+      </div>
+      <div
+        v-if="topTarget"
+        class="flex items-center gap-1 text-[10px] text-(--ui-text-muted)"
+      >
+        <UIcon name="i-lucide-arrow-right" class="size-3 shrink-0" />
+        <span class="truncate">{{ topTarget.sheet }} を {{ topTarget.count }} 回参照</span>
+      </div>
+    </div>
     <Handle type="source" :position="Position.Right" class="!bg-transparent !border-(--ui-text-muted)" />
   </div>
 </template>
