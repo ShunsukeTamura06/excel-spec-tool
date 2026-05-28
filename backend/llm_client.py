@@ -1,6 +1,6 @@
 """OpenAI 互換 LLM クライアント.
 
-SPEC.md §5.3 に基づき、OpenAI 互換 API を想定したインターフェースを提供する。
+docs/SPEC.ja.md §5.3 に基づき、OpenAI 互換 API を想定したインターフェースを提供する。
 ローカル LLM (Ollama / vLLM)・セルフホスト LLM・OpenAI 本家など、`base_url`
 を切り替えるだけでバックエンドを差し替えられる。
 
@@ -500,7 +500,7 @@ def get_default_client() -> LLMClient:
     return MockLLMClient()
 
 
-# ---------- SPEC.md §5.3 が定める公開関数 ----------
+# ---------- docs/SPEC.ja.md §5.3 が定める公開関数 ----------
 
 
 def chat_completion(

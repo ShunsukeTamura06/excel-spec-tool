@@ -1,6 +1,6 @@
 """GET /jobs (一覧) と DELETE /jobs/{job_id} (削除).
 
-`GET /jobs` は SPEC.md §5.1 表には無いが、§6.2 で Frontend が
+`GET /jobs` は docs/SPEC.ja.md §5.1 表には無いが、§6.2 で Frontend が
 「過去のジョブ一覧」から再選択できる仕様のため、自然な派生として追加する
 (B 案で承認済み).
 """

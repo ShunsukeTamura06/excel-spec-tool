@@ -3,7 +3,7 @@
 olevba (oletools) で .xlsm / .xls / .bas からVBAソースを取り出し、
 モジュールとプロシージャを Pydantic モデルに詰める。
 
-SPEC.md §4.1 参照。
+docs/SPEC.ja.md §4.1 参照。
 """
 
 from __future__ import annotations
@@ -68,7 +68,8 @@ def _parse_procedures(code: str) -> list[VbaProcedure]:
 
         start = i
         kind_str = m.group("kind").capitalize()
-        # `Property Get/Let/Set` も kind は "Property" として扱う (SPEC.md の Literal 型に合わせる)
+        # `Property Get/Let/Set` も kind は "Property" として扱う
+        # (docs/SPEC.ja.md の Literal 型に合わせる)
         kind: _PROCEDURE_KIND = kind_str  # type: ignore[assignment]
         name = m.group("name")
 

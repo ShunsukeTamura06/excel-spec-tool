@@ -3,7 +3,7 @@
 Workbook と ReferenceIndex から、人が読める統合設計書 (Markdown) を生成する。
 LLM 注釈は別関数 (annotate_with_llm) で付与し、本モジュールは LLM 非依存とする。
 
-SPEC.md §4.4 参照。
+docs/SPEC.ja.md §4.4 参照。
 """
 
 from __future__ import annotations

@@ -3,7 +3,7 @@
 openpyxl で .xlsx / .xlsm を開き、数式セル・名前付き範囲・条件付き書式・外部リンクを
 Pydantic モデルに詰める。VBA は本モジュールでは扱わない (core.extractors.vba を別途呼ぶ).
 
-SPEC.md §4.2 参照。
+docs/SPEC.ja.md §4.2 参照。
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# OSS 公開計画 (Excelツール改修支援AI)
+# OSS 公開計画 (xlblueprint)
 
 > 作業中ドラフト。ユーザー決定待ちの項目があるので Phase 0 から進める。
 > 各 Phase は独立した PR にできるサイズを意識する。
@@ -10,7 +10,7 @@
 - README / SPEC / CLAUDE すべて日本語のみ
 - LICENSE / CONTRIBUTING / CODE_OF_CONDUCT / SECURITY.md / ISSUE_TEMPLATE 未整備
 - CI ワークフロー無し (`.github/workflows/` 未作成)
-- 製品名「Excelツール改修支援AI」は日本語のみ
+- 製品名は日本語のみ (当時「Excelツール改修支援AI」、Phase 0 で `xlblueprint` に決定)
 - CLAUDE.md に「社内LLM」「Shun」記載あり (公開時に一般化が必要)
 
 ---
@@ -30,7 +30,7 @@
 機密ではないが「社内転用」感を出すため一般化対象:
 
 - `CLAUDE.md` ─ 「社内LLM」「Shun」記述
-- `SPEC.md` §1.3 ─ 「社内AWS環境（EC2）」「GPT-5.2, Gemini-3.1-pro」
+- `docs/SPEC.ja.md` §1.3 ─ 「社内AWS環境（EC2）」「GPT-5.2, Gemini-3.1-pro」
 - `README.md` ─ 「社内LLM」 ×2
 - `backend/llm_client.py` docstring ─ 「Shun が実装を埋める想定」
 - `backend/annotators.py` ─ 「社内 LLM のコンテキスト窓」
@@ -82,10 +82,11 @@ OSS 公開時の "first touch" を破壊する 3 件を先に潰す。
 
 ## Phase 2: 国際化 (英語ドキュメント)
 
-- [ ] `README.md` を英語版に置換、日本語版は `README.ja.md` へ
-  - Hero (1行価値訴求) / スクリーンショット2-3枚 / Quick Start / Features / Architecture / Roadmap / License
-- [ ] `SPEC.md` は日本語のまま `docs/SPEC.ja.md` へ移し、英語要約版を `docs/architecture.md` として新規作成
-- [ ] エラーメッセージ・UIテキストの i18n 対応有無を決める (やるなら `@nuxtjs/i18n`)
+- [x] `README.md` を英語版に置換、日本語版は `README.ja.md` へ
+- [x] `SPEC.md` を `docs/SPEC.ja.md` に退避、英語要約版を `docs/architecture.md` として新規作成
+- [x] UI ブランドを `xlblueprint` に統一 (日本語名は廃止)
+- [ ] スクリーンショット 3 枚を撮影し `docs/images/` に配置 (Shun のメインマシン)
+- [ ] エラーメッセージ・UI テキストの i18n 対応有無を決める (やるなら `@nuxtjs/i18n`)
 - [ ] バナー画像 or ロゴ (任意だが映える)
 
 ## Phase 3: コミュニティ整備

@@ -28,7 +28,7 @@ from core.risk_analyzer import detect_analysis_risks
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# SPEC.md §8: 1ファイル 50MB を上限の目安として想定。環境変数で上書き可能。
+# docs/SPEC.ja.md §8: 1ファイル 50MB を上限の目安として想定。環境変数で上書き可能。
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 50 * 1024 * 1024))
 _UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 

@@ -1,15 +1,15 @@
 # CLAUDE.md — Agent working rules
 
 This file tells Claude Code (and other coding assistants) how to work on
-this repository. The product spec is in [SPEC.md](./SPEC.md), the OSS
+this repository. The product spec is in [docs/SPEC.ja.md](./docs/SPEC.ja.md), the OSS
 launch plan in [docs/OSS_LAUNCH_PLAN.md](./docs/OSS_LAUNCH_PLAN.md).
 This file describes the *process*, not the product.
 
 ## 0. Core principles
 
-- **SPEC.md is the source of truth.** Do not implement anything that
-  contradicts it. If you need to change behavior in SPEC.md, update
-  SPEC.md first and call it out.
+- **docs/SPEC.ja.md is the source of truth.** Do not implement anything that
+  contradicts it. If you need to change behavior in docs/SPEC.ja.md, update
+  docs/SPEC.ja.md first and call it out.
 - **Respect the layering:** `frontend → backend → core` is the only
   allowed direction.
   - `core/` must not import `backend/` or `frontend/`
@@ -53,24 +53,24 @@ xlblueprint/
 ├── tests/            # pytest (core / backend)
 ├── scripts/          # Utilities (sample generator, VBA injection)
 ├── docs/             # OSS launch plan and design docs
-├── SPEC.md           # Product spec (source of truth)
+├── docs/SPEC.ja.md           # Product spec (source of truth)
 ├── CLAUDE.md         # This file
 ├── LICENSE           # MIT
 └── pyproject.toml
 ```
 
-Detailed module responsibilities live in [SPEC.md](./SPEC.md) §2 and §4–6.
+Detailed module responsibilities live in [docs/SPEC.ja.md](./docs/SPEC.ja.md) §2 and §4–6.
 
 ## 3. Allowed / disallowed
 
 ### Allowed
 - Add small test fixtures (`tests/fixtures/`). Generated dummy data only.
-- Make reasonable implementation-level decisions not covered by SPEC.md.
+- Make reasonable implementation-level decisions not covered by docs/SPEC.ja.md.
   Note the decision in the commit message.
 - Refactor within the scope of the current task.
 
 ### Disallowed
-- Add **features** that are not in SPEC.md without asking
+- Add **features** that are not in docs/SPEC.ja.md without asking
 - Implement authentication, multi-tenancy, or RBAC (out of scope for
   the public release; can be added by adopters downstream)
 - Connect to external APIs that send workbook content outside of the
@@ -117,8 +117,8 @@ mode checks); ignore unless explicitly fixing.
 
 Pause and ask the user before:
 
-- Doing something that contradicts SPEC.md
-- Implementing a feature not in SPEC.md
+- Doing something that contradicts docs/SPEC.ja.md
+- Implementing a feature not in docs/SPEC.ja.md
 - Making large design decisions (DB choice, swapping a major dependency)
 - Anything irreversible (force push, history rewrite, dropping a feature)
 
@@ -126,7 +126,7 @@ Question template:
 ```
 [Question] {title}
 Situation: {what you were doing, where it got stuck}
-Related SPEC.md section: {if any}
+Related docs/SPEC.ja.md section: {if any}
 Options:
   A) ...
   B) ...
@@ -163,5 +163,5 @@ Recommendation: {} ({why})
 - [ ] `ruff check` is green
 - [ ] `mypy --strict` is green for `core/`
 - [ ] Manual smoke check noted in the commit message when relevant
-- [ ] SPEC.md remains consistent
+- [ ] docs/SPEC.ja.md remains consistent
 - [ ] Status reported to the user; next step confirmed

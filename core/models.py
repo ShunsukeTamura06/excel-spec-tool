@@ -1,6 +1,6 @@
-"""Excelツール改修支援AIのデータモデル定義.
+"""xlblueprintのデータモデル定義.
 
-SPEC.md §3 に基づく Pydantic モデル群。Core / Backend / Frontend で共有する。
+docs/SPEC.ja.md §3 に基づく Pydantic モデル群。Core / Backend / Frontend で共有する。
 """
 
 from typing import Literal
@@ -263,7 +263,7 @@ class JobMeta(BaseModel):
 class ChatMessage(BaseModel):
     """チャット履歴の1メッセージ. chat_history.jsonl の1行に対応.
 
-    SPEC.md §3 にはこのモデルは明記されていないが、§5.4 のチャット仕様で
+    docs/SPEC.ja.md §3 にはこのモデルは明記されていないが、§5.4 のチャット仕様で
     必要なため追加する (実装の細部).
     """
 
