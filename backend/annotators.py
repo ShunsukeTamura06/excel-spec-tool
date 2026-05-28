@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 # LLM に渡す VBA コード本体の最大文字数 (これを超えたら冒頭のみ + truncated 注記).
-# 社内 LLM のコンテキスト窓 (8k〜32k tokens 想定) を超えないための安全弁。
+# 一般的な LLM のコンテキスト窓 (8k〜32k tokens 想定) を超えないための安全弁。
 _VBA_CODE_MAX_CHARS = 8000
 
 

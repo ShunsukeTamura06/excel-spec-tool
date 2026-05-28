@@ -3,8 +3,9 @@
 対象: BDH / BDP / BDS の 3 大関数. 説明文はすべて自作日本語要約.
 
 参考: Bloomberg Terminal の HELP HELP コマンドおよび WAPI <GO> 画面の
-ドキュメント (顧客は Bloomberg Anywhere ライセンスを保有しているため
-社内利用に問題なし). 関数シグネチャ・引数名は公開事実情報.
+ドキュメント。関数シグネチャ・引数名は公開事実情報のみを記述しており、
+実行結果や独自データは含まない (= Bloomberg ライセンスの無いユーザーが
+本ファイルを読むことに法的問題はない)。
 """
 
 from __future__ import annotations

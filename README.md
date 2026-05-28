@@ -119,7 +119,7 @@ cd frontend && pnpm build    # SSR ビルド
 | 変数 | 既定 | 説明 |
 |---|---|---|
 | `JOBS_DIR` | `./jobs` | アップロードファイル / 抽出結果の置き場所 |
-| `LLM_BASE_URL` | (未設定) | 社内 LLM API のベース URL (OpenAI 互換) |
+| `LLM_BASE_URL` | (未設定) | OpenAI 互換 LLM API のベース URL (Ollama / vLLM / OpenAI / セルフホスト等) |
 | `LLM_API_KEY` | (未設定) | LLM API キー |
 | `LLM_MODEL` | (未設定) | LLM のデフォルトモデル名 |
 | `LLM_MODEL_PRO` | `LLM_MODEL` と同じ | チャット用モデル (キャッシュ重視) |
@@ -136,8 +136,8 @@ LLM 系の環境変数が未設定の場合、Backend は `MockLLMClient` で起
 
 - `.xls` (旧バイナリ形式) は VBA のみ抽出可能。openpyxl 非対応のため
   シート構造は抽出されない
-- LLM 呼び出しは社内 LLM API (OpenAI 互換) のみ対応。外部クラウドへの
-  データ送信は仕様上禁止 (SPEC §1.3)
+- LLM 呼び出しは OpenAI 互換 API のみ対応 (`LLM_BASE_URL` で任意のエンドポイントを指定)。
+  エアギャップ環境ではローカル LLM (Ollama 等) を指せばクラウドにデータを送らず動作する
 - 想定上限: 1 ファイル 50MB / 5000 行程度。それを超える場合は警告ログ。
   上限は `MAX_UPLOAD_BYTES` 環境変数で上書き可能
 - VBA のパスワード保護プロジェクトは抽出不可 (olevba の制約)
@@ -172,7 +172,7 @@ Backend (Python) 側は `uv sync` 済みの環境で `uv run uvicorn backend.mai
 ## ディレクトリ構成 (概略)
 
 ```
-excel-spec-tool/
+xlblueprint/
 ├── core/             # 純 Python: 抽出 / 参照 / 設計書 / 図解
 ├── backend/          # FastAPI ルート + ストレージ + LLM クライアント
 ├── frontend/         # Nuxt 3 SPA

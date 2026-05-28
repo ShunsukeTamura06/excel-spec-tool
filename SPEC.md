@@ -14,15 +14,18 @@
 
 ### 1.2 想定ユーザー
 
-- 主担当: 部内のツール保守担当者（VBAは詳しくない）
-- 副担当: 部内の事務スタッフ5名（基本的なExcel操作のみ）
+- 主担当: VBA に詳しくないツール保守担当者
+- 副担当: 一般 Excel ユーザー (基本操作のみ可能)
 
-### 1.3 制約
+### 1.3 設計原則
 
-- **外部クラウドへのデータ送信は禁止**。LLM呼び出しは社内LLM API経由のみ
-- インターネット接続はプロキシ経由でURLホワイトリスト登録が必要
-- 社内AWS環境（EC2）にデプロイする
-- 利用可能な社内LLM: GPT-5.2, Gemini-3.1-pro（OpenAI互換APIを想定）
+- **データの持ち出しを前提にしない**: LLM 呼び出しは OpenAI 互換 API
+  であれば何でも差し替え可能 (ローカル LLM / セルフホスト LLM /
+  クラウド LLM)。エアギャップ環境や閉鎖網にもデプロイできる構成を維持する
+- **インターネットアクセスなしで動く**: フロントエンドはフォント・アイコン
+  含めて同梱し、ランタイムで外部 CDN を叩かない
+- **モデルは差し替え可能**: モデル名・エンドポイントは全て環境変数。
+  例として OpenAI / Anthropic / Ollama / vLLM / 任意の OpenAI 互換
 
 ## 2. アーキテクチャ
 
@@ -58,7 +61,7 @@
 ### 2.2 ディレクトリ構成
 
 ```
-excel-spec-tool/
+xlblueprint/
 ├── core/
 │   ├── __init__.py
 │   ├── extractors/
@@ -80,7 +83,7 @@ excel-spec-tool/
 │   │   ├── references.py
 │   │   └── chat.py
 │   ├── storage.py              # ローカルファイル永続化
-│   └── llm_client.py           # 社内LLM API呼び出し
+│   └── llm_client.py           # OpenAI 互換 LLM API クライアント
 │
 ├── frontend/                   # Nuxt 3 SPA (TypeScript)
 │   ├── nuxt.config.ts
@@ -303,7 +306,7 @@ def generate_spec(wb: Workbook, ref_index: ReferenceIndex) -> str
 ローカルファイル方式。
 
 ```
-/var/excel-spec-tool/jobs/
+/var/xlblueprint/jobs/
 └── {job_id}/                       # job_id = UUIDv4
     ├── original.xlsm               # アップロード原本
     ├── extracted.json              # Workbookモデル (Coreの抽出結果)
@@ -335,7 +338,7 @@ def chat_completion(messages: list[dict], model: str = None) -> str
 def annotate_text(prompt: str, content: str) -> str
 ```
 
-**実APIへの接続実装はShunが社内仕様を確認したのちに追記する。CLAUDE.mdに従いモック実装を先に置く。**
+実 API への接続は `openai` SDK の OpenAI 互換クライアント (`base_url` / `api_key` / `model`) で実装済み。環境変数が揃っていなければ `MockLLMClient` にフォールバックする。
 
 ### 5.4 `/chat` の挙動
 
@@ -401,7 +404,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9
 httpx>=0.27
-openai>=2.36   # 社内LLM (OpenAI互換)
+openai>=2.36   # OpenAI 互換 API クライアント
 
 # dev
 pytest>=8.0
@@ -436,7 +439,7 @@ cd frontend && pnpm install && pnpm dev   # http://localhost:3001
 環境変数:
 ```
 # Backend
-JOBS_DIR=/var/excel-spec-tool/jobs    # 開発時は ./jobs
+JOBS_DIR=/var/xlblueprint/jobs    # 開発時は ./jobs
 LLM_BASE_URL=http://...
 LLM_API_KEY=...
 LLM_MODEL=gpt-5.2

@@ -51,7 +51,7 @@ const { data: status } = useAsyncData('llm-status', () => backend.llmStatus(), {
 LLM_API_KEY=ollama                       # ローカルなら任意の文字列で可
 LLM_MODEL=llama3.1:8b                    # ご利用のモデル</code></pre>
         <p class="text-[11px] text-(--ui-text-muted) mt-1.5">
-          OpenAI 互換 API ならどのプロバイダでも動作します (Ollama / vLLM / 社内 LLM / OpenAI 等)。
+          OpenAI 互換 API ならどのプロバイダでも動作します (Ollama / vLLM / セルフホスト LLM / OpenAI 等)。
           詳細は <code class="font-mono">README.md</code> の「環境変数」セクションを参照。
         </p>
       </div>

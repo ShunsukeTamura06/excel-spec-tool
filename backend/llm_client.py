@@ -1,13 +1,13 @@
-"""社内LLM クライアント.
+"""OpenAI 互換 LLM クライアント.
 
 SPEC.md §5.3 に基づき、OpenAI 互換 API を想定したインターフェースを提供する。
+ローカル LLM (Ollama / vLLM)・セルフホスト LLM・OpenAI 本家など、`base_url`
+を切り替えるだけでバックエンドを差し替えられる。
 
 設計:
 - `LLMClient` Protocol で実装を切り替え可能にする
 - `MockLLMClient`: 決定的な応答を返す。テスト・開発時のデフォルト
-- `OpenAICompatibleLLMClient`: 実 API 接続のプレースホルダ。
-  社内 LLM の仕様確定後 Shun が実装を埋める想定。現状はメソッド呼び出しで
-  NotImplementedError を投げる
+- `OpenAICompatibleLLMClient`: 実 API 接続実装 (`openai` SDK)
 - 環境変数 (LLM_BASE_URL / LLM_API_KEY / LLM_MODEL) が揃っていれば実クライアントを、
   そうでなければモックを返す `get_default_client()` ファクトリ
 - モジュールレベル `chat_completion()` / `annotate_text()` は SPEC §5.3 の公開
@@ -19,8 +19,8 @@ Function calling:
   tool_calls があれば呼び出し側でツールを実行し結果を message に追記して再度
   呼ぶループを構成する。
 
-外部クラウドへのデータ送信は SPEC.md §1.3 で禁止されているため、実クライアントは
-社内 LLM (プロキシ経由 / ホワイトリスト URL) のみを叩く前提。
+エアギャップ環境では `LLM_BASE_URL` を内部 LLM ゲートウェイに向けるだけで、
+データを外部クラウドに送らずに動作する設計。
 """
 
 from __future__ import annotations
@@ -307,7 +307,7 @@ class MockLLMClient:
 class OpenAICompatibleLLMClient:
     """OpenAI 互換 API への HTTP クライアント.
 
-    `openai` SDK の `OpenAI(base_url=..., api_key=...)` で社内 LLM を叩く。
+    `openai` SDK の `OpenAI(base_url=..., api_key=...)` で OpenAI 互換 LLM を叩く。
     pro / fast の 2 モデルを保持し、`tier` で切り替える。
 
     cache_prefix について:
