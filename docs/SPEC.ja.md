@@ -1,4 +1,4 @@
-# Excelツール改修支援AI 仕様書
+# xlblueprint 仕様書
 
 ## 1. 概要
 
@@ -101,7 +101,7 @@ xlblueprint/
 │   ├── backend/
 │   └── fixtures/               # サンプルExcel
 │
-├── SPEC.md
+├── docs/SPEC.ja.md
 ├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml

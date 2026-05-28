@@ -49,7 +49,7 @@ def create_app() -> FastAPI:
     configure_logging()
 
     app = FastAPI(
-        title="Excelツール改修支援AI Backend",
+        title="xlblueprint Backend",
         version="0.1.0",
         description="VBA/数式/参照を含むExcelの統合設計書生成 + 改修対話を提供する.",
     )

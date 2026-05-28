@@ -7,7 +7,7 @@
  */
 
 definePageMeta({ layout: 'default' })
-useHead({ title: '設計書 — Excelツール改修支援AI' })
+useHead({ title: '設計書 — xlblueprint' })
 
 const route = useRoute()
 const backend = useBackend()

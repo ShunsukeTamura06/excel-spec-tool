@@ -4,7 +4,7 @@ Option Explicit
 ' 月次更新ボタンの処理.
 ' ダッシュボードシートの「月次更新」フォームコントロールから呼び出される。
 '
-' Excelツール改修支援AI の risk_analyzer が以下を検出することを期待:
+' xlblueprint の risk_analyzer が以下を検出することを期待:
 '   - ActiveSheet     → runtime_state リスク
 '   - Worksheets(変数).Range(変数) → dynamic_vba リスク
 '   - Range(変数)     → dynamic_vba リスク

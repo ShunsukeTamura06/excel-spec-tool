@@ -1,6 +1,6 @@
 """デモ用サンプル `.xlsx` (小売店の月次運営ブック) を生成する.
 
-Excelツール改修支援AI が抽出 / 解析 / 注釈する対象としてリアリスティックに
+xlblueprint が抽出 / 解析 / 注釈する対象としてリアリスティックに
 なるよう、以下を意図的に仕込む:
 
 - シート 8 枚, シート間参照あり (依存グラフが面白くなる)
@@ -116,7 +116,7 @@ def build_readme_sheet(wb: Workbook) -> None:
     ws["A1"].font = Font(size=18, bold=True, color="1E3A8A")
     ws.merge_cells("A1:F1")
 
-    ws["A3"] = "このブックは Excelツール改修支援AI のデモ用サンプルです。"
+    ws["A3"] = "このブックは xlblueprint のデモ用サンプルです。"
     ws["A3"].font = NOTE_FONT
 
     ws["A5"] = "シート構成"

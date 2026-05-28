@@ -10,7 +10,7 @@
 import type { ChatMessage, ChatProgressEvent, ChatSessionMeta, ToolTraceItem } from '~/types/api'
 
 definePageMeta({ layout: 'default' })
-useHead({ title: 'チャット — Excelツール改修支援AI' })
+useHead({ title: 'チャット — xlblueprint' })
 
 const route = useRoute()
 const backend = useBackend()

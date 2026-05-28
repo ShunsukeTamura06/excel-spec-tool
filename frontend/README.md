@@ -1,4 +1,4 @@
-# Excelツール改修支援AI — Frontend (Nuxt 3)
+# xlblueprint — Frontend (Nuxt 3)
 
 Vue 3 / Nuxt 3 / TypeScript / Nuxt UI / Vue Flow / Pinia による SPA。
 

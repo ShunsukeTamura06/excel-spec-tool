@@ -52,7 +52,7 @@ function toggleDark() {
           <UIcon name="i-lucide-table-2" class="size-5" />
         </div>
         <div class="flex flex-col leading-tight">
-          <span class="font-semibold text-sm text-(--ui-text-highlighted) leading-tight">Excelツール<br>改修支援AI</span>
+          <span class="font-semibold text-base text-(--ui-text-highlighted) leading-none">xlblueprint</span>
         </div>
       </NuxtLink>
     </div>

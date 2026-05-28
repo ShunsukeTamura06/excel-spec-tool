@@ -11,7 +11,7 @@ from backend.routes.chat import _build_system_prompt
 class TestSystemPromptContainsCoreGuidelines:
     def test_includes_basic_role(self) -> None:
         prompt = _build_system_prompt("")
-        assert "Excelツール改修支援AI" in prompt
+        assert "xlblueprint" in prompt
 
     def test_includes_fact_based_principle(self) -> None:
         # 事実ベース / 推測禁止

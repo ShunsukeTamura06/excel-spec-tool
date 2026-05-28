@@ -55,7 +55,7 @@ export default defineNuxtConfig({
 
   app: {
     head: {
-      title: 'Excelツール改修支援AI',
+      title: 'xlblueprint',
       htmlAttrs: { lang: 'ja' },
       meta: [
         { charset: 'utf-8' },
