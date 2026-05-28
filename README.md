@@ -1,186 +1,262 @@
-# Excelツール改修支援AI
+# xlblueprint
 
-VBA / 数式 / 参照関係を含む `.xlsm` `.xls` 業務 Excel を、VBA に不慣れな
-担当者でも安全に改修できるよう支援する Web アプリ。
+> **Understand and safely modernize legacy Excel workbooks (.xlsm / .xlsx)
+> with an LLM that knows where every formula and VBA reference leads.**
 
-ファイルをアップロードすると、シート構造・VBA・数式・参照関係を抽出して
-**統合設計書 (Markdown) + インタラクティブな依存グラフ** を生成し、
-**LLM とのチャット** で「ここを直したい」と尋ねれば改修手順と波及範囲を
-回答する。
+📖 日本語版: [README.ja.md](./README.ja.md)
 
-詳細仕様は [SPEC.md](./SPEC.md) を、開発ルールは [CLAUDE.md](./CLAUDE.md) を参照。
+`xlblueprint` extracts the structure of a complex business workbook — every
+sheet, formula, named range, conditional format, chart, pivot, VBA module,
+form control, external link — and turns it into:
 
-## 主な機能
+1. A **structured spec** (Markdown + Mermaid)
+2. An **interactive dependency graph** (sheets & VBA call graph)
+3. A **chat assistant** that answers *"if I change X, what breaks?"*
+   by calling tools over the extracted index (cells / refs / VBA /
+   risks / external functions)
+4. An honest **"what we can't statically analyze" report** — INDIRECT,
+   OFFSET, dynamic VBA refs, event macros, external links. The tool
+   refuses to say "no impact" where static analysis can't prove it.
 
-- **設計書生成** — シート / VBA / 数式 / 名前付き範囲 / 条件付き書式を
-  抽出し、LLM 注釈つきの Markdown にまとめる
-- **シート依存グラフ** — どのシートがどのシートを参照しているかを Vue Flow
-  で可視化 (重みつきエッジ、ズーム・ドラッグ・MiniMap)
-- **VBA コールグラフ** — プロシージャ間の呼び出し関係を同様に可視化
-- **Excel オブジェクト棚卸し** — グラフ系列参照 / ピボット元データ /
-  Power Query・外部接続を抽出し、設計書と参照検索に反映
-- **未解析リスク検出** — 動的 VBA 参照 / イベント処理 / INDIRECT・OFFSET /
-  外部接続など、影響なしと断定できない箇所を明示
-- **参照逆引き** — 「このセルを参照しているのは誰か」を全件検索
-- **改修チャット** — LLM が設計書 + ツール
-  (cells / references / VBA 詳細 / 未解析リスク) を引きながら、
-  確認済み事実・波及範囲・手動確認チェックリストを分けて提示
+It's aimed at the person who *inherited* a 10-year-old workbook and was
+told "make this small change next Monday."
 
-## アーキテクチャ
+## Why
 
-```
-Frontend (Nuxt 3 SPA, TypeScript)         Backend (FastAPI)
-├── Nuxt UI v3 + Tailwind v4         <──> ├── /extract, /analyze
-├── Vue Flow + dagre (図解)               ├── /spec, /workbook
-├── @nuxtjs/mdc (Markdown 描画)           ├── /references, /diagrams
-└── Pinia                                 ├── /chat (function calling)
-                                          └── /jobs
+LLMs are great at writing new Excel formulas. They are terrible at
+*understanding* a 50-sheet .xlsm full of `VLOOKUP` chains, dynamic VBA
+ranges, and ten-year-old comments — because they have no map. `xlblueprint`
+builds the map first, then lets the LLM walk it with grounded tool calls.
 
-                                          Core (純 Python)
-                                          ├── olevba / openpyxl 抽出
-                                          ├── reference_index
-                                          ├── spec_generator
-                                          └── diagrams (sheet/VBA graph)
-```
+Existing tools either focus on writing new spreadsheets (Office Scripts,
+"AI Excel" SaaS) or are libraries without an interactive layer
+(openpyxl, formulas). `xlblueprint` sits in the gap: **a UI + LLM workbench
+for legacy `.xlsm` modernization.**
 
-依存方向は `frontend → backend → core` の単方向のみ。
+## Screenshots
 
-## セットアップ
+> _Screenshots below are placeholders until captured from a live deployment.
+> See [Phase 2-C in the OSS launch plan](./docs/OSS_LAUNCH_PLAN.md)._
 
-### 必要なツール
+| Spec dashboard | Dependency graph | Chat with grounded tools |
+|---|---|---|
+| ![Spec overview](./docs/images/spec-overview.png) | ![Dependency graph](./docs/images/diagram.png) | ![Chat](./docs/images/chat.png) |
 
-- Python 3.10+ と [uv](https://docs.astral.sh/uv/)
-- Node 20+ と pnpm (corepack 経由)
+## Features
 
-### 初回
+### Extraction (no LLM required)
+- **Sheets**: dimensions, formulas (tokenized references), named ranges,
+  conditional formats, Excel tables, data validations, merged cells,
+  form controls
+- **VBA**: modules and procedures via `oletools` (olevba), call-graph
+  construction
+- **OOXML internals**: charts (series references), pivot tables (source +
+  fields), Power Query / external connections (connection strings with
+  password fields auto-masked)
+- **External link** detection
 
+### Analysis
+- **Reverse reference index** with range-intersection lookup
+  (formula + VBA + chart series + pivot source)
+- **Risk analyzer** — surfaces the things static analysis *cannot* track:
+  `INDIRECT` / `OFFSET` / dynamic VBA refs (`Range(var)`,
+  `Worksheets(name).Range(var)`), event macros (`Workbook_Open`,
+  `Worksheet_Change`), runtime state (`ActiveSheet`, `Selection`),
+  external dependencies
+- **External function registry** — built-in Bloomberg BDH/BDP/BDS
+  definitions; pluggable for in-house add-ins
+
+### LLM (any OpenAI-compatible endpoint)
+- **Spec annotation**: each sheet / procedure gets a short purpose +
+  inputs/outputs/main-calculations summary (fast model, batched)
+- **Chat with function calling** (10+ tools, 16-iteration loop):
+  `get_cells_range`, `find_cells`, `lookup_references`,
+  `list_vba_modules`, `get_vba_procedure`, `list_sheet_formulas`,
+  `list_workbook_objects`, `list_analysis_risks`,
+  `lookup_external_function`, `list_external_functions_used`
+
+### Frontend (Nuxt 3 SPA, dark theme)
+- **Insight dashboard**: TL;DR + input/output sheet candidates +
+  ranking (most calc / most read / most reader) + risk summary
+- **Interactive diagrams** (Vue Flow + dagre, themed minimap)
+- **Sheet explorer** with formula↔reference chips, A/B/C column
+  headers and 1/2/3 row numbers in previews
+- **Reverse reference search**
+- **Chat** with progress streaming, multi-conversation, thumbs feedback
+
+### Deployment
+- **Air-gap friendly**: fonts and icons bundled, no runtime CDN calls
+- **No data leaves your network**: LLM goes through whatever
+  OpenAI-compatible endpoint you configure (Ollama, vLLM,
+  self-hosted gateway, OpenAI, etc.)
+- **518 tests** (pytest), `mypy --strict` on `core/`, `ruff` clean
+
+## Quick start
+
+### Requirements
+- Python 3.10+ with [uv](https://docs.astral.sh/uv/)
+- Node 20+ with pnpm (via corepack)
+
+### Install
 ```bash
-# Backend (Python)
-uv sync --group dev      # .venv 作成 + pytest/ruff/mypy も含めて同期
+# Backend
+uv sync --group dev
 
-# Frontend (Node)
+# Frontend
 corepack enable
 cd frontend && pnpm install
 ```
 
-### 依存追加
-
+### Run (two terminals)
 ```bash
-# Python
-uv add <package>             # 本体依存
-uv add --group dev <pkg>     # 開発用
-
-# Node
-cd frontend && pnpm add <pkg>
-cd frontend && pnpm add -D <pkg>  # devDependencies
-```
-
-## 起動 (開発時)
-
-初回はフロントエンドの `.env` を用意する:
-
-```bash
-cd frontend
-cp .env.example .env
-# 必要に応じて NUXT_PUBLIC_BACKEND_URL 等を編集
-```
-
-ターミナルを 2 つ開く:
-
-```bash
-# Backend — http://localhost:8001
+# Terminal 1 — Backend on http://localhost:8001
 uv run uvicorn backend.main:app --reload --port 8001
 
-# Frontend — http://localhost:3001
-cd frontend && pnpm dev
+# Terminal 2 — Frontend on http://localhost:3001
+cd frontend && cp .env.example .env
+pnpm dev
 ```
 
-サンプル `.xlsx` が手元になければ、ホーム画面の「サンプルをダウンロード」
-ボタンから `inventory_sample.xlsx` (Input / Calc / Output の 3 シート構成、
-名前付き範囲・条件付き書式入り) を取得して試せる。
+### Try the sample
+Open <http://localhost:3001>, click **Download sample**, and re-upload
+`retail_monthly_ops.xlsx`. The sample is an 8-sheet retail-operations
+workbook with 170 formulas, charts, pivots, INDIRECT/OFFSET, and
+21 "unresolvable risk" items — a small but realistic showcase of what
+the tool surfaces.
 
-## 開発コマンド
+Without an LLM configured (default), the spec / diagrams / search /
+risk analysis all work. The chat falls back to mock responses; an
+in-app onboarding card explains how to wire up Ollama / OpenAI / etc.
 
-```bash
-# Python
-uv run pytest                # 全テスト (現在 400 件)
-uv run ruff check            # lint
-uv run ruff format           # フォーマット
-uv run mypy core             # 型チェック (core/ のみ --strict)
+## Architecture
 
-# Frontend
-cd frontend && pnpm dev      # 開発サーバ
-cd frontend && pnpm generate # 静的書き出し (本番 SPA 用)
-cd frontend && pnpm build    # SSR ビルド
+```
+Frontend (Nuxt 3 SPA, TypeScript)        Backend (FastAPI)
+├── Nuxt UI v3 + Tailwind v4        <──> ├── /extract, /analyze
+├── Vue Flow + dagre (diagrams)          ├── /spec, /workbook
+├── @nuxtjs/mdc (Markdown rendering)     ├── /references, /diagrams
+└── Pinia                                ├── /chat (function calling SSE)
+                                         ├── /system/llm-status
+                                         └── /jobs
+
+                                         Core (pure Python)
+                                         ├── olevba / openpyxl extraction
+                                         ├── reference_index
+                                         ├── risk_analyzer
+                                         ├── external_functions registry
+                                         ├── spec_generator (Markdown + Mermaid)
+                                         └── diagrams (sheet / VBA graph)
 ```
 
-## 環境変数
+Dependency direction is strictly `frontend → backend → core`. The core
+is a pure Python library that you can use standalone:
 
-| 変数 | 既定 | 説明 |
+```python
+from pathlib import Path
+from core.extractors.vba import extract_vba
+from core.extractors.workbook import extract_workbook
+from core.reference_index import build_reference_index
+from core.risk_analyzer import detect_analysis_risks
+
+path = Path("your_workbook.xlsm")
+wb = extract_workbook(path)
+wb.vba_modules = extract_vba(path)
+wb.analysis_risks = detect_analysis_risks(wb)
+idx = build_reference_index(wb)
+# inspect wb / idx programmatically
+```
+
+More detail: [docs/architecture.md](./docs/architecture.md) (English summary)
+and [docs/SPEC.ja.md](./docs/SPEC.ja.md) (full Japanese spec).
+
+## Configuration
+
+| Variable | Default | Description |
 |---|---|---|
-| `JOBS_DIR` | `./jobs` | アップロードファイル / 抽出結果の置き場所 |
-| `LLM_BASE_URL` | (未設定) | OpenAI 互換 LLM API のベース URL (Ollama / vLLM / OpenAI / セルフホスト等) |
-| `LLM_API_KEY` | (未設定) | LLM API キー |
-| `LLM_MODEL` | (未設定) | LLM のデフォルトモデル名 |
-| `LLM_MODEL_PRO` | `LLM_MODEL` と同じ | チャット用モデル (キャッシュ重視) |
-| `LLM_MODEL_FAST` | `LLM_MODEL` と同じ | 注釈バッチ用モデル (大量呼び出し) |
-| `CORS_ALLOW_ORIGINS` | `localhost:3001,3000` 等 | カンマ区切りで上書き可 |
-| `CHAT_HISTORY_LIMIT_PAIRS` | `10` | LLM 文脈に乗せる直近往復数 |
-| `NUXT_PUBLIC_BACKEND_URL` | `http://localhost:8001` | フロントが叩く Backend URL |
-| `NUXT_PORT` | `3001` | フロント dev サーバの待受ポート |
+| `JOBS_DIR` | `./jobs` | Where uploads and extraction outputs are stored |
+| `LLM_BASE_URL` | (unset) | OpenAI-compatible LLM base URL (Ollama, vLLM, OpenAI, self-hosted, …) |
+| `LLM_API_KEY` | (unset) | LLM API key (any string works for local Ollama) |
+| `LLM_MODEL` | (unset) | Default model name |
+| `LLM_MODEL_PRO` | = `LLM_MODEL` | Model for chat (caching-friendly) |
+| `LLM_MODEL_FAST` | = `LLM_MODEL` | Model for batch annotation (cheap/fast) |
+| `CORS_ALLOW_ORIGINS` | localhost:3001,3000 | Comma-separated origin list |
+| `CHAT_HISTORY_LIMIT_PAIRS` | `10` | How many recent user/assistant pairs to keep in LLM context |
+| `MAX_UPLOAD_BYTES` | `52428800` (50 MB) | Upload size cap |
+| `NUXT_PUBLIC_BACKEND_URL` | `http://localhost:8001` | Backend URL the SPA hits |
+| `NUXT_PORT` | `3001` | Frontend dev server port |
 
-LLM 系の環境変数が未設定の場合、Backend は `MockLLMClient` で起動する
-(チャットは決まり文句しか返さないが、抽出 / 設計書生成 / 図解は動く)。
+If LLM variables are unset, `xlblueprint` falls back to `MockLLMClient` —
+spec generation / diagrams / search still work; chat returns mock
+responses with an in-app onboarding card pointing here.
 
-## 制限
-
-- `.xls` (旧バイナリ形式) は VBA のみ抽出可能。openpyxl 非対応のため
-  シート構造は抽出されない
-- LLM 呼び出しは OpenAI 互換 API のみ対応 (`LLM_BASE_URL` で任意のエンドポイントを指定)。
-  エアギャップ環境ではローカル LLM (Ollama 等) を指せばクラウドにデータを送らず動作する
-- 想定上限: 1 ファイル 50MB / 5000 行程度。それを超える場合は警告ログ。
-  上限は `MAX_UPLOAD_BYTES` 環境変数で上書き可能
-- VBA のパスワード保護プロジェクトは抽出不可 (olevba の制約)
-- Power Query は接続定義・出力先の棚卸しが中心。M コード本文や認証情報の
-  解析は初期対応では対象外で、接続文字列内の秘匿値はマスクする
-
-## 本番デプロイ (閉鎖ネットワーク向け)
-
-本番環境がインターネットに出られない前提でフロントを構成している:
-
-- **アイコン**: `@iconify-json/lucide` をビルドに焼き込み、`fallbackToApi: false`
-  で `api.iconify.design` への runtime fetch を完全に遮断
-- **フォント**: `@fontsource-variable/inter` / `@fontsource-variable/jetbrains-mono`
-  を `node_modules` から `@import` し、Google Fonts / Bunny / jsDelivr 非依存
-- **テレメトリ**: `NUXT_TELEMETRY_DISABLED=1` を推奨
-
-デプロイ手順 (開発機 → 閉鎖網):
-
+### Ollama example
 ```bash
-# 1. 開発機 (ネット可) でビルド
-cd frontend
-pnpm install
-NUXT_PUBLIC_BACKEND_URL=http://<本番backend>:8001 pnpm generate
-
-# 2. 出力された .output/public/ を閉鎖網ホストへ転送し、
-#    任意の静的配信サーバ (Nginx / IIS / `python -m http.server` 等) で配信
+LLM_BASE_URL=http://localhost:11434/v1 \
+LLM_API_KEY=ollama \
+LLM_MODEL=llama3.1:8b \
+uv run uvicorn backend.main:app --port 8001
 ```
 
-Backend (Python) 側は `uv sync` 済みの環境で `uv run uvicorn backend.main:app`
-を直接起動する。フロントの SPA とは別プロセス。
+## Limitations
 
-## ディレクトリ構成 (概略)
+- `.xls` (legacy binary): VBA is extracted but `openpyxl` cannot read
+  sheet structure
+- VBA projects with a project password cannot be opened (olevba limit)
+- Power Query: connection / output inventory is captured; M-code body
+  and embedded credentials are not deeply parsed (and credentials are
+  masked when seen)
+- Designed for workbooks up to ~50 MB / ~5000 rows. Larger files work
+  but parsing time and memory grow accordingly
+- Pivot table *creation* (vs. extraction) is out of scope; the sample
+  workbook uses `SUMIFS` as a pivot stand-in
 
-```
-xlblueprint/
-├── core/             # 純 Python: 抽出 / 参照 / 設計書 / 図解
-├── backend/          # FastAPI ルート + ストレージ + LLM クライアント
-├── frontend/         # Nuxt 3 SPA
-├── tests/            # pytest (core / backend)
-├── scripts/          # ユーティリティ (サンプル生成等)
-├── SPEC.md           # 仕様書 (正)
-├── CLAUDE.md         # 開発エージェント向け作業ルール
-└── pyproject.toml
-```
+## Project status
 
-詳細な責務分担・モジュール構成は [SPEC.md](./SPEC.md) を参照。
+- **0.1.x — Beta.** Core extraction is stable and well tested
+  (518 tests, `mypy --strict` on `core/`). LLM-side prompts and UI
+  layout are still iterating.
+- **Maintained by**: Shunsuke Tamura ([@ShunsukeTamura06](https://github.com/ShunsukeTamura06)),
+  solo, in open development. Issues and PRs are welcome (Japanese or English).
+- **Not** trying to be: a multi-tenant SaaS, an authentication
+  framework, or an Office Scripts replacement.
+
+## Roadmap (next)
+
+See [docs/OSS_LAUNCH_PLAN.md](./docs/OSS_LAUNCH_PLAN.md) for the full plan.
+
+- [ ] Bundle a pre-built `.xlsm` sample with real VBA (currently only
+  `.xlsx` ships; `.xlsm` requires running `scripts/inject_vba.ps1` on
+  a machine with Excel)
+- [ ] Live demo (Hugging Face Space or Render)
+- [ ] Docker Compose for one-command setup
+- [ ] CI (GitHub Actions: pytest + ruff + mypy + frontend typecheck)
+- [ ] UI brand alignment (current sidebar shows the Japanese product
+  title; will be unified with `xlblueprint`)
+- [ ] Frontend i18n (Japanese UI strings)
+
+## Contributing
+
+The contribution guide lives in [CONTRIBUTING.md](./CONTRIBUTING.md)
+(coming soon — Phase 3 of the OSS launch). For now:
+
+- Bug reports and feature requests are welcome via Issues
+- For larger changes, please open an Issue first to discuss the
+  approach
+- Commits follow [Conventional Commits](https://www.conventionalcommits.org/)
+- See [CLAUDE.md](./CLAUDE.md) for the agent / collaborator working
+  rules used in this repository
+
+## License
+
+[MIT](./LICENSE) — Copyright (c) 2026 Shunsuke Tamura and `xlblueprint`
+contributors.
+
+## Acknowledgments
+
+- [openpyxl](https://openpyxl.readthedocs.io/) for spreadsheet parsing
+- [oletools](https://github.com/decalage2/oletools) for VBA extraction
+- [Nuxt UI](https://ui.nuxt.com/) and [Vue Flow](https://vueflow.dev/)
+  for the frontend
+- [Anthropic Claude Code](https://claude.com/claude-code) was the
+  primary development assistant on this repository — see commit
+  history for co-author trailers
