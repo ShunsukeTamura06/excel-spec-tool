@@ -15,15 +15,27 @@
 
 ---
 
-## Phase 0: 公開可否の判断 (ユーザー決定が必須)
+## Phase 0: 公開可否の判断 ✅ 完了 (2026-05-28)
 
-ここを決めないと先に進めない。
+| 項目 | 決定 |
+|---|---|
+| **ライセンス** | **MIT** (依存ライブラリ全 permissive; oletools=BSD で GPL 汚染なし) |
+| **プロダクト名** | **xlblueprint** (PyPI / GitHub 名前空間 clear) |
+| **README 主言語** | 英語主体 + `README.ja.md` 併記 |
+| **メンテ体制** | 個人メンテ・Issue/PR を open で受付 |
+| **履歴の機密混入** | APIキー / 社内URL / 顧客企業名 なし (grep 済み) |
 
-1. **ライセンス選定** — MIT / Apache-2.0 / BSL / AGPL のどれにするか
-2. **製品名 (英名)** — 例: `excel-spec-tool`, `xlsm-spec`, `ExcelInsight`, `VBADocAI` 等
-3. **対応言語ポリシー** — README は英語を主・日本語を従？ それとも併記？
-4. **メンテ体制** — 個人主体 / 募集する / Issue は日本語可？
-5. **コードオーナーシップ / コミット履歴のクリーニング** — 履歴に社内情報や個人情報が混入していないか確認
+### Phase 1 で対応する「社内/個人」言及
+
+機密ではないが「社内転用」感を出すため一般化対象:
+
+- `CLAUDE.md` ─ 「社内LLM」「Shun」記述
+- `SPEC.md` §1.3 ─ 「社内AWS環境（EC2）」「GPT-5.2, Gemini-3.1-pro」
+- `README.md` ─ 「社内LLM」 ×2
+- `backend/llm_client.py` docstring ─ 「Shun が実装を埋める想定」
+- `backend/annotators.py` ─ 「社内 LLM のコンテキスト窓」
+- `core/external_functions/bloomberg.py` ─ 「社内利用に問題なし」
+- `frontend/components/LlmOnboardingCard.vue` ─ 「社内 LLM」
 
 ## Phase 1: 法務・公開最小要件 (公開ブロッカー)
 
