@@ -488,6 +488,9 @@ const examples = [
                   {{ ex }}
                 </UButton>
               </div>
+              <!-- LLM 未設定の場合、ここで明示的にアナウンスする.
+                   配置していないと「チャットが壊れている」と誤解されやすい. -->
+              <LlmOnboardingCard class="mt-4 max-w-xl text-left" />
             </div>
 
             <!-- メッセージ -->

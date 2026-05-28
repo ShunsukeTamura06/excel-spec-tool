@@ -23,6 +23,7 @@ from backend.routes import (
     jobs,
     references,
     spec,
+    system,
     workbook,
 )
 
@@ -76,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(external_functions.router)
     app.include_router(feedback.router)
     app.include_router(jobs.router)
+    app.include_router(system.router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

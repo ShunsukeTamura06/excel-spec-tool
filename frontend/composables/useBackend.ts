@@ -192,6 +192,21 @@ export function useBackend() {
       }
     },
 
+    /** GET /system/llm-status — LLM が設定済か返す. throw せず null を返す
+     *  (backend ダウン時はバナーを出さない判断に使えるよう). */
+    async llmStatus(): Promise<{
+      configured: boolean
+      mode: string
+      pro_model: string
+      fast_model: string
+    } | null> {
+      try {
+        return await $fetch('/system/llm-status', { baseURL, timeout: 5_000 })
+      } catch {
+        return null
+      }
+    },
+
     /** GET /jobs */
     async listJobs(): Promise<JobMeta[]> {
       const res = await call<{ jobs: JobMeta[] }>('listJobs', '/jobs', {

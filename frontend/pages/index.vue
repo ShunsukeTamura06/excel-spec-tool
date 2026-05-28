@@ -179,6 +179,9 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
       </UCard>
     </section>
 
+    <!-- LLM 未接続 onboarding (configured ならレンダされない) -->
+    <LlmOnboardingCard />
+
     <!-- アップロード or 進捗 -->
     <section class="space-y-3">
       <h2 class="text-sm font-semibold uppercase tracking-wide text-(--ui-text-muted)">
@@ -194,7 +197,7 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
       <div class="flex items-center justify-between gap-2 flex-wrap">
         <p class="text-xs text-(--ui-text-muted) flex items-center gap-1.5">
           <UIcon name="i-lucide-info" class="size-3.5" />
-          ファイルが手元にない場合は、デモ用サンプル (3 シート・数式・名前付き範囲・条件付き書式) を使えます。
+          ファイルが手元にない場合は、デモ用サンプル「小売店の月次運営ブック」(8 シート・170 数式・グラフ・テーブル・INDIRECT/OFFSET) を使えます。
         </p>
         <div class="flex gap-2">
           <UButton
@@ -208,7 +211,7 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
             もう一度
           </UButton>
           <UButton
-            to="/samples/inventory_sample.xlsx"
+            to="/samples/retail_monthly_ops.xlsx"
             external
             download
             variant="soft"
