@@ -21,6 +21,53 @@ watch(
 const selected = computed<SheetInfo | null>(
   () => props.sheets.find(s => s.name === selectedName.value) ?? null,
 )
+
+// ----- プレビュー座標ヘッダ ---------------------------------------------------
+// `preview_origin` ("A1", "B5" 等) を起点に、行番号と列文字 (Excel 表記) を計算する.
+// 座標で会話できないと「ここを直して」と指せないので、プレビュー表に必須.
+
+function letterToCol(letter: string): number {
+  // "A" → 1, "Z" → 26, "AA" → 27
+  let n = 0
+  for (const ch of letter.toUpperCase()) {
+    n = n * 26 + (ch.charCodeAt(0) - 64)
+  }
+  return n
+}
+
+function colToLetter(n: number): string {
+  // 1 → "A", 26 → "Z", 27 → "AA"
+  let s = ''
+  let v = n
+  while (v > 0) {
+    const m = (v - 1) % 26
+    s = String.fromCharCode(65 + m) + s
+    v = Math.floor((v - 1) / 26)
+  }
+  return s
+}
+
+function parseOrigin(origin: string): { col: number; row: number } {
+  const m = origin.match(/^([A-Za-z]+)(\d+)$/)
+  if (!m) return { col: 1, row: 1 }
+  return { col: letterToCol(m[1]), row: Number(m[2]) }
+}
+
+const previewOriginRow = computed(() => {
+  if (!selected.value) return 1
+  return parseOrigin(selected.value.preview_origin).row
+})
+
+const previewColumnLetters = computed<string[]>(() => {
+  if (!selected.value || selected.value.preview_rows.length === 0) return []
+  const startCol = parseOrigin(selected.value.preview_origin).col
+  // 行ごとの長さが揃っている前提だが、念のため最大長を取る
+  const width = Math.max(
+    0,
+    ...selected.value.preview_rows.map((r) => r.length),
+  )
+  return Array.from({ length: width }, (_, i) => colToLetter(startCol + i))
+})
 </script>
 
 <template>
@@ -414,14 +461,32 @@ const selected = computed<SheetInfo | null>(
           </div>
         </template>
         <div class="overflow-x-auto -mx-4">
-          <table class="w-full text-xs">
+          <!-- Excel 風の行番号 (1, 2, 3...) と列文字 (A, B, C...) を出す.
+               座標で会話できないと「ここを見て」と指せないので必須。 -->
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="bg-(--ui-bg-elevated)/60">
+                <th class="sticky left-0 z-10 bg-(--ui-bg-elevated)/60 px-2 py-1 text-[10px] text-(--ui-text-muted) font-mono text-right border-b border-r border-(--ui-border) w-10"></th>
+                <th
+                  v-for="(_, ci) in previewColumnLetters"
+                  :key="ci"
+                  class="px-2 py-1 text-[10px] text-(--ui-text-muted) font-mono text-center border-b border-(--ui-border) min-w-[3rem]"
+                >
+                  {{ previewColumnLetters[ci] }}
+                </th>
+              </tr>
+            </thead>
             <tbody>
               <tr
                 v-for="(row, ri) in selected.preview_rows"
                 :key="ri"
                 class="border-t border-(--ui-border)"
-                :class="ri === 0 && 'bg-(--ui-bg-elevated) font-medium'"
               >
+                <th
+                  class="sticky left-0 z-10 bg-(--ui-bg-elevated)/60 px-2 py-1 text-[10px] text-(--ui-text-muted) font-mono text-right border-r border-(--ui-border) font-normal w-10"
+                >
+                  {{ previewOriginRow + ri }}
+                </th>
                 <td
                   v-for="(cell, ci) in row"
                   :key="ci"
