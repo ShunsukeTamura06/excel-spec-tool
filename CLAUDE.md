@@ -1,179 +1,167 @@
-# CLAUDE.md - 作業ルール
+# CLAUDE.md — Agent working rules
 
-このリポジトリは Claude Code を主開発エージェントとして進めるプロジェクト。
-SPEC.md を仕様の正とし、本ファイルは Claude Code の進め方を規定する。
+This file tells Claude Code (and other coding assistants) how to work on
+this repository. The product spec is in [SPEC.md](./SPEC.md), the OSS
+launch plan in [docs/OSS_LAUNCH_PLAN.md](./docs/OSS_LAUNCH_PLAN.md).
+This file describes the *process*, not the product.
 
-## 0. 大原則
+## 0. Core principles
 
-- **SPEC.md を正とする**。SPEC.md と矛盾する実装はしない
-- **依存方向を守る**: `frontend → backend → core` の単方向のみ
-  - core は backend / frontend を import しない
-  - backend は frontend を import しない
-- **作業はステップ単位で進め、各ステップ完了時にユーザー確認を求める**
-- 不明点・SPEC.md の曖昧さを発見したら**勝手に解釈せず質問する**
+- **SPEC.md is the source of truth.** Do not implement anything that
+  contradicts it. If you need to change behavior in SPEC.md, update
+  SPEC.md first and call it out.
+- **Respect the layering:** `frontend → backend → core` is the only
+  allowed direction.
+  - `core/` must not import `backend/` or `frontend/`
+  - `backend/` must not import `frontend/`
+- **Work in small, reviewable steps.** Pause and confirm with the user
+  before large or unexpected changes (see §7).
+- **When in doubt, ask.** Do not silently reinterpret ambiguous spec.
 
-## 1. 環境
+## 1. Toolchain
 
 - Python 3.10+
-- パッケージ管理: `uv`（`uv sync` / `uv add` / `uv run` を使う）
-- フォーマッタ: `ruff format`
-- リンタ: `ruff check`
-- 型チェック: `mypy --strict` を core/ に対して
-- テスト: `pytest`
+- Package manager: `uv` (`uv sync` / `uv add` / `uv run`)
+- Formatter: `ruff format`
+- Linter: `ruff check`
+- Type checker: `mypy --strict` against `core/`
+- Tests: `pytest`
+- Frontend: Node 20+, `pnpm` (via corepack), Nuxt 3
 
-セットアップ:
+Setup:
 ```bash
 uv sync --group dev
+corepack enable
+cd frontend && pnpm install
 ```
 
-依存追加:
+Common commands:
 ```bash
-uv add <package>           # 本体依存
-uv add --group dev <pkg>   # 開発用
-```
-
-実行:
-```bash
-uv run pytest
+uv run pytest               # all backend + core tests
 uv run ruff check
 uv run mypy core
+cd frontend && pnpm dev     # Nuxt dev server
 ```
 
-## 2. 実装順序
+## 2. Repository layout (current)
 
-下記の順で進める。各ステップ完了時にユーザーに報告し、次に進む承認を得る。
-
-1. **プロジェクト初期化** — `pyproject.toml`, `requirements.txt`, ディレクトリ作成
-2. **`core/models.py`** — Pydanticモデル定義 + テスト
-3. **`core/extractors/vba.py`** — olevba ラッパー + テスト
-4. **`core/extractors/workbook.py`** — openpyxl ラッパー + テスト
-5. **`core/reference_index.py`** — 参照インデックス構築 + テスト
-6. **`core/spec_generator.py`** — 設計書Markdown生成 + テスト
-7. **`backend/storage.py`** — ローカルファイル永続化 + テスト
-8. **`backend/llm_client.py`** — モック実装 + インターフェース
-9. **`backend/main.py` + `backend/routes/`** — FastAPIエンドポイント
-10. **`frontend/` (Nuxt 3 SPA)** — TypeScript + Nuxt UI + Vue Flow + Pinia
-
-各ステップの完了基準:
-- 該当機能のpytestが通る
-- `ruff check` `ruff format --check` が通る
-- core/ は `mypy --strict` が通る
-- 動作確認手順をコミットメッセージに書く
-
-## 3. やってよいこと / やってはいけないこと
-
-### やってよい
-- 自分でテストデータ（小さなxlsm）を作る
-- SPEC.mdに書かれていない**実装の細部**は妥当な判断で進めてよい（コミットメッセージで明示）
-- リファクタは対象ステップに閉じる範囲で
-
-### やってはいけない
-- SPEC.md にない**機能**を勝手に追加する
-- 認証、Docker化、ユーザー管理を実装する（スコープ外）
-- 外部APIに実際に接続する（社内LLM接続実装はShunが手動で追記する）
-- 巨大なPRや一気に複数ステップを完了させる
-- 既存ファイルを大幅に書き換える（影響範囲を聞く）
-
-## 4. テストの書き方
-
-- 各 `core/*.py` に対応する `tests/core/test_*.py` を必ず作る
-- `tests/fixtures/` に小さな xlsm サンプルを置く（ダミーデータ可）
-- backend のテストは `TestClient` を使い、`tmp_path` で `JOBS_DIR` を差し替える
-- LLM呼び出しはモックする（`backend/llm_client.py` のモック実装を再利用）
-- カバレッジ80%を目指す（厳密ルールではない）
-
-### 必須テストケース
-
-#### `core/extractors/vba.py`
-- 単純な `Sub` / `Function` / `Property` の検出
-- 複数モジュール
-- VBAなしxlsm（空リスト返却）
-- パスワード保護VBA（最初はskipしてよいがTODO残す）
-
-#### `core/extractors/workbook.py`
-- 数式セルの抽出（`=SUM(A1:A10)` レベル）
-- 複数シートまたぎ参照（`Sheet2!A1`）
-- 名前付き範囲の抽出
-- 条件付き書式の抽出
-- `.xls` を渡したときに空シートで返ること
-
-#### `core/reference_index.py`
-- 数式 `=SUMIF(Input!A:A, A2, Input!E:E)` から3つの参照を抽出
-- VBA `Range("A1:J100")`, `Worksheets("Calc").Range("A1")`, `Sheets("Calc").Cells(2, 8)` の3パターン
-- 該当なしクエリで空配列が返る
-
-## 5. コーディング規約
-
-- 関数には型ヒント必須
-- public関数にはdocstring（Googleスタイル）
-- ログは `logging` モジュールを使う。`print` は禁止
-- 例外は素通しせず、適切な層でwrap（Coreは独自例外、Backendは HTTPException に変換）
-- 設定値はハードコードせず環境変数 or デフォルト引数
-
-例外クラスは `core/exceptions.py` に定義:
-```python
-class CoreError(Exception): ...
-class ExtractionError(CoreError): ...
-class UnsupportedFormatError(CoreError): ...
+```
+xlblueprint/
+├── core/             # Pure Python: extraction / references / spec / diagrams
+├── backend/          # FastAPI routes + storage + LLM client
+├── frontend/         # Nuxt 3 SPA (TypeScript)
+├── tests/            # pytest (core / backend)
+├── scripts/          # Utilities (sample generator, VBA injection)
+├── docs/             # OSS launch plan and design docs
+├── SPEC.md           # Product spec (source of truth)
+├── CLAUDE.md         # This file
+├── LICENSE           # MIT
+└── pyproject.toml
 ```
 
-## 6. コミット
+Detailed module responsibilities live in [SPEC.md](./SPEC.md) §2 and §4–6.
 
-- 1コミット = 1論理的変更
-- メッセージ規約: Conventional Commits
+## 3. Allowed / disallowed
+
+### Allowed
+- Add small test fixtures (`tests/fixtures/`). Generated dummy data only.
+- Make reasonable implementation-level decisions not covered by SPEC.md.
+  Note the decision in the commit message.
+- Refactor within the scope of the current task.
+
+### Disallowed
+- Add **features** that are not in SPEC.md without asking
+- Implement authentication, multi-tenancy, or RBAC (out of scope for
+  the public release; can be added by adopters downstream)
+- Connect to external APIs that send workbook content outside of the
+  configured LLM endpoint
+- Land oversized PRs that span many unrelated changes
+- Rewrite large existing files without flagging the impact first
+
+## 4. Tests
+
+- Every `core/*.py` has a matching `tests/core/test_*.py`
+- Backend tests use `TestClient` with `tmp_path` for `JOBS_DIR`
+- LLM calls are mocked via `MockLLMClient` (`backend/llm_client.py`)
+- Target ~80% coverage (soft target, not enforced)
+
+Tests must pass before any commit. Pre-existing flaky test
+`test_directory_permissions_700` is known to fail on Windows (POSIX
+mode checks); ignore unless explicitly fixing.
+
+## 5. Coding conventions
+
+- Type hints on every function
+- Google-style docstrings on public functions
+- Use the `logging` module — `print` is forbidden in library code
+- Wrap exceptions at layer boundaries: `core` raises `CoreError`
+  subclasses (`core/exceptions.py`); `backend` translates to
+  `HTTPException`
+- Read configuration from environment variables (with defaults), never
+  hardcode
+
+## 6. Commits
+
+- **1 commit = 1 logical change**
+- Conventional Commits style in Japanese or English:
   - `feat: add VBA extractor`
+  - `fix(ui): preview row headers were off by one`
   - `test: add tests for reference index`
-  - `fix: handle empty workbook`
-  - `chore: update requirements`
-- ステップ完了時には `feat(step-N): {description}` 形式
+  - `docs: clarify deployment notes`
+- Co-author trailer encouraged when authoring with Claude:
+  ```
+  Co-Authored-By: Claude <noreply@anthropic.com>
+  ```
 
-## 7. ユーザーへの確認・質問の仕方
+## 7. When to stop and ask
 
-以下の場合は実装を止めて確認:
-- SPEC.md と矛盾する状況を発見した
-- SPEC.md に書かれていない機能を実装したくなった
-- 外部APIに実際に接続する必要が出てきた
-- 大きな設計判断（DBを入れるか、別ライブラリに切り替えるか等）
+Pause and ask the user before:
 
-確認のフォーマット:
+- Doing something that contradicts SPEC.md
+- Implementing a feature not in SPEC.md
+- Making large design decisions (DB choice, swapping a major dependency)
+- Anything irreversible (force push, history rewrite, dropping a feature)
+
+Question template:
 ```
-[確認] {状況}
-- 選択肢A: ...
-- 選択肢B: ...
-推奨: A（理由: ...）
-進めてよいですか？
-```
-
-## 8. 既知の難所
-
-| 箇所 | 難所 | 対処方針 |
-|---|---|---|
-| `extract_vba` | パスワード保護VBA | 初版はskip、TODOコメント |
-| `extract_workbook` | `.xls` 非対応 | `Workbook.sheets=[]` で返し、警告ログ |
-| `extract_workbook` | 外部リンク取得 | `wb._external_links` がprivate APIなので `try/except` で包む |
-| `reference_index` | VBA正規表現の捕捉漏れ | 完璧を目指さない。テストで最低限を担保 |
-| Frontend `File` → backend | バイナリ送信 | `FormData()` に `append("file", file)` → `$fetch` の body に渡す (Nuxt) |
-| 大きなxlsm | メモリ・時間 | 初版は1ファイル50MB、5000行を上限と想定。超えたら警告 |
-
-## 9. 質問テンプレート
-
-```
-[質問] {タイトル}
-状況: {何をしようとしていて、何に詰まったか}
-SPEC.md該当箇所: {あれば}
-選択肢:
+[Question] {title}
+Situation: {what you were doing, where it got stuck}
+Related SPEC.md section: {if any}
+Options:
   A) ...
   B) ...
   C) ...
-私の推奨: {} (理由: ...)
+Recommendation: {} ({why})
 ```
 
-## 10. 完了の定義 (Definition of Done)
+## 8. Known gotchas
 
-- [ ] 実装ファイルが追加されている
-- [ ] 対応するテストファイルがあり、pytestが通る
-- [ ] `ruff check` が通る
-- [ ] core/ なら `mypy --strict` が通る
-- [ ] サンプル入力での動作確認ログをコミットメッセージに含める
-- [ ] SPEC.md の該当箇所と矛盾がない
-- [ ] ユーザーに完了報告し、次ステップへの承認を得た
+| Area | Gotcha | Workaround |
+|---|---|---|
+| `extract_vba` | password-protected VBA projects | skip, leave TODO |
+| `extract_workbook` | `.xls` is not openpyxl-compatible | return empty `sheets=[]`, log warning |
+| `extract_workbook` | external link extraction uses `wb._external_links` (private API) | wrap in `try/except`, version-pin awareness |
+| `reference_index` | VBA regex never catches everything | aim for coverage of common patterns; risk_analyzer surfaces the gap |
+| Frontend `File` → backend | binary upload | `FormData()` with `append("file", file)`, pass as Nuxt `$fetch` body |
+| Large `.xlsm` | memory / time | default upload cap is 50 MB / ~5000 rows; warn beyond that, override via `MAX_UPLOAD_BYTES` |
+
+## 9. OSS launch context
+
+- The project is preparing for public release on GitHub.
+- Default language for new documentation is English. A Japanese
+  counterpart (`*.ja.md`) can be added in parallel.
+- Avoid embedding company-specific terminology, customer names, or
+  internal URLs. The codebase should read as a self-contained OSS
+  project.
+- If you spot residual internal references during a task, flag them
+  in the report (don't silently leave them).
+
+## 10. Definition of done
+
+- [ ] Implementation file(s) committed
+- [ ] Matching tests committed; `pytest` is green
+- [ ] `ruff check` is green
+- [ ] `mypy --strict` is green for `core/`
+- [ ] Manual smoke check noted in the commit message when relevant
+- [ ] SPEC.md remains consistent
+- [ ] Status reported to the user; next step confirmed
