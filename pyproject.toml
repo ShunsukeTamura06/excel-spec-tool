@@ -48,6 +48,9 @@ ignore = []
 # FastAPI の Depends() / File() を引数デフォルトに置く規約は B008 と衝突するが
 # 公式ドキュメント推奨パターンなので routes 配下のみ B008 を許可する
 "backend/routes/*.py" = ["B008"]
+# scripts/ はサンプル生成スクリプトで、長い Excel 数式や日本語コメントが
+# 行に多く乗るため line-length を緩める. ロジックではないので可読性優先.
+"scripts/*.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
