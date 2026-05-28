@@ -86,7 +86,6 @@ OSS 公開時の "first touch" を破壊する 3 件を先に潰す。
 - [x] `SPEC.md` を `docs/SPEC.ja.md` に退避、英語要約版を `docs/architecture.md` として新規作成
 - [x] UI ブランドを `xlblueprint` に統一 (日本語名は廃止)
 - [ ] スクリーンショット 3 枚を撮影し `docs/images/` に配置 (Shun のメインマシン)
-- [ ] エラーメッセージ・UI テキストの i18n 対応有無を決める (やるなら `@nuxtjs/i18n`)
 - [ ] バナー画像 or ロゴ (任意だが映える)
 
 ## Phase 3: コミュニティ整備
@@ -121,3 +120,36 @@ OSS 公開時の "first touch" を破壊する 3 件を先に潰す。
 - [ ] Show HN / Reddit (`r/programming`, `r/excel`, `r/vba`) / Zenn / Qiita 告知記事
 - [ ] `awesome-*` リスト系へPR (例: `awesome-fastapi`, `awesome-nuxt`)
 - [ ] 訴求軸: 「Legacy Excel modernization with LLM」
+
+## Phase 7: UI 言語切替 (i18n) — 全部終わったあとの最後にやる
+
+UI 上のテキスト (日本語/英語) を toggle で切り替えられるようにする。
+他のフェーズが全部終わって OSS として安定してから着手する。
+
+理由: ライブラリ選定 (`@nuxtjs/i18n` vs 自作 composable) / 翻訳分担 /
+LLM プロンプトとレスポンスの言語ポリシー (英語 UI でも LLM 出力は
+日本語のまま? それとも切替?) などの設計判断が複数あり、現時点で
+決めてしまうと無駄な手戻りが発生する。先に Phase 2-6 を終えて
+OSS の形が固まった後に取り組むのが安全。
+
+実装メモ (着手時に再評価):
+
+- [ ] **方針決定**:
+  - ライブラリ: `@nuxtjs/i18n` が標準だが SPA モードでの SEO 効果は
+    薄いので軽量自作 (Pinia + composable) も選択肢
+  - 翻訳ファイル形式: JSON / YAML / .ts オブジェクト
+  - 切替 UI: サイドバー下部の言語セレクタ (🇯🇵 / 🇺🇸 等)
+  - 初期言語: ブラウザ Accept-Language + localStorage 保存
+  - LLM 言語: チャットの system prompt 言語は UI 言語に追従させるか
+    別途設定とするか
+- [ ] **対象テキストの抽出**: 主要画面の日本語文字列を翻訳キーに変換
+  - ホーム / 設計書 / ダイアグラム / 参照検索 / VBA / 外部関数 / チャット
+  - エラーメッセージ (`backend/llm_client.py` の friendlyMessage 等)
+  - ツールチップ / ボタンラベル / バッジ / プレースホルダ
+- [ ] **英語翻訳**: 一次は機械翻訳、二次にネイティブレビュー or LLM
+  チェック。サンプルブックの README シートだけは日本語のままで OK
+- [ ] **動的コンテンツ**: spec.md / risk_analyzer の description などは
+  生成時に言語選択肢を渡すか、あるいは「LLM 注釈言語のみ翻訳、抽出
+  メタは日本語のまま」と割り切るか要判断
+- [ ] **テスト**: 切替時の永続化、未翻訳キーへのフォールバック
+- [ ] **ドキュメント**: README に i18n の使い方を追記
