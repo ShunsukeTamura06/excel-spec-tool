@@ -161,7 +161,11 @@ const errorMsg = computed(() => {
     >
       <template #content="{ item }">
         <div class="mt-4">
-          <SpecOverview v-if="item.value === 'overview'" :markdown="spec.spec_md" />
+          <SpecOverview
+            v-if="item.value === 'overview'"
+            :markdown="spec.spec_md"
+            :workbook="workbook"
+          />
 
           <SheetExplorer
             v-else-if="item.value === 'sheets'"
