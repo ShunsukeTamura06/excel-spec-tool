@@ -76,6 +76,16 @@
 .spec-prose a {
   @apply text-(--ui-primary) underline underline-offset-2;
 }
+/* MDC は見出しテキストを自動で `<h2><a href="#slug">...</a></h2>` のアンカーに
+   くるむ (rehype-autolink-headings)。素の `.spec-prose a` ルールが当たると
+   全見出しがリンク色 + 下線でリンクのように見えてしまうので、見出し配下の
+   アンカーだけ親から色を継承し、下線を消す。 */
+.spec-prose :is(h1, h2, h3, h4, h5, h6) a {
+  @apply text-inherit no-underline;
+}
+.spec-prose :is(h1, h2, h3, h4, h5, h6) a:hover {
+  @apply text-(--ui-primary);
+}
 
 /* Vue Flow ノードのカスタムカラー. */
 .vue-flow__node.node-sheet {
