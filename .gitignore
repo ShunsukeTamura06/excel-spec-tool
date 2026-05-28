@@ -28,6 +28,7 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+.claude/
 
 # Project local data
 jobs/
