@@ -3,13 +3,26 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "excel-spec-tool"
+name = "xlblueprint"
 version = "0.1.0"
-description = "Excelツール改修支援AI: VBA/数式/参照関係を含む統合設計書を生成し、改修対話を支援する"
+description = "Generate a structured spec, dependency graph and LLM-assisted refactor chat for legacy .xlsm/.xlsx workbooks (VBA, formulas, references)."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Proprietary" }
-authors = [{ name = "Shun" }]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Shunsuke Tamura", email = "shunsuke.tamura06@gmail.com" }]
+keywords = ["excel", "xlsm", "vba", "openpyxl", "fastapi", "nuxt", "llm", "legacy-modernization"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+]
 
 dependencies = [
     "oletools>=0.60",

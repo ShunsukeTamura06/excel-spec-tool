@@ -9,7 +9,7 @@
 import { defineStore } from 'pinia'
 import type { JobMeta } from '~/types/api'
 
-const STORAGE_KEY = 'excel-spec-tool/current-job-id'
+const STORAGE_KEY = 'xlblueprint/current-job-id'
 
 export const useJobStore = defineStore('job', () => {
   const currentJobId = ref<string | null>(null)
