@@ -243,13 +243,17 @@ class MockLLMClient:
         return content
 
     def annotate_text(self, prompt: str, content: str, tier: ModelTier = "fast") -> str:
-        head = content.strip().splitlines()[0] if content.strip() else ""
-        head = head[:80]
-        result = f"[mock annotation] prompt={prompt!r} head={head!r}"
+        # LLM 未設定時のデフォルトクライアントとしても使われるため、注釈呼び出し側
+        # (annotators._safe_annotate_json) が JSON としてパースして空辞書 → 注釈
+        # スキップ、になるよう「空 JSON オブジェクト」を返す。
+        # 以前はデバッグ用に prompt の raw 文字列を返していたが、それが設計書や
+        # ダイアグラムノードに leak して「壊れた」第一印象を生んでいたため取り止め。
+        result = "{}"
         usage = _estimate_usage(len(prompt) + len(content), len(result))
         model_label = self._resolve(None, tier)
         logger.info(
-            "llm annotate_text: model=%s tier=%s prompt_tokens=%d completion_tokens=%d total=%d",
+            "llm annotate_text(mock): model=%s tier=%s prompt_tokens=%d completion_tokens=%d "
+            "total=%d (returning empty {} — no annotation applied)",
             model_label,
             tier,
             usage.prompt_tokens,

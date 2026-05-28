@@ -116,17 +116,20 @@ class TestMockClient:
         )
         assert "gpt-test" in result
 
-    def test_annotate_text(self) -> None:
+    def test_annotate_text_returns_empty_json(self) -> None:
+        # LLM 未設定時のデフォルトとして使われるため、annotators._safe_annotate_json が
+        # JSON パースして空辞書 → 注釈スキップになるよう "{}" を返す。
+        # 以前は prompt の raw 文字列を返していたが、それが設計書 / ダイアグラム
+        # ノードに leak していたため変更した。
         result = MockLLMClient().annotate_text(
             "summarize this VBA module", "Sub Hello()\nMsgBox 'hi'\nEnd Sub"
         )
-        assert "[mock annotation]" in result
-        assert "summarize" in result
+        assert result == "{}"
 
     def test_annotate_empty_content(self) -> None:
         # 空の content でも例外を出さない
         result = MockLLMClient().annotate_text("any prompt", "")
-        assert isinstance(result, str)
+        assert result == "{}"
 
 
 # ---------- OpenAICompatibleLLMClient ----------
@@ -326,7 +329,8 @@ class TestModuleLevelFunctions:
         monkeypatch.delenv("LLM_BASE_URL", raising=False)
         monkeypatch.delenv("LLM_API_KEY", raising=False)
         result = annotate_text("describe", "hello")
-        assert "[mock annotation]" in result
+        # mock は空 JSON を返す (raw prompt leak 回避のため)
+        assert result == "{}"
 
     def test_real_client_invokes_openai_sdk(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_BASE_URL", "http://x")
