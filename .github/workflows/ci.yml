@@ -36,6 +36,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
+      # 一番安いチェックを最初に. 1 秒で禁止文字列を grep して落とす.
+      # ルール定義と意図は CLAUDE.md §11 (Invariants) を参照.
+      - name: Consistency drift check
+        run: uv run python scripts/check_drift.py
+
       - name: Lint (ruff)
         run: uv run ruff check
 
