@@ -150,4 +150,4 @@ class TestExtractVbaErrors:
 
 # TODO: 実 .xlsm / .xls バイナリでの統合テスト. パスワード保護 VBA のテスト.
 #       現状は LibreOffice headless での VBA 注入が安定しないため見送り。
-#       Shun が手動で fixture を追加した時点で有効化する。
+#       scripts/inject_vba.ps1 で生成した .xlsm を tests/fixtures/ に追加した時点で有効化する。
