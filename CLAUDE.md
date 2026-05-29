@@ -161,7 +161,43 @@ Recommendation: {} ({why})
 - [ ] Implementation file(s) committed
 - [ ] Matching tests committed; `pytest` is green
 - [ ] `ruff check` is green
+- [ ] `ruff format` has been run (no diff)
 - [ ] `mypy --strict` is green for `core/`
+- [ ] `uv run python scripts/check_drift.py` is green (see §11)
 - [ ] Manual smoke check noted in the commit message when relevant
 - [ ] docs/SPEC.ja.md remains consistent
 - [ ] Status reported to the user; next step confirmed
+
+## 11. Invariants (do not regress)
+
+These are project-level decisions that are **enforced by
+`scripts/check_drift.py`** (run in CI on every PR). If a change must
+violate one, raise it with the user *before* committing — do not just
+silently regress and rely on the drift script to catch it.
+
+| Invariant | Why | Enforced by |
+|---|---|---|
+| Brand name is **`xlblueprint`**. Do not use the legacy 「Excelツール改修支援AI」 in code or public docs. | Phase 0 decision: one brand, one name. | `brand-jp-name` |
+| Package name is **`xlblueprint`**. Do not write `excel-spec-tool` / `excel_spec_tool` in new code or docs. | PyPI / GitHub namespace consolidation. | `legacy-package-name` |
+| No 「社内 LLM」「社内 AWS」「社内ネットワーク」style organization-specific terms. Use `OpenAI 互換` / `セルフホスト LLM` / `your deployment` instead. | OSS repo: do not embed any specific organization's operational assumptions. | `company-internal-shanai` |
+| No 「Shun が…」式 personal-name references. Maintainer credit lives in `LICENSE` / `pyproject.authors` / GitHub handle. | Implementation notes should not carry the original author's name as a load-bearing reference. | `developer-personal-name` |
+| The Japanese product spec lives at `docs/SPEC.ja.md`, not a root-level `SPEC.md`. The English summary lives at `docs/architecture.md`. | Phase 2 reorg. Single source of truth, no duplicates. | `legacy-spec-path-root` |
+| License is **MIT**. Do not change `pyproject.toml` `license` without an explicit decision. | All dependencies are permissive; switching license affects every adopter. | (manual review; no script yet) |
+| Dependency direction: `frontend → backend → core`. `core/` must not import `backend/` or `frontend/`; `backend/` must not import `frontend/`. | See §0. Breaking this couples concerns and ruins `core/` as a standalone library. | (manual review; covered by import scan in PRs) |
+| English is the default language for new public documentation. Japanese counterparts live alongside as `*.ja.md`. | OSS audience is global; Phase 2 decision. | (manual review) |
+
+Historical / quotation contexts (`docs/OSS_LAUNCH_PLAN.md`,
+`docs/SPEC.ja.md`, `scripts/check_drift.py` itself) are whitelisted in
+the drift script — see `HISTORICAL_DOCS` there.
+
+Running drift check locally:
+```bash
+uv run python scripts/check_drift.py              # quick scan
+uv run python scripts/check_drift.py --explain    # with rationale
+uv run python scripts/check_drift.py --rules brand-jp-name  # specific rule
+```
+
+If you need to add a new invariant, add a `Rule(...)` entry in
+`scripts/check_drift.py` and document it in this table. If a legitimate
+use of a flagged term is needed in a new file, add that file's relative
+path to the rule's `allow_paths`.
