@@ -48,7 +48,7 @@ class TestDetectAnalysisRisks:
                     type="Module",
                     code=(
                         "Sub X()\n"
-                        "  addr = \"A\" & row\n"
+                        '  addr = "A" & row\n'
                         "  Range(addr).Value = 1\n"
                         "  Selection.Offset(1, 0).Value = 2\n"
                         "End Sub\n"
@@ -74,9 +74,9 @@ class TestDetectAnalysisRisks:
                     type="Module",
                     code=(
                         "Sub X()\n"
-                        "  Range(\"A1\").Value = 1\n"
+                        '  Range("A1").Value = 1\n'
                         "  ' Range(addr).Value = 2\n"
-                        "  s = \"ActiveSheet\"\n"
+                        '  s = "ActiveSheet"\n'
                         "End Sub\n"
                     ),
                 )

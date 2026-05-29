@@ -279,9 +279,7 @@ class TestAnnotateWorkbook:
         assert result.sheets[0].purpose == "trimmed"
         assert result.sheets[0].inputs == ["In"]
 
-    def test_malformed_json_leaves_fields_empty(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_malformed_json_leaves_fields_empty(self, caplog: pytest.LogCaptureFixture) -> None:
         wb = Workbook(filename="t.xlsm", sheets=[SheetInfo(name="S", rows=1, cols=1)])
         llm = _RecordingLLM(response="this is not JSON at all")
         with caplog.at_level("WARNING", logger="backend.annotators"):

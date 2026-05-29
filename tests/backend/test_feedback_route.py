@@ -96,9 +96,7 @@ class TestFeedbackRoute:
         assert body["ok"] is True
         assert "id" in body
 
-    def test_submit_with_full_context(
-        self, client: TestClient, backend_storage: Storage
-    ) -> None:
+    def test_submit_with_full_context(self, client: TestClient, backend_storage: Storage) -> None:
         payload = {
             "kind": "improvement",
             "comment": "VBA のシンタックスハイライトが欲しい",
@@ -151,9 +149,7 @@ class TestFeedbackRoute:
         ts = datetime.fromisoformat(item.timestamp)
         assert abs((now - ts).total_seconds()) < 60
 
-    def test_thumbs_down_with_target(
-        self, client: TestClient, backend_storage: Storage
-    ) -> None:
+    def test_thumbs_down_with_target(self, client: TestClient, backend_storage: Storage) -> None:
         r = client.post(
             "/feedback",
             json={

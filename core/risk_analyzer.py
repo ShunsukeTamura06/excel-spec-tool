@@ -112,8 +112,7 @@ def _detect_vba_risks(wb: Workbook) -> Iterable[AnalysisRisk]:
                         "暗黙実行される可能性があります。"
                     ),
                     recommendation=(
-                        "改修後に該当イベントの発火条件と副作用を"
-                        "実Excelで確認してください。"
+                        "改修後に該当イベントの発火条件と副作用を実Excelで確認してください。"
                     ),
                 )
 
@@ -141,12 +140,10 @@ def _detect_vba_risks(wb: Workbook) -> Iterable[AnalysisRisk]:
                         location=location,
                         evidence=raw_line.strip()[:500],
                         description=(
-                            "`Range(...)` の参照先が文字列リテラルではなく、"
-                            "実行時に決まります。"
+                            "`Range(...)` の参照先が文字列リテラルではなく、実行時に決まります。"
                         ),
                         recommendation=(
-                            "変数に入るアドレスを追跡し、対象セル/範囲を"
-                            "手動確認してください。"
+                            "変数に入るアドレスを追跡し、対象セル/範囲を手動確認してください。"
                         ),
                     )
 
@@ -160,8 +157,7 @@ def _detect_vba_risks(wb: Workbook) -> Iterable[AnalysisRisk]:
                         evidence=raw_line.strip()[:500],
                         description="`Cells(row, col)` の行または列が実行時に決まります。",
                         recommendation=(
-                            "ループ変数や条件分岐を確認し、対象範囲を"
-                            "手動確認してください。"
+                            "ループ変数や条件分岐を確認し、対象範囲を手動確認してください。"
                         ),
                     )
 
@@ -174,12 +170,10 @@ def _detect_vba_risks(wb: Workbook) -> Iterable[AnalysisRisk]:
                         location=location,
                         evidence=raw_line.strip()[:500],
                         description=(
-                            "`Worksheets(...)` / `Sheets(...)` の対象シートが"
-                            "実行時に決まります。"
+                            "`Worksheets(...)` / `Sheets(...)` の対象シートが実行時に決まります。"
                         ),
                         recommendation=(
-                            "シート名変数の値を確認し、参照先シートを"
-                            "手動確認してください。"
+                            "シート名変数の値を確認し、参照先シートを手動確認してください。"
                         ),
                     )
 
@@ -194,8 +188,7 @@ def _detect_external_dependency_risks(wb: Workbook) -> Iterable[AnalysisRisk]:
             evidence=link[:500],
             description="外部ブックリンクがあります。",
             recommendation=(
-                "リンク先ファイルの存在、更新タイミング、"
-                "改修対象との関係を確認してください。"
+                "リンク先ファイルの存在、更新タイミング、改修対象との関係を確認してください。"
             ),
         )
 

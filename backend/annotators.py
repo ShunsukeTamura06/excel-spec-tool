@@ -90,6 +90,7 @@ _VBA_PROC_ANNOTATION_PROMPT = (
 # プロンプトの user content 構築
 # ====================================================================
 
+
 def _format_sheet_brief(sheet: SheetInfo) -> str:
     """シート用 LLM プロンプトの user content を組み立てる."""
     lines = [
@@ -212,6 +213,7 @@ def _list_str_field(payload: dict[str, Any], key: str, limit: int = 20) -> list[
 # LLM 呼び出し
 # ====================================================================
 
+
 def _safe_annotate_json(
     llm: LLMClient,
     prompt: str,
@@ -244,6 +246,7 @@ def _safe_annotate_json(
 # 公開関数
 # ====================================================================
 
+
 def annotate_workbook(wb: Workbook, llm: LLMClient) -> Workbook:
     """Workbook の各シート / プロシージャに構造化 LLM 注釈を付与する.
 
@@ -264,9 +267,7 @@ def annotate_workbook(wb: Workbook, llm: LLMClient) -> Workbook:
             annotated_sheets.append(sheet)
             continue
         brief = _format_sheet_brief(sheet)
-        payload = _safe_annotate_json(
-            llm, _SHEET_ANNOTATION_PROMPT, brief, f"sheet '{sheet.name}'"
-        )
+        payload = _safe_annotate_json(llm, _SHEET_ANNOTATION_PROMPT, brief, f"sheet '{sheet.name}'")
         purpose = _str_field(payload, "purpose")
         inputs = _list_str_field(payload, "inputs")
         outputs = _list_str_field(payload, "outputs")

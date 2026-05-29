@@ -125,9 +125,7 @@ def build_sheet_dependency_graph(wb: Workbook) -> Diagram:
             dst, count = top_target_by_src[s.name]
             meta["top_target"] = dst
             meta["top_target_count"] = count
-        nodes.append(
-            DiagramNode(id=s.name, label=s.name, kind="sheet", meta=meta)
-        )
+        nodes.append(DiagramNode(id=s.name, label=s.name, kind="sheet", meta=meta))
 
     edges = [
         DiagramEdge(src=s, dst=d, weight=w, kind="formula")
@@ -213,16 +211,83 @@ def build_vba_call_graph(modules: list[VbaModule]) -> Diagram:
 
     # VBA キーワード等の誤検出回避リスト
     keywords = {
-        "if", "then", "else", "elseif", "end", "for", "next", "do", "while",
-        "wend", "loop", "until", "select", "case", "with", "exit", "function",
-        "sub", "property", "get", "let", "set", "dim", "redim", "const", "as",
-        "byval", "byref", "optional", "paramarray", "is", "not", "and", "or",
-        "xor", "eqv", "imp", "mod", "true", "false", "nothing", "null", "empty",
-        "me", "new", "call", "type", "enum", "in", "on", "error", "resume",
-        "goto", "return", "stop", "private", "public", "friend", "static",
-        "rem", "to", "step", "each", "single", "double", "integer", "long",
-        "string", "boolean", "variant", "object", "date", "currency", "byte",
-        "decimal", "lbound", "ubound",
+        "if",
+        "then",
+        "else",
+        "elseif",
+        "end",
+        "for",
+        "next",
+        "do",
+        "while",
+        "wend",
+        "loop",
+        "until",
+        "select",
+        "case",
+        "with",
+        "exit",
+        "function",
+        "sub",
+        "property",
+        "get",
+        "let",
+        "set",
+        "dim",
+        "redim",
+        "const",
+        "as",
+        "byval",
+        "byref",
+        "optional",
+        "paramarray",
+        "is",
+        "not",
+        "and",
+        "or",
+        "xor",
+        "eqv",
+        "imp",
+        "mod",
+        "true",
+        "false",
+        "nothing",
+        "null",
+        "empty",
+        "me",
+        "new",
+        "call",
+        "type",
+        "enum",
+        "in",
+        "on",
+        "error",
+        "resume",
+        "goto",
+        "return",
+        "stop",
+        "private",
+        "public",
+        "friend",
+        "static",
+        "rem",
+        "to",
+        "step",
+        "each",
+        "single",
+        "double",
+        "integer",
+        "long",
+        "string",
+        "boolean",
+        "variant",
+        "object",
+        "date",
+        "currency",
+        "byte",
+        "decimal",
+        "lbound",
+        "ubound",
     }
 
     pair_counts: Counter[tuple[str, str]] = Counter()
@@ -257,8 +322,7 @@ def build_vba_call_graph(modules: list[VbaModule]) -> Diagram:
                     pair_counts[(src_id, dst_id)] += 1
 
     edges = [
-        DiagramEdge(src=s, dst=d, weight=w, kind="call")
-        for (s, d), w in pair_counts.most_common()
+        DiagramEdge(src=s, dst=d, weight=w, kind="call") for (s, d), w in pair_counts.most_common()
     ]
     return Diagram(kind="vba_calls", nodes=nodes, edges=edges)
 

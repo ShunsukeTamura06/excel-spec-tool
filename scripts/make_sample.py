@@ -123,13 +123,13 @@ def build_readme_sheet(wb: Workbook) -> None:
     ws["A5"].font = SUBTITLE_FONT
 
     sheets_doc = [
-        ("設定",            "税率・為替・期間・シナリオを管理。Worksheet_Change で再計算"),
-        ("商品マスタ",      "20 商品の在庫・単価・カテゴリ。Excel テーブル化"),
-        ("日次売上",        "30 日 × 商品の売上ログ (ピボットの元データ)"),
-        ("シナリオ計算",    "シナリオに応じた予測。INDIRECT / OFFSET を使用"),
-        ("ダッシュボード",  "KPI と棒グラフ・折れ線。月次更新ボタン (VBA)"),
+        ("設定", "税率・為替・期間・シナリオを管理。Worksheet_Change で再計算"),
+        ("商品マスタ", "20 商品の在庫・単価・カテゴリ。Excel テーブル化"),
+        ("日次売上", "30 日 × 商品の売上ログ (ピボットの元データ)"),
+        ("シナリオ計算", "シナリオに応じた予測。INDIRECT / OFFSET を使用"),
+        ("ダッシュボード", "KPI と棒グラフ・折れ線。月次更新ボタン (VBA)"),
         ("PivotByCategory", "カテゴリ別売上集計 (SUMIFS 擬似ピボット)"),
-        ("月次レポート",    "印刷向け整形出力"),
+        ("月次レポート", "印刷向け整形出力"),
     ]
     for i, (name, desc) in enumerate(sheets_doc, start=7):
         ws.cell(row=i, column=1, value=name).font = Font(bold=True)
@@ -161,12 +161,12 @@ def build_settings_sheet(wb: Workbook) -> None:
 
     # ----- パラメータ -----
     rows = [
-        ("項目",       "値",            "備考"),
-        ("税率",       0.10,            "消費税率"),
-        ("為替 (USD)", 150,             "USD → JPY (月平均)"),
-        ("集計期間",   "標準",          "30日 / 標準 / 60日"),
-        ("シナリオ",   "標準",          "楽観 / 標準 / 悲観 (シナリオ計算が参照)"),
-        ("最終更新",   "(未更新)",      "Workbook_Open で自動更新"),
+        ("項目", "値", "備考"),
+        ("税率", 0.10, "消費税率"),
+        ("為替 (USD)", 150, "USD → JPY (月平均)"),
+        ("集計期間", "標準", "30日 / 標準 / 60日"),
+        ("シナリオ", "標準", "楽観 / 標準 / 悲観 (シナリオ計算が参照)"),
+        ("最終更新", "(未更新)", "Workbook_Open で自動更新"),
     ]
     for i, (label, value, note) in enumerate(rows, start=3):
         c1 = ws.cell(row=i, column=1, value=label)
@@ -221,7 +221,7 @@ def build_settings_sheet(wb: Workbook) -> None:
         ws.cell(row=i, column=5, value=sc).font = Font(bold=True)
         ws.cell(row=i, column=6, value=factor).number_format = "0.00"
 
-    ws["E9"] = "(シナリオ計算!D2 が INDIRECT(\"設定!F\"&MATCH(...)) で引く)"
+    ws["E9"] = '(シナリオ計算!D2 が INDIRECT("設定!F"&MATCH(...)) で引く)'
     ws["E9"].font = NOTE_FONT
 
     _set_col_widths(ws, {"A": 14, "B": 16, "C": 30, "D": 2, "E": 14, "F": 12})
@@ -361,14 +361,20 @@ def build_scenario_calc_sheet(wb: Workbook) -> None:
     ws["A3"].font = NOTE_FONT
 
     # --- 商品ごとの予測表 ---
-    _set_header(ws, 5, ["商品コード", "商品名", "単価", "標準月販予測", "シナリオ調整後", "在庫月数"])
+    _set_header(
+        ws, 5, ["商品コード", "商品名", "単価", "標準月販予測", "シナリオ調整後", "在庫月数"]
+    )
 
     last_master_row = 3 + len(PRODUCTS)
     for i, _ in enumerate(PRODUCTS, start=6):
         master_row = i - 2  # 商品マスタ の対応行
         ws.cell(row=i, column=1, value=f"=商品マスタ!A{master_row}")
-        ws.cell(row=i, column=2, value=f"=VLOOKUP(A{i},商品マスタ!$A$4:$E${last_master_row},2,FALSE)")
-        ws.cell(row=i, column=3, value=f"=VLOOKUP(A{i},商品マスタ!$A$4:$E${last_master_row},4,FALSE)").number_format = "#,##0"
+        ws.cell(
+            row=i, column=2, value=f"=VLOOKUP(A{i},商品マスタ!$A$4:$E${last_master_row},2,FALSE)"
+        )
+        ws.cell(
+            row=i, column=3, value=f"=VLOOKUP(A{i},商品マスタ!$A$4:$E${last_master_row},4,FALSE)"
+        ).number_format = "#,##0"
         # 標準月販予測 = 日次売上の SUMIFS (商品コード一致)
         ws.cell(
             row=i,
@@ -419,8 +425,12 @@ def build_pivot_by_category_sheet(wb: Workbook) -> None:
 
     for i, cat in enumerate(CATEGORIES, start=5):
         ws.cell(row=i, column=1, value=cat).font = Font(bold=True)
-        ws.cell(row=i, column=2, value=f'=SUMIFS(日次売上!E:E,日次売上!C:C,A{i})').number_format = "#,##0"
-        ws.cell(row=i, column=3, value=f'=SUMIFS(日次売上!D:D,日次売上!C:C,A{i})').number_format = "#,##0"
+        ws.cell(
+            row=i, column=2, value=f"=SUMIFS(日次売上!E:E,日次売上!C:C,A{i})"
+        ).number_format = "#,##0"
+        ws.cell(
+            row=i, column=3, value=f"=SUMIFS(日次売上!D:D,日次売上!C:C,A{i})"
+        ).number_format = "#,##0"
         ws.cell(row=i, column=4, value=f"=IF(C{i}=0,0,B{i}/C{i})").number_format = "#,##0"
 
     # 合計行
@@ -448,10 +458,10 @@ def build_dashboard_sheet(wb: Workbook) -> None:
 
     # --- KPI カード ---
     kpi_defs = [
-        ("総売上",       "=SUM(日次売上!E:E)",                       "#,##0"),
-        ("販売数量",     "=SUM(日次売上!D:D)",                       "#,##0"),
-        ("客単価",       "=IFERROR(SUM(日次売上!E:E)/SUM(日次売上!D:D),0)", "#,##0"),
-        ("在庫過剰商品", "=COUNTIF(シナリオ計算!F6:F100,\">=6\")",       "0"),
+        ("総売上", "=SUM(日次売上!E:E)", "#,##0"),
+        ("販売数量", "=SUM(日次売上!D:D)", "#,##0"),
+        ("客単価", "=IFERROR(SUM(日次売上!E:E)/SUM(日次売上!D:D),0)", "#,##0"),
+        ("在庫過剰商品", '=COUNTIF(シナリオ計算!F6:F100,">=6")', "0"),
     ]
     for i, (label, formula, fmt) in enumerate(kpi_defs):
         col = 1 + i * 2
@@ -493,7 +503,7 @@ def build_dashboard_sheet(wb: Workbook) -> None:
         ws.cell(
             row=i,
             column=2,
-            value=f'=SUMIFS(日次売上!E:E,日次売上!F:F,A{i})',
+            value=f"=SUMIFS(日次売上!E:E,日次売上!F:F,A{i})",
         ).number_format = "#,##0"
 
     line = LineChart()
@@ -508,7 +518,9 @@ def build_dashboard_sheet(wb: Workbook) -> None:
     ws.add_chart(line, "D16")
 
     # --- ボタン用プレースホルダ (inject_vba.ps1 でフォームコントロール追加) ---
-    ws["A26"] = "[ボタン: 月次更新] ← inject_vba.ps1 でフォームコントロールが追加され、MonthlyUpdate にリンクします"
+    ws["A26"] = (
+        "[ボタン: 月次更新] ← inject_vba.ps1 でフォームコントロールが追加され、MonthlyUpdate にリンクします"
+    )
     ws["A26"].font = NOTE_FONT
 
     _set_col_widths(ws, {"A": 16, "B": 14, "C": 16, "D": 14, "E": 16, "F": 14})
@@ -523,7 +535,7 @@ def build_report_sheet(wb: Workbook) -> None:
     ws.merge_cells("A1:F1")
     ws["A1"].alignment = Alignment(horizontal="center")
 
-    ws["A2"] = "=\"対象期間: \"&設定!B6"
+    ws["A2"] = '="対象期間: "&設定!B6'
     ws["A2"].font = NOTE_FONT
     ws.merge_cells("A2:F2")
     ws["A2"].alignment = Alignment(horizontal="center")
@@ -564,7 +576,9 @@ def build_report_sheet(wb: Workbook) -> None:
         ws.cell(row=i, column=2, value=f"=PivotByCategory!B{src_row}").number_format = "#,##0"
         ws.cell(row=i, column=3, value=f"=PivotByCategory!C{src_row}").number_format = "#,##0"
         ws.cell(row=i, column=4, value=f"=PivotByCategory!D{src_row}").number_format = "#,##0"
-        ws.cell(row=i, column=5, value=f"=IFERROR(B{i}/PivotByCategory!B{src_row + len(CATEGORIES)},0)").number_format = "0.0%"
+        ws.cell(
+            row=i, column=5, value=f"=IFERROR(B{i}/PivotByCategory!B{src_row + len(CATEGORIES)},0)"
+        ).number_format = "0.0%"
 
     ws["A16"] = "備考"
     ws["A16"].font = SUBTITLE_FONT

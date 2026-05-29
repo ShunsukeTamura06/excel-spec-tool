@@ -660,9 +660,7 @@ def _section_observations(wb: Workbook) -> str:
                 f"{_md_escape(risk.evidence)} | {_md_escape(risk.recommendation)} |"
             )
         if len(wb.analysis_risks) > 50:
-            lines.append(
-                f"| ... | ... | ... | 他 {len(wb.analysis_risks) - 50} 件 | ... |"
-            )
+            lines.append(f"| ... | ... | ... | 他 {len(wb.analysis_risks) - 50} 件 | ... |")
 
     lines += [
         "",

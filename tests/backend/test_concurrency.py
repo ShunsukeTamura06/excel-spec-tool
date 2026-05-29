@@ -59,9 +59,7 @@ class _SlowLLM:
         time.sleep(self.delay_sec)
         return "[slow] done"
 
-    def annotate_text(
-        self, prompt: str, content: str, tier: ModelTier = "fast"
-    ) -> str:
+    def annotate_text(self, prompt: str, content: str, tier: ModelTier = "fast") -> str:
         time.sleep(self.delay_sec)
         return "[slow] annotation"
 

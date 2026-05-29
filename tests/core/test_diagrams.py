@@ -178,11 +178,7 @@ class TestVbaCallGraph:
 
     def test_function_call_expression(self) -> None:
         """`x = Helper(1)` のような式形式の呼び出しを検出する."""
-        helper_code = (
-            "Function Helper(n As Long) As Long\n"
-            "    Helper = n * 2\n"
-            "End Function"
-        )
+        helper_code = "Function Helper(n As Long) As Long\n    Helper = n * 2\nEnd Function"
         modules = [
             VbaModule(
                 name="M1",

@@ -893,9 +893,7 @@ def _extract_charts(file_path: Path, sheet_names: list[str]) -> dict[str, list[C
                         c_nv_pr = _first_descendant(anchor, "cNvPr")
                         name = ""
                         if c_nv_pr is not None:
-                            name = c_nv_pr.attrib.get("name", "") or c_nv_pr.attrib.get(
-                                "descr", ""
-                            )
+                            name = c_nv_pr.attrib.get("name", "") or c_nv_pr.attrib.get("descr", "")
                         try:
                             title, chart_type, series = _parse_chart_xml(zf.read(chart_path))
                         except KeyError:

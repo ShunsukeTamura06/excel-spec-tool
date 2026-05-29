@@ -29,7 +29,7 @@ BDH = ExternalFunction(
         "通常のセル入力で動くが、レガシー Excel では Ctrl+Shift+Enter での"
         "配列確定が必要なケースがある。"
     ),
-    signature='=BDH(security, fields, start_date, [end_date], [optional_args...])',
+    signature="=BDH(security, fields, start_date, [end_date], [optional_args...])",
     params=[
         ExternalFunctionParam(
             name="security",
@@ -52,16 +52,13 @@ BDH = ExternalFunction(
         ExternalFunctionParam(
             name="start_date",
             description=(
-                "開始日。Excel 日付値、セル参照、または特殊文字列 "
-                '("-1Y", "-3M", "TODAY()") も可。'
+                '開始日。Excel 日付値、セル参照、または特殊文字列 ("-1Y", "-3M", "TODAY()") も可。'
             ),
             type="date",
         ),
         ExternalFunctionParam(
             name="end_date",
-            description=(
-                "終了日 (省略時は最新日)。start_date と同様の形式。"
-            ),
+            description=("終了日 (省略時は最新日)。start_date と同様の形式。"),
             required=False,
             type="date",
         ),
@@ -113,12 +110,12 @@ BDP = ExternalFunction(
         "リアルタイム購読設定が有効なフィールド (例: PX_LAST) の場合、ティック更新で"
         "自動再計算される。BDH と違い 1 セルに 1 値が返るだけなので spilling は起こらない。"
     ),
-    signature='=BDP(security, field, [optional_args...])',
+    signature="=BDP(security, field, [optional_args...])",
     params=[
         ExternalFunctionParam(
             name="security",
             description=(
-                'Bloomberg ticker + yellow key 形式の証券識別子。'
+                "Bloomberg ticker + yellow key 形式の証券識別子。"
                 'BDH と同じ規則 (例: "AAPL US Equity")。'
             ),
             type="security",
@@ -126,7 +123,7 @@ BDP = ExternalFunction(
         ExternalFunctionParam(
             name="field",
             description=(
-                'データ項目コード (1 つ)。例: PX_LAST, NAME, INDUSTRY_SECTOR, '
+                "データ項目コード (1 つ)。例: PX_LAST, NAME, INDUSTRY_SECTOR, "
                 "CRNCY, CUR_MKT_CAP, EQY_DVD_YLD_IND。FLDS <GO> で検索可能。"
             ),
             type="field",
@@ -134,8 +131,7 @@ BDP = ExternalFunction(
         ExternalFunctionParam(
             name="optional_args",
             description=(
-                "オーバーライド (e.g. EQY_FUND_CRNCY=JPY) や換算指定。"
-                "name/value のペアで並べる。"
+                "オーバーライド (e.g. EQY_FUND_CRNCY=JPY) や換算指定。name/value のペアで並べる。"
             ),
             required=False,
             type="string",
@@ -174,7 +170,7 @@ BDS = ExternalFunction(
         "返り値は 2 次元配列で、行数・列数は項目によって可変。Bloomberg 公式の field "
         "リストで「Bulk Data」と分類されているフィールドが BDS の対象。"
     ),
-    signature='=BDS(security, field, [optional_args...])',
+    signature="=BDS(security, field, [optional_args...])",
     params=[
         ExternalFunctionParam(
             name="security",
@@ -187,7 +183,7 @@ BDS = ExternalFunction(
         ExternalFunctionParam(
             name="field",
             description=(
-                'Bulk data フィールド。例: INDX_MEMBERS (構成銘柄), DVD_HIST_ALL '
+                "Bulk data フィールド。例: INDX_MEMBERS (構成銘柄), DVD_HIST_ALL "
                 "(配当履歴), TOP_20_HOLDERS_PUBLIC_FILINGS, RELATED_SECURITIES。"
             ),
             type="field",

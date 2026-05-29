@@ -18,9 +18,7 @@ def _seed(storage: Storage, wb: Workbook) -> str:
 
 
 class TestWorkbookRoute:
-    def test_returns_workbook_json(
-        self, client: TestClient, backend_storage: Storage
-    ) -> None:
+    def test_returns_workbook_json(self, client: TestClient, backend_storage: Storage) -> None:
         wb = Workbook(
             filename="demo.xlsx",
             sheets=[
@@ -49,9 +47,7 @@ class TestWorkbookRoute:
         r = client.get(f"/workbook/{uuid.uuid4()}")
         assert r.status_code == 404
 
-    def test_409_when_not_extracted(
-        self, client: TestClient, backend_storage: Storage
-    ) -> None:
+    def test_409_when_not_extracted(self, client: TestClient, backend_storage: Storage) -> None:
         meta = backend_storage.create_job("foo.xlsm", b"d")
         r = client.get(f"/workbook/{meta.job_id}")
         assert r.status_code == 409

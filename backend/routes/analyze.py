@@ -78,9 +78,7 @@ async def analyze(
     logger.info("analyze started: sheets=%d vba_modules=%d", len(wb.sheets), len(wb.vba_modules))
 
     try:
-        spec_chars = await asyncio.to_thread(
-            _run_analysis, storage, llm, job_id, wb, idx
-        )
+        spec_chars = await asyncio.to_thread(_run_analysis, storage, llm, job_id, wb, idx)
     except Exception as e:
         logger.exception("analyze failed")
         # ベストエフォートでステータスを更新 (再度 to_thread で safe に呼ぶ)
