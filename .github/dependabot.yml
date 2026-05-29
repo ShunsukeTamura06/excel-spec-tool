@@ -1,0 +1,42 @@
+# Dependabot configuration.
+# Weekly update PRs for Python (pip), Node (npm), and GitHub Actions.
+# Reviewers / labels can be added later when contributors join.
+
+version: 2
+updates:
+  # ---- Python dependencies (managed via uv but resolved against PyPI) ----
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      python-minor:
+        update-types: ["minor", "patch"]
+
+  # ---- Frontend (Nuxt / pnpm) ----
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      nuxt-ecosystem:
+        patterns:
+          - "nuxt"
+          - "@nuxt/*"
+          - "@nuxtjs/*"
+      vue-flow:
+        patterns:
+          - "@vue-flow/*"
+      frontend-minor:
+        update-types: ["minor", "patch"]
+
+  # ---- GitHub Actions ----
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
