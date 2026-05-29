@@ -1,5 +1,10 @@
 # xlblueprint
 
+[![CI](https://github.com/ShunsukeTamura06/xlblueprint/actions/workflows/ci.yml/badge.svg)](https://github.com/ShunsukeTamura06/xlblueprint/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Nuxt 3](https://img.shields.io/badge/Nuxt-3-00DC82.svg?logo=nuxt.js&logoColor=white)](https://nuxt.com/)
+
 > **Understand and safely modernize legacy Excel workbooks (.xlsm / .xlsx)
 > with an LLM that knows where every formula and VBA reference leads.**
 
