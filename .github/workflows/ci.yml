@@ -59,7 +59,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['20', '22']
+        # pnpm@11 (package.json packageManager) は Node >= 22.13 が必須のため 20 は外す
+        node-version: ['22']
     defaults:
       run:
         working-directory: frontend

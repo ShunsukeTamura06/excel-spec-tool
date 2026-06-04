@@ -201,7 +201,13 @@ export function useBackend() {
       fast_model: string
     } | null> {
       try {
-        return await $fetch('/system/llm-status', { baseURL, timeout: 5_000 })
+        // URL を string 扱いにして typed-routes の再帰的な型解決 (TS2321) を回避する
+        return await $fetch<{
+          configured: boolean
+          mode: string
+          pro_model: string
+          fast_model: string
+        }>('/system/llm-status' as string, { baseURL, timeout: 5_000 })
       } catch {
         return null
       }
