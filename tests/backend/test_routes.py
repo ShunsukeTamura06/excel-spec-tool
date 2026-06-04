@@ -38,19 +38,26 @@ class TestExtract:
         # UUIDv4 形式
         uuid.UUID(body["job_id"], version=4)
 
-    def test_extract_xls_returns_empty_sheets(
-        self, client: TestClient, backend_storage: Storage
-    ) -> None:
-        # 中身が無くても .xls なら早期 return パスでジョブが完成する
+    def test_extract_xls_returns_guidance(self, client: TestClient) -> None:
+        # .xls は解析できないため 415 で弾き、変換方法を案内する。
         r = client.post(
             "/extract",
             files={"file": ("legacy.xls", b"not real xls", "application/octet-stream")},
         )
-        assert r.status_code == 200, r.text
-        job_id = r.json()["job_id"]
-        wb = backend_storage.load_workbook(job_id)
-        assert wb.sheets == []
-        assert backend_storage.get_meta(job_id).status == "extracted"
+        assert r.status_code == 415, r.text
+        detail = r.json()["detail"]
+        assert ".xls" in detail
+        # 「できない」だけでなく、次の一手 (.xlsm / .xlsx への変換) を案内している
+        assert ".xlsm" in detail
+        assert ".xlsx" in detail
+
+    def test_extract_xls_uppercase_suffix_also_rejected(self, client: TestClient) -> None:
+        # 拡張子の大文字小文字に依存せず弾く。
+        r = client.post(
+            "/extract",
+            files={"file": ("LEGACY.XLS", b"not real xls", "application/octet-stream")},
+        )
+        assert r.status_code == 415, r.text
 
     def test_extract_corrupt_xlsx_returns_422(self, client: TestClient) -> None:
         r = client.post(

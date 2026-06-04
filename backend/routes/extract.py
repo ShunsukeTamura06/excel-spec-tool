@@ -32,6 +32,17 @@ router = APIRouter()
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 50 * 1024 * 1024))
 _UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
+# .xls (旧バイナリ形式) は openpyxl で開けず、抽出すると空の Workbook になる。
+# 黙って受け付けると LLM が「検出不能」と答えて会話が終わり、ユーザーは次の一手を
+# 失う。アップロード時点で弾き、変換方法を案内する (関連メモリ: friendly message)。
+_UNSUPPORTED_LEGACY_SUFFIX = ".xls"
+_XLS_GUIDANCE = (
+    "「.xls」形式（旧Excel）はそのままでは解析できません。"
+    "Excelでこのファイルを開き、マクロを含む場合は「Excelマクロ有効ブック（.xlsm）」、"
+    "含まない場合は「Excelブック（.xlsx）」として保存し直してから、"
+    "もう一度アップロードしてください。"
+)
+
 
 async def _read_capped(file: UploadFile, limit: int) -> bytes:
     """UploadFile を limit までチャンク読みする. 超過したら HTTPException(413).
@@ -117,6 +128,11 @@ async def extract(
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="filename is required")
+
+    # .xls は解析できないので、巨大ファイルを読む前に弾いて変換方法を案内する。
+    if os.path.splitext(file.filename)[1].lower() == _UNSUPPORTED_LEGACY_SUFFIX:
+        logger.info("extract rejected: legacy .xls upload filename=%s", file.filename)
+        raise HTTPException(status_code=415, detail=_XLS_GUIDANCE)
 
     data = await _read_capped(file, MAX_UPLOAD_BYTES)
     if not data:

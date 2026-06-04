@@ -129,7 +129,7 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
         </h1>
         <p class="mt-2 text-(--ui-text-muted) max-w-2xl">
           VBA / 数式 / 参照関係を含む <code class="text-xs px-1 py-0.5 rounded bg-(--ui-bg-elevated)">.xlsm</code> /
-          <code class="text-xs px-1 py-0.5 rounded bg-(--ui-bg-elevated)">.xls</code>
+          <code class="text-xs px-1 py-0.5 rounded bg-(--ui-bg-elevated)">.xlsx</code>
           ツールの統合設計書を生成し、LLM と対話しながら安全に改修するためのワークベンチ。
         </p>
       </div>
