@@ -212,14 +212,13 @@ class TestExtractBuildsCellsDb:
         ).json()["job_id"]
         assert backend_storage.has_cells_db(job_id)
 
-    def test_xls_does_not_build_cells_db(
+    def test_xls_is_rejected_before_cells_db(
         self, client: TestClient, backend_storage: Storage
     ) -> None:
-        # .xls は cells.db 生成スキップ
+        # .xls は解析できないためアップロード時点で 415 で弾かれ、ジョブも cells.db も作られない
         r = client.post(
             "/extract",
             files={"file": ("a.xls", b"not real", "application/octet-stream")},
         )
-        assert r.status_code == 200
-        job_id = r.json()["job_id"]
-        assert not backend_storage.has_cells_db(job_id)
+        assert r.status_code == 415, r.text
+        assert backend_storage.list_jobs() == []
