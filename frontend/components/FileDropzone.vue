@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * .xlsm / .xls / .xlsx ファイル受付用ドロップゾーン.
+ * .xlsm / .xlsx ファイル受付用ドロップゾーン.
  * クリックでファイル選択ダイアログ、またはドラッグ&ドロップ.
  */
 
@@ -8,7 +8,7 @@ const props = withDefaults(
   defineProps<{ disabled?: boolean; accept?: string }>(),
   {
     disabled: false,
-    accept: '.xlsm,.xls,.xlsx',
+    accept: '.xlsm,.xlsx',
   },
 )
 const emit = defineEmits<{ select: [file: File] }>()
@@ -71,7 +71,7 @@ function onDrop(e: DragEvent) {
           {{ dragOver ? 'ここにドロップ' : 'クリックまたはドラッグ&ドロップで Excel をアップロード' }}
         </p>
         <p class="text-xs text-(--ui-text-muted) mt-1">
-          対応: .xlsm / .xls / .xlsx ・ 上限 50MB ・ 同じ内容は既存結果を再利用
+          対応: .xlsm / .xlsx ・ 上限 50MB ・ 同じ内容は既存結果を再利用
         </p>
       </div>
     </div>

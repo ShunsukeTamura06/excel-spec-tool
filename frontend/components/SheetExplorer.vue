@@ -73,7 +73,7 @@ const previewColumnLetters = computed<string[]>(() => {
 <template>
   <div v-if="props.sheets.length === 0" class="rounded-2xl border border-dashed border-(--ui-border) p-10 text-center">
     <UIcon name="i-lucide-file-x" class="size-8 mx-auto text-(--ui-text-muted) mb-2" />
-    <p class="text-sm text-(--ui-text-muted)">シートがありません (.xls の場合 openpyxl で読めない可能性あり)</p>
+    <p class="text-sm text-(--ui-text-muted)">シートがありません</p>
   </div>
   <div v-else class="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
     <!-- 左: シート選択 -->
