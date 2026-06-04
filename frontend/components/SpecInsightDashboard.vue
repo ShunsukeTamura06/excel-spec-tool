@@ -192,12 +192,21 @@ const riskCategoryLabel: Record<AnalysisRiskItem['category'], string> = {
   unknown_object_dependency: 'オブジェクト依存不明',
 }
 
-const severityColor: Record<AnalysisRiskItem['severity'], string> =
-  {
-    high: 'error',
-    medium: 'warning',
-    low: 'neutral',
-  } as const
+// UBadge の color prop が受け付ける union 型。string だと TS2322 になるため明示する。
+type BadgeColor =
+  | 'error'
+  | 'warning'
+  | 'primary'
+  | 'secondary'
+  | 'success'
+  | 'info'
+  | 'neutral'
+
+const severityColor: Record<AnalysisRiskItem['severity'], BadgeColor> = {
+  high: 'error',
+  medium: 'warning',
+  low: 'neutral',
+}
 </script>
 
 <template>
