@@ -409,8 +409,8 @@ function parseBlocks(markdown: string): Block[] {
     if (heading) {
       blocks.push({
         kind: 'heading',
-        level: heading[1].length as 2 | 3,
-        text: heading[2],
+        level: heading[1]!.length as 2 | 3,
+        text: heading[2]!,
       })
       i += 1
       continue
@@ -420,7 +420,7 @@ function parseBlocks(markdown: string): Block[] {
     while (i < lines.length) {
       const match = (lines[i] ?? '').match(/^\s*[-*]\s+(.+)$/)
       if (!match) break
-      unorderedItems.push(match[1])
+      unorderedItems.push(match[1]!)
       i += 1
     }
     if (unorderedItems.length) {
@@ -432,7 +432,7 @@ function parseBlocks(markdown: string): Block[] {
     while (i < lines.length) {
       const match = (lines[i] ?? '').match(/^\s*\d+\.\s+(.+)$/)
       if (!match) break
-      orderedItems.push(match[1])
+      orderedItems.push(match[1]!)
       i += 1
     }
     if (orderedItems.length) {

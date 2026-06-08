@@ -53,7 +53,7 @@ function hashString(value: string): number {
 }
 
 function edgeColor(source: string, index: number): string {
-  return EDGE_PALETTE[(hashString(source) + index) % EDGE_PALETTE.length]
+  return EDGE_PALETTE[(hashString(source) + index) % EDGE_PALETTE.length]!
 }
 
 function edgeOffset(index: number): number {

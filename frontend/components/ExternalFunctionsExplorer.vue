@@ -37,9 +37,9 @@ async function load() {
     registry.value = reg
     usage.value = used
     if (used.items.length > 0) {
-      selectedName.value = used.items[0].name
+      selectedName.value = used.items[0]!.name
     } else if (reg.functions.length > 0) {
-      selectedName.value = reg.functions[0].name
+      selectedName.value = reg.functions[0]!.name
     }
   } catch (e) {
     errorMsg.value = friendlyMessage(e)
