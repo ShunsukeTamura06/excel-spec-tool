@@ -19,7 +19,7 @@ importers:
         version: 1.2.108
       '@nuxt/ui':
         specifier: ^3.0.0
-        version: 3.3.7(@babel/parser@7.29.3)(db0@0.3.4)(embla-carousel@8.6.0)(ioredis@5.10.1)(magicast@0.5.2)(typescript@6.0.3)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.47.1)(yaml@2.9.0))(vue-router@4.6.4(vue@3.5.34(typescript@6.0.3)))(vue@3.5.34(typescript@6.0.3))
+        version: 3.3.7(@babel/parser@7.29.3)(db0@0.3.4)(embla-carousel@8.6.0)(ioredis@5.10.1)(magicast@0.5.2)(typescript@6.0.3)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.47.1)(yaml@2.9.0))(vue-router@5.1.0(@vue/compiler-sfc@3.5.34)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.34(typescript@6.0.3)))(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.47.1)(yaml@2.9.0))(vue@3.5.34(typescript@6.0.3)))(vue@3.5.34(typescript@6.0.3))
       '@nuxtjs/mdc':
         specifier: ^0.13.0
         version: 0.13.5(magicast@0.5.2)
@@ -54,8 +54,8 @@ importers:
         specifier: ^3.5.0
         version: 3.5.34(typescript@6.0.3)
       vue-router:
-        specifier: ^4.4.0
-        version: 4.6.4(vue@3.5.34(typescript@6.0.3))
+        specifier: ^5.1.0
+        version: 5.1.0(@vue/compiler-sfc@3.5.34)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.34(typescript@6.0.3)))(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.47.1)(yaml@2.9.0))(vue@3.5.34(typescript@6.0.3))
     devDependencies:
       '@types/dagre':
         specifier: ^0.7.52
@@ -4824,11 +4824,6 @@ packages:
   vue-devtools-stub@0.1.0:
     resolution: {integrity: sha512-RutnB7X8c5hjq39NceArgXg28WZtZpGc3+J16ljMiYnFhKvd8hITxSWQSQ5bvldxMDU6gG5mkxl1MTQLXckVSQ==}
 
-  vue-router@4.6.4:
-    resolution: {integrity: sha512-Hz9q5sa33Yhduglwz6g9skT8OBPii+4bFn88w6J+J4MfEo4KRRpmiNG/hHHkdbRFlLBOqxN8y8gf2Fb0MTUgVg==}
-    peerDependencies:
-      vue: ^3.5.0
-
   vue-router@5.1.0:
     resolution: {integrity: sha512-HAbiLzLEHQwxPgvsbOJDAwtavszEgLwri6XfyrsPECIFez8+59xc9LofWVdc/HEaSRT822lJ8H9Ns38VVond5g==}
     peerDependencies:
@@ -5937,7 +5932,7 @@ snapshots:
       rc9: 3.0.1
       std-env: 4.1.0
 
-  '@nuxt/ui@3.3.7(@babel/parser@7.29.3)(db0@0.3.4)(embla-carousel@8.6.0)(ioredis@5.10.1)(magicast@0.5.2)(typescript@6.0.3)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.47.1)(yaml@2.9.0))(vue-router@4.6.4(vue@3.5.34(typescript@6.0.3)))(vue@3.5.34(typescript@6.0.3))':
+  '@nuxt/ui@3.3.7(@babel/parser@7.29.3)(db0@0.3.4)(embla-carousel@8.6.0)(ioredis@5.10.1)(magicast@0.5.2)(typescript@6.0.3)(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.47.1)(yaml@2.9.0))(vue-router@5.1.0(@vue/compiler-sfc@3.5.34)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.34(typescript@6.0.3)))(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.47.1)(yaml@2.9.0))(vue@3.5.34(typescript@6.0.3)))(vue@3.5.34(typescript@6.0.3))':
     dependencies:
       '@iconify/vue': 5.0.1(vue@3.5.34(typescript@6.0.3))
       '@internationalized/date': 3.12.1
@@ -5984,7 +5979,7 @@ snapshots:
       vaul-vue: 0.4.1(reka-ui@2.6.0(typescript@6.0.3)(vue@3.5.34(typescript@6.0.3)))(vue@3.5.34(typescript@6.0.3))
       vue-component-type-helpers: 3.2.8
     optionalDependencies:
-      vue-router: 4.6.4(vue@3.5.34(typescript@6.0.3))
+      vue-router: 5.1.0(@vue/compiler-sfc@3.5.34)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.34(typescript@6.0.3)))(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.47.1)(yaml@2.9.0))(vue@3.5.34(typescript@6.0.3))
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -10313,11 +10308,6 @@ snapshots:
       vue: 3.5.34(typescript@6.0.3)
 
   vue-devtools-stub@0.1.0: {}
-
-  vue-router@4.6.4(vue@3.5.34(typescript@6.0.3)):
-    dependencies:
-      '@vue/devtools-api': 6.6.4
-      vue: 3.5.34(typescript@6.0.3)
 
   vue-router@5.1.0(@vue/compiler-sfc@3.5.34)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.34(typescript@6.0.3)))(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.47.1)(yaml@2.9.0))(vue@3.5.34(typescript@6.0.3)):
     dependencies:
