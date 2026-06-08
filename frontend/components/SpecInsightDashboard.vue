@@ -43,7 +43,7 @@ const sheetEdges = computed<SheetEdge[]>(() => {
     }
   }
   return Array.from(counter.entries()).map(([key, weight]) => {
-    const [from, to] = key.split('')
+    const [from = '', to = ''] = key.split('')
     return { from, to, weight }
   })
 })

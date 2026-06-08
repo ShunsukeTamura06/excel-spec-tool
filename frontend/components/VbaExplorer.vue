@@ -15,8 +15,9 @@ const selected = ref<Selection>(null)
 watchEffect(() => {
   if (!selected.value && props.modules.length > 0) {
     const m = props.modules[0]
-    if (m.procedures.length > 0) {
-      selected.value = { moduleName: m.name, procName: m.procedures[0].name }
+    const proc = m?.procedures[0]
+    if (m && proc) {
+      selected.value = { moduleName: m.name, procName: proc.name }
     }
   }
 })

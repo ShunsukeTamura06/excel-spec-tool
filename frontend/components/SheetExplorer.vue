@@ -50,7 +50,7 @@ function colToLetter(n: number): string {
 function parseOrigin(origin: string): { col: number; row: number } {
   const m = origin.match(/^([A-Za-z]+)(\d+)$/)
   if (!m) return { col: 1, row: 1 }
-  return { col: letterToCol(m[1]), row: Number(m[2]) }
+  return { col: letterToCol(m[1]!), row: Number(m[2]) }
 }
 
 const previewOriginRow = computed(() => {
