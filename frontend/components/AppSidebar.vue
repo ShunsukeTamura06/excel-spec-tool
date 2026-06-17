@@ -11,6 +11,16 @@ const route = useRoute()
 const jobStore = useJobStore()
 const colorMode = useColorMode()
 
+// colorMode.value は SSR 時にユーザーの実際の配色を解決できず、クライアント
+// 初回描画と食い違ってハイドレーション不一致 (アイコン/aria-label) を起こす。
+// マウント完了までは既定 (ライト相当) を描画し、マウント後に確定させることで
+// SSR と初回クライアント描画を一致させる。
+const mounted = ref(false)
+onMounted(() => {
+  mounted.value = true
+})
+const isDark = computed(() => mounted.value && colorMode.value === 'dark')
+
 const navItems = computed(() => {
   const id = jobStore.currentJobId
   return [
@@ -94,11 +104,11 @@ function toggleDark() {
     <!-- Footer -->
     <div class="px-3 py-3 border-t border-(--ui-border) flex items-center justify-between">
       <UButton
-        :icon="colorMode.value === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
+        :icon="isDark ? 'i-lucide-sun' : 'i-lucide-moon'"
         color="neutral"
         variant="ghost"
         size="sm"
-        :aria-label="colorMode.value === 'dark' ? 'ライトモードに切替' : 'ダークモードに切替'"
+        :aria-label="isDark ? 'ライトモードに切替' : 'ダークモードに切替'"
         @click="toggleDark"
       />
       <AppBackendStatus />
