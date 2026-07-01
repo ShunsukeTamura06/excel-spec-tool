@@ -6,9 +6,12 @@
 1. ヘッドレスで .xlsm/.xlsx を開けるか (ダイアログを抑制できるか)
 2. 全シートの計算結果スナップショットを取得できるか (= 回帰テストの基盤)
 3. 2回再計算して差分 → 非決定セル (揮発関数等) を検出できるか (= テスト化の決定性)
-4. 入力セル書込→再計算→出力読取で「波及 (blast radius)」を観測できるか
-5. VBIDE 経由で VBA モジュール/プロシージャを列挙できるか (GPO で禁止されていないか)
-6. 任意マクロを実行できるか
+4. Excel 自身で「開いて保存し直しただけ」のとき、生 XML (zip パーツ) と
+   計算値の両方でどれだけノイズが出るか (= 正規化 diff がノイズを吸収できるかの実機確認。
+   spikes/xlsx_diff_noise/ で openpyxl 上では確認済み。ここでは本物の Excel の保存を見る)
+5. 入力セル書込→再計算→出力読取で「波及 (blast radius)」を観測できるか
+6. VBIDE 経由で VBA モジュール/プロシージャを列挙できるか (GPO で禁止されていないか)
+7. 任意マクロを実行できるか
 
 結果は JSON レポートとログにまとめ、1つの zip バンドルに固める。
 
@@ -138,6 +141,23 @@ def _diff(before: dict[str, str], after: dict[str, str]) -> list[str]:
     for addr in before:
         if addr not in after:
             changed.append(addr)
+    return sorted(set(changed))
+
+
+def _diff_raw_zip_part_names(before: Path, after: Path) -> list[str]:
+    """2つの xlsx/xlsm の zip 内パーツをバイト単位で比較し、内容が変わったパーツ名だけを返す.
+
+    パーツの中身 (業務データを含みうる) は一切バンドルに残さない。
+    spikes/xlsx_diff_noise/probe.py の同名ロジックと同じ考え方。
+    """
+
+    with zipfile.ZipFile(before) as zf_before, zipfile.ZipFile(after) as zf_after:
+        names_before = set(zf_before.namelist())
+        names_after = set(zf_after.namelist())
+        changed = list(names_before ^ names_after)
+        for name in names_before & names_after:
+            if zf_before.read(name) != zf_after.read(name):
+                changed.append(name)
     return sorted(set(changed))
 
 
@@ -320,7 +340,48 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
         steps.append(st)
         _log_step(st)
 
-        # 4) 入力書込→再計算→波及観測 (任意)
+        # 4) Excel 自身で開いて保存し直しただけのノイズを実測する
+        logger.info("保存し直しのノイズを確認中 (SaveCopyAs)...")
+        st = Step("excel_resave_noise")
+        t0 = time.perf_counter()
+        try:
+            resave_copy = tmp_dir / f"resave_{work_copy.name}"
+            workbook.SaveCopyAs(str(resave_copy))
+            raw_changed = _diff_raw_zip_part_names(work_copy, resave_copy)
+            resave_wb = app.Workbooks.Open(str(resave_copy), UpdateLinks=0, ReadOnly=True)
+            try:
+                resave_snap = _snapshot(resave_wb)
+            finally:
+                resave_wb.Close(SaveChanges=False)
+            # snap2 (直前の再計算後スナップショット) と比較。ここで出てくる差分は
+            # 「保存し直しただけで値が変わったセル」+「その間に再取得された揮発値
+            # (Bloomberg 等、determinism_recalc で既知の nondeterministic 集合)」が
+            # 混ざる。既知集合を差し引いた「新顔」があれば、保存し直しが生んだ
+            # 本物の値変化の疑いがある (=正規化 diff だけでは吸収できないノイズ)。
+            semantic_changed = _diff(snap2, resave_snap)
+            unexplained = sorted(set(semantic_changed) - set(nondeterministic))
+            st.ok = True
+            st.detail = {
+                "raw_xml_parts_changed_count": len(raw_changed),
+                "raw_xml_parts_changed": raw_changed,
+                "semantic_value_diff_count": len(semantic_changed),
+                "semantic_value_diff_sample": semantic_changed[:30],
+                "unexplained_by_known_volatility_count": len(unexplained),
+                "unexplained_by_known_volatility_sample": unexplained[:30],
+                "note": "raw_xml_parts_changed は、何も編集せず保存し直すだけで Excel 自身が"
+                "触る XML パーツ (calcChain/sharedStrings/styles/rels 等のノイズ想定)。"
+                "unexplained_by_known_volatility は、determinism_recalc で既に判明している"
+                "揮発セル集合を差し引いた残り。0 件なら『保存し直しによる本物の値変化はない』"
+                "= 正規化 diff (値ベース比較) でノイズを無視できる根拠になる。",
+            }
+        except Exception as exc:  # noqa: BLE001
+            st.ok = False
+            st.error = f"{type(exc).__name__}: {exc}"
+        st.elapsed_s = time.perf_counter() - t0
+        steps.append(st)
+        _log_step(st)
+
+        # 5) 入力書込→再計算→波及観測 (任意)
         if args.input_cell:
             logger.info("入力セルを書き換えて波及を観測中: %s", args.input_cell)
             st = Step("blast_radius")
@@ -354,13 +415,13 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
             steps.append(st)
             _log_step(st)
 
-        # 5) VBIDE アクセス
+        # 6) VBIDE アクセス
         logger.info("VBIDE 経由で VBA アクセスを確認中...")
         vbide_step = _probe_vbide(workbook)
         steps.append(vbide_step)
         _log_step(vbide_step)
 
-        # 6) マクロ実行 (任意)
+        # 7) マクロ実行 (任意)
         if args.run_macro:
             logger.info("マクロを実行中: %s", args.run_macro)
             st = Step("run_macro")
