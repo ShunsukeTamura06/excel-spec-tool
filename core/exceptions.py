@@ -11,3 +11,7 @@ class ExtractionError(CoreError):
 
 class UnsupportedFormatError(CoreError):
     """対応していないファイル形式が渡された."""
+
+
+class DiffError(CoreError):
+    """workbook_diff の実行時失敗 (before/after ファイルの読み込み・cells.db 構築失敗)."""
