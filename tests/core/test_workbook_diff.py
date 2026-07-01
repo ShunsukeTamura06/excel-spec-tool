@@ -25,12 +25,12 @@ from core.models import (
     Workbook,
 )
 from core.workbook_diff import (
-    _build_blast_radius,
+    build_blast_radius,
     _diff_cells,
     _diff_charts,
     _diff_conditional_formats,
     _diff_data_validations,
-    _diff_named_ranges,
+    diff_named_ranges,
     _diff_pivot_tables,
     _diff_vba_modules,
     diff_workbooks,
@@ -142,7 +142,7 @@ class TestNamedRangeDiff:
     def test_added(self) -> None:
         before = self._wb([])
         after = self._wb([NamedRange(name="税率", refers_to="設定!$B$4")])
-        diffs = _diff_named_ranges(before, after)
+        diffs = diff_named_ranges(before, after)
         assert len(diffs) == 1
         assert diffs[0].change_type == "added"
         assert diffs[0].after_refers_to == "設定!$B$4"
@@ -150,13 +150,13 @@ class TestNamedRangeDiff:
     def test_removed(self) -> None:
         before = self._wb([NamedRange(name="税率", refers_to="設定!$B$4")])
         after = self._wb([])
-        diffs = _diff_named_ranges(before, after)
+        diffs = diff_named_ranges(before, after)
         assert diffs[0].change_type == "removed"
 
     def test_modified(self) -> None:
         before = self._wb([NamedRange(name="税率", refers_to="設定!$B$4")])
         after = self._wb([NamedRange(name="税率", refers_to="設定!$B$5")])
-        diffs = _diff_named_ranges(before, after)
+        diffs = diff_named_ranges(before, after)
         assert diffs[0].change_type == "modified"
         assert diffs[0].before_refers_to == "設定!$B$4"
         assert diffs[0].after_refers_to == "設定!$B$5"
@@ -164,7 +164,7 @@ class TestNamedRangeDiff:
     def test_unchanged_not_reported(self) -> None:
         wb1 = self._wb([NamedRange(name="税率", refers_to="設定!$B$4")])
         wb2 = self._wb([NamedRange(name="税率", refers_to="設定!$B$4")])
-        assert _diff_named_ranges(wb1, wb2) == []
+        assert diff_named_ranges(wb1, wb2) == []
 
 
 class TestConditionalFormatDiff:
@@ -329,7 +329,7 @@ class TestBlastRadius:
             refs={"Input!A:A": [Reference(kind="formula", from_="Calc!H2", to="Input!A:A")]}
         )
         cells = [CellDiff(sheet="Input", coord="A1", change_type="removed", before_value="1")]
-        entries = _build_blast_radius(cells, [], idx)
+        entries = build_blast_radius(cells, [], idx)
         assert len(entries) == 1
         assert entries[0].location == "Input!A1"
         assert entries[0].referenced_by[0].from_ == "Calc!H2"
@@ -337,14 +337,14 @@ class TestBlastRadius:
     def test_modified_cell_with_no_references_not_reported(self) -> None:
         idx = ReferenceIndex(refs={})
         cells = [CellDiff(sheet="Input", coord="A1", change_type="modified")]
-        assert _build_blast_radius(cells, [], idx) == []
+        assert build_blast_radius(cells, [], idx) == []
 
     def test_added_cell_excluded_even_if_matching_ref_exists(self) -> None:
         idx = ReferenceIndex(
             refs={"Input!A1": [Reference(kind="formula", from_="Calc!H2", to="Input!A1")]}
         )
         cells = [CellDiff(sheet="Input", coord="A1", change_type="added")]
-        assert _build_blast_radius(cells, [], idx) == []
+        assert build_blast_radius(cells, [], idx) == []
 
     def test_removed_named_range_still_referenced(self) -> None:
         idx = ReferenceIndex(
@@ -353,7 +353,7 @@ class TestBlastRadius:
         named_ranges = [
             NamedRangeDiff(name="税率", change_type="removed", before_refers_to="設定!$B$4")
         ]
-        entries = _build_blast_radius([], named_ranges, idx)
+        entries = build_blast_radius([], named_ranges, idx)
         assert len(entries) == 1
         assert entries[0].location == "設定!$B$4"
         assert entries[0].referenced_by[0].from_ == "Calc!C1"
