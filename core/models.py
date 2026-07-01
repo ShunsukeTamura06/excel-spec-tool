@@ -249,6 +249,124 @@ class ReferenceIndex(BaseModel):
     refs: dict[str, list[Reference]] = Field(default_factory=dict)
 
 
+ChangeType = Literal["added", "removed", "modified"]
+
+
+class CellDiff(BaseModel):
+    """1セルの構造差分 (値・数式・表示形式のいずれかが変わった場合)."""
+
+    sheet: str
+    coord: str  # シート修飾なしの座標 (例: "A1")
+    change_type: ChangeType
+    before_value: str | None = None
+    after_value: str | None = None
+    before_formula: str | None = None
+    after_formula: str | None = None
+    before_number_format: str | None = None
+    after_number_format: str | None = None
+
+
+class NamedRangeDiff(BaseModel):
+    """名前付き範囲の差分."""
+
+    name: str
+    change_type: ChangeType
+    before_refers_to: str | None = None
+    after_refers_to: str | None = None
+
+
+class ConditionalFormatDiff(BaseModel):
+    """条件付き書式の差分. (シート, range) をキーに突き合わせる."""
+
+    sheet: str
+    range: str
+    change_type: ChangeType
+    before_rule: str | None = None
+    after_rule: str | None = None
+
+
+class DataValidationDiff(BaseModel):
+    """入力規則の差分. (シート, range) をキーに突き合わせる."""
+
+    sheet: str
+    range: str
+    change_type: ChangeType
+    before: DataValidation | None = None
+    after: DataValidation | None = None
+
+
+class ChartDiff(BaseModel):
+    """グラフの差分. (シート, name または anchor) をキーに突き合わせる."""
+
+    sheet: str
+    key: str  # name が空なら anchor をフォールバックに使ったキー
+    change_type: ChangeType
+    before: ChartObject | None = None
+    after: ChartObject | None = None
+
+
+class PivotTableDiff(BaseModel):
+    """ピボットテーブルの差分. (シート, name) をキーに突き合わせる."""
+
+    sheet: str
+    name: str
+    change_type: ChangeType
+    before: PivotTableInfo | None = None
+    after: PivotTableInfo | None = None
+
+
+class VbaModuleDiff(BaseModel):
+    """VBAモジュールの差分. コード全文の一致で modified 判定 (行単位 diff はしない)."""
+
+    name: str
+    change_type: ChangeType
+    before_code: str | None = None
+    after_code: str | None = None
+
+
+class BlastRadiusEntry(BaseModel):
+    """変更元 (削除/変更されたセル or 名前定義) を参照している既存箇所.
+
+    before 側の ReferenceIndex から find_overlapping() で引く。削除されたのに
+    まだ参照が残っている場合や、変更されたセルを他が当てにしている場合の
+    「気づかれない波及」を可視化するためのモデル。
+    """
+
+    location: str  # 変更元の canonical キー (例: "Calc!H2", "Input!A:A")
+    change_type: ChangeType
+    referenced_by: list[Reference] = Field(default_factory=list)
+
+
+class WorkbookDiff(BaseModel):
+    """2バージョン間の構造差分一式 (P1 安全ゲートの静的パート)."""
+
+    before_filename: str
+    after_filename: str
+    cells: list[CellDiff] = Field(default_factory=list)
+    named_ranges: list[NamedRangeDiff] = Field(default_factory=list)
+    conditional_formats: list[ConditionalFormatDiff] = Field(default_factory=list)
+    data_validations: list[DataValidationDiff] = Field(default_factory=list)
+    charts: list[ChartDiff] = Field(default_factory=list)
+    pivot_tables: list[PivotTableDiff] = Field(default_factory=list)
+    vba_modules: list[VbaModuleDiff] = Field(default_factory=list)
+    blast_radius: list[BlastRadiusEntry] = Field(default_factory=list)
+    # before 側の analysis_risks をそのまま同梱する (diff 専用の新リスク判定はしない)。
+    existing_risks: list[AnalysisRisk] = Field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        """構造差分が1件もないか (= 検収対象の変更なし)."""
+
+        return not (
+            self.cells
+            or self.named_ranges
+            or self.conditional_formats
+            or self.data_validations
+            or self.charts
+            or self.pivot_tables
+            or self.vba_modules
+        )
+
+
 class JobMeta(BaseModel):
     """ジョブのメタ情報. ストレージの meta.json に対応."""
 
