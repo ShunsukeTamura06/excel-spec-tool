@@ -187,6 +187,13 @@ def _capture_env(app: Any) -> dict[str, Any]:
     return env
 
 
+def _log_step(step: Step) -> None:
+    """ステップ結果をファイルログにも残す (ハング時の途中経過診断のため)."""
+
+    level = logging.INFO if step.ok else logging.WARNING
+    logger.log(level, "[%s] ok=%s (%.2fs) %s", step.name, step.ok, step.elapsed_s, step.error or "")
+
+
 def _probe_vbide(workbook: Any, max_modules: int = 200) -> Step:
     """VBIDE 経由で VBA モジュール/プロシージャを列挙できるか試す."""
 
@@ -251,6 +258,7 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
     app_pid: int | None = None
     workbook = None
     try:
+        logger.info("Excel 起動中...")
         st = Step("launch_excel")
         t0 = time.perf_counter()
         app = win32com.client.DispatchEx("Excel.Application")
@@ -262,6 +270,7 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
         st.ok = True
         st.elapsed_s = time.perf_counter() - t0
         steps.append(st)
+        _log_step(st)
         report["env"] = _capture_env(app)
         try:
             import win32process  # type: ignore
@@ -272,6 +281,7 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
             pass
 
         # 1) 開く
+        logger.info("ワークブックを開いています: %s", work_copy)
         st = Step("open_workbook")
         t0 = time.perf_counter()
         workbook = app.Workbooks.Open(str(work_copy), UpdateLinks=0, ReadOnly=False)
@@ -279,8 +289,10 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
         st.detail = {"sheets": workbook.Worksheets.Count}
         st.elapsed_s = time.perf_counter() - t0
         steps.append(st)
+        _log_step(st)
 
         # 2) スナップショット (= 回帰テストの基盤)
+        logger.info("ベーススナップショット取得中...")
         st = Step("snapshot_baseline")
         t0 = time.perf_counter()
         snap1 = _snapshot(workbook)
@@ -288,8 +300,10 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
         st.detail = {"cell_count": len(snap1)}
         st.elapsed_s = time.perf_counter() - t0
         steps.append(st)
+        _log_step(st)
 
         # 3) 2回再計算して決定性を確認
+        logger.info("再計算して決定性を確認中...")
         st = Step("determinism_recalc")
         t0 = time.perf_counter()
         app.CalculateFull()
@@ -304,9 +318,11 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
         }
         st.elapsed_s = time.perf_counter() - t0
         steps.append(st)
+        _log_step(st)
 
         # 4) 入力書込→再計算→波及観測 (任意)
         if args.input_cell:
+            logger.info("入力セルを書き換えて波及を観測中: %s", args.input_cell)
             st = Step("blast_radius")
             t0 = time.perf_counter()
             try:
@@ -336,12 +352,17 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
                 app.EnableEvents = False
             st.elapsed_s = time.perf_counter() - t0
             steps.append(st)
+            _log_step(st)
 
         # 5) VBIDE アクセス
-        steps.append(_probe_vbide(workbook))
+        logger.info("VBIDE 経由で VBA アクセスを確認中...")
+        vbide_step = _probe_vbide(workbook)
+        steps.append(vbide_step)
+        _log_step(vbide_step)
 
         # 6) マクロ実行 (任意)
         if args.run_macro:
+            logger.info("マクロを実行中: %s", args.run_macro)
             st = Step("run_macro")
             t0 = time.perf_counter()
             try:
@@ -356,6 +377,7 @@ def run_probe(args: argparse.Namespace, report: dict[str, Any]) -> None:
                 app.EnableEvents = False
             st.elapsed_s = time.perf_counter() - t0
             steps.append(st)
+            _log_step(st)
 
         # オプション: 生値を含める場合のみ (既定は含めない)
         if args.include_values:
@@ -465,17 +487,19 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(report, ensure_ascii=False, indent=2, default=_default), encoding="utf-8"
     )
 
-    # バンドル (zip) 化
+    # バンドル (zip) 化。run.log に収録されるよう、zip 作成前にログを書き切る。
     bundle = Path(args.out_dir) / f"spike_bundle_{timestamp}.zip"
+    logger.info("=" * 60)
+    logger.info("診断バンドル: %s", bundle.resolve())
+    logger.info("このPCへはこの zip を1つ持ち帰ってください (生のセル値は含みません)。")
+    logger.info("=" * 60)
+    logging.shutdown()
+
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(report_path, report_path.name)
         if log_path.exists():
             zf.write(log_path, log_path.name)
 
-    logger.info("=" * 60)
-    logger.info("診断バンドル: %s", bundle.resolve())
-    logger.info("このPCへはこの zip を1つ持ち帰ってください (生のセル値は含みません)。")
-    logger.info("=" * 60)
     return 0 if "fatal" not in report else 1
 
 
