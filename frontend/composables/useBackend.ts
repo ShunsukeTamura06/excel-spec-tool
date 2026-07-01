@@ -28,6 +28,7 @@ import {
   type ReferenceItem,
   type SpecResponse,
   type WorkbookData,
+  type WorkbookDiffData,
 } from '~/types/api'
 
 // 「重い」エンドポイント (extract / analyze / chat) は LLM や全セル抽出を含むため
@@ -422,6 +423,15 @@ export function useBackend() {
         `/external-functions/used/${jobId}`,
         { timeout: DEFAULT_TIMEOUT_MS },
       )
+    },
+
+    /** GET /diff?before_job_id=...&after_job_id=... — 2ジョブ間の構造差分 + 波及範囲 */
+    async getDiff(beforeJobId: string, afterJobId: string): Promise<WorkbookDiffData> {
+      const res = await call<{ diff: WorkbookDiffData }>('getDiff', '/diff', {
+        query: { before_job_id: beforeJobId, after_job_id: afterJobId },
+        timeout: HEAVY_TIMEOUT_MS,
+      })
+      return res.diff
     },
 
     /** POST /feedback — フィードバック 1 件を送信. */

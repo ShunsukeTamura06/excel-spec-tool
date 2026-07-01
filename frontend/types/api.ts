@@ -264,6 +264,88 @@ export interface WorkbookData {
   analysis_risks: AnalysisRiskItem[]
 }
 
+// ---------- diff (P1 安全ゲート) ----------
+
+export type ChangeType = 'added' | 'removed' | 'modified'
+
+export interface CellDiffItem {
+  sheet: string
+  coord: string
+  change_type: ChangeType
+  before_value: string | null
+  after_value: string | null
+  before_formula: string | null
+  after_formula: string | null
+  before_number_format: string | null
+  after_number_format: string | null
+}
+
+export interface NamedRangeDiffItem {
+  name: string
+  change_type: ChangeType
+  before_refers_to: string | null
+  after_refers_to: string | null
+}
+
+export interface ConditionalFormatDiffItem {
+  sheet: string
+  range: string
+  change_type: ChangeType
+  before_rule: string | null
+  after_rule: string | null
+}
+
+export interface DataValidationDiffItem {
+  sheet: string
+  range: string
+  change_type: ChangeType
+  before: DataValidationItem | null
+  after: DataValidationItem | null
+}
+
+export interface ChartDiffItem {
+  sheet: string
+  key: string
+  change_type: ChangeType
+  before: ChartObjectItem | null
+  after: ChartObjectItem | null
+}
+
+export interface PivotTableDiffItem {
+  sheet: string
+  name: string
+  change_type: ChangeType
+  before: PivotTableItem | null
+  after: PivotTableItem | null
+}
+
+export interface VbaModuleDiffItem {
+  name: string
+  change_type: ChangeType
+  before_code: string | null
+  after_code: string | null
+}
+
+export interface BlastRadiusEntryItem {
+  location: string
+  change_type: ChangeType
+  referenced_by: ReferenceItem[]
+}
+
+export interface WorkbookDiffData {
+  before_filename: string
+  after_filename: string
+  cells: CellDiffItem[]
+  named_ranges: NamedRangeDiffItem[]
+  conditional_formats: ConditionalFormatDiffItem[]
+  data_validations: DataValidationDiffItem[]
+  charts: ChartDiffItem[]
+  pivot_tables: PivotTableDiffItem[]
+  vba_modules: VbaModuleDiffItem[]
+  blast_radius: BlastRadiusEntryItem[]
+  existing_risks: AnalysisRiskItem[]
+}
+
 // ---------- external functions ----------
 
 export interface ExternalFunctionParam {
