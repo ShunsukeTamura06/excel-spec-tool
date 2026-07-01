@@ -47,9 +47,10 @@ uv run python spikes/xlsx_diff_noise/probe.py
 - **openpyxl の保存ノイズしか見ていない**。VISION が本来懸念していたのは
   **Excel 本体で開いて保存し直したときの**ノイズ（calcChain 再構築・sharedStrings
   の頻度順並び替え・.rels id の大幅な振り直し等）で、openpyxl より激しい可能性が
-  ある。→ **対応済み**: `spikes/com_probe/probe.py` に `excel_resave_noise` ステップを
-  追加し、本物の Excel (`SaveCopyAs`) での保存し直しノイズを実機で検証できるようにした。
-  次回の会社端末訪問での実行結果待ち。
+  あった。→ **実機検証済み**（`spikes/com_probe/` の `excel_resave_noise` ステップ、
+  `docs/VISION.ja.md` §6.3）。実業務 .xlsm で生XMLパーツは12箇所変化した（openpyxlの
+  5〜6箇所より多い）が、計算値ベースでは既知の揮発セル以外に変化はなく、仮説は
+  実機でも成立した。
 - `extract_cells_to_sqlite` は**セルの値・数式・表示形式・結合範囲のみ**を見る。
   名前付き範囲・条件付き書式・データ検証・グラフ・ピボットテーブル・印刷範囲・
   マクロの副作用など、VISION §4.1 が挙げている他の差分対象は
