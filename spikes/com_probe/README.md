@@ -1,7 +1,8 @@
 # COM / テスト化 実現可能性スパイク
 
-`docs/VISION.ja.md` の最大の死因候補 ——「現状挙動をテスト化できるか」「企業実機で
-Excel COM / VBIDE が止まらないか」—— を **持ち帰り1回** で判定するための診断スクリプト。
+`docs/VISION.ja.md` §6 の前提 ——「現状挙動をテスト化できるか」「企業実機で
+Excel COM / VBIDE が止まらないか」「xlsm 正規化 diff のノイズ除去が実用精度に届くか」——
+を **持ち帰り1回** で判定するための診断スクリプト。
 
 このPC (Mac/Linux・Excel なし) では動きません。**会社端末 (Windows + Excel)** で実行します。
 
@@ -12,6 +13,7 @@ Excel COM / VBIDE が止まらないか」—— を **持ち帰り1回** で判
 | `launch_excel` / `open_workbook` | ヘッドレス (画面非表示・ダイアログ抑制) で開けるか |
 | `snapshot_baseline` | 全シートの計算結果を取得できるか (= 回帰テストの土台) |
 | `determinism_recalc` | 2回再計算して値が一致するか。**非決定セル (揮発関数等) の検出** |
+| `excel_resave_noise` | **Excel 自身で**開いて保存し直しただけでどれだけノイズが出るか (生XML + 計算値の両方)。`spikes/xlsx_diff_noise/` で openpyxl 上では確認済みの仮説を実機で検証する |
 | `blast_radius` (任意) | 入力を1つ変えると、どのセルに波及するか |
 | `vbide_access` | **VBA を VBIDE 経由で読めるか** (GPO で `AccessVBOM` が無効化されていないか) |
 | `run_macro` (任意) | 任意マクロを実行できるか |
@@ -61,6 +63,12 @@ uv run --with pywin32 python spikes/com_probe/probe.py --workbook "C:\path\to\to
   入力固定なしでは安定テストにならない (テスト化の設計に影響)。
 - `vbide_access.ok = false` かつ `accessvbom_registry.access_vbom = 0` → GPO で VBA 操作が
   封じられている。S3 (VBA 自律修正) の前提が崩れるので、回避策 (運用での信頼許可可否) を要検討。
+- `excel_resave_noise.detail.raw_xml_parts_changed_count` が 0 より大きい → Excel 自身の保存でも
+  生 XML にノイズが出る (想定通り)。問題は次の1行:
+  `excel_resave_noise.detail.unexplained_by_known_volatility_count` が **0** なら、
+  「保存し直しによる本物の値変化はない」＝正規化 diff (値ベース比較) だけでノイズを無視できる
+  という `docs/VISION.ja.md` §6.2 の仮説が実機でも成立したことになる。0 でない場合は
+  `unexplained_by_known_volatility_sample` のセルを見て、保存し直し固有の値変化がないか要確認。
 
 ## よくある詰まり
 
