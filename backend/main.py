@@ -17,6 +17,7 @@ from backend.routes import (
     cells,
     chat,
     diagrams,
+    diff,
     external_functions,
     extract,
     feedback,
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(cells.router)
     app.include_router(diagrams.router)
+    app.include_router(diff.router)
     app.include_router(workbook.router)
     app.include_router(external_functions.router)
     app.include_router(feedback.router)
