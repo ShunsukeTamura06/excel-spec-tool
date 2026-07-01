@@ -66,13 +66,13 @@ def diff_workbooks(
         DiffError: before/after いずれかのセル抽出に失敗した場合.
     """
     cells = _diff_cells(before_path, after_path)
-    named_ranges = _diff_named_ranges(before_wb, after_wb)
+    named_ranges = diff_named_ranges(before_wb, after_wb)
     conditional_formats = _diff_conditional_formats(before_wb, after_wb)
     data_validations = _diff_data_validations(before_wb, after_wb)
     charts = _diff_charts(before_wb, after_wb)
     pivot_tables = _diff_pivot_tables(before_wb, after_wb)
     vba_modules = _diff_vba_modules(before_wb, after_wb)
-    blast_radius = _build_blast_radius(cells, named_ranges, before_index)
+    blast_radius = build_blast_radius(cells, named_ranges, before_index)
 
     return WorkbookDiff(
         before_filename=before_wb.filename,
@@ -158,7 +158,7 @@ def _diff_cells(before_path: Path, after_path: Path) -> list[CellDiff]:
     return sorted(diffs, key=lambda d: (d.sheet, d.coord))
 
 
-def _diff_named_ranges(before_wb: Workbook, after_wb: Workbook) -> list[NamedRangeDiff]:
+def diff_named_ranges(before_wb: Workbook, after_wb: Workbook) -> list[NamedRangeDiff]:
     """名前付き範囲を name をキーに突き合わせる (ワークブック全体で一意な前提)."""
     before_map = {nr.name: nr for sheet in before_wb.sheets for nr in sheet.named_ranges}
     after_map = {nr.name: nr for sheet in after_wb.sheets for nr in sheet.named_ranges}
@@ -342,7 +342,7 @@ def _diff_vba_modules(before_wb: Workbook, after_wb: Workbook) -> list[VbaModule
     return diffs
 
 
-def _build_blast_radius(
+def build_blast_radius(
     cells: list[CellDiff],
     named_ranges: list[NamedRangeDiff],
     before_index: ReferenceIndex,

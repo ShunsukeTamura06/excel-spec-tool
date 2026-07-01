@@ -15,3 +15,7 @@ class UnsupportedFormatError(CoreError):
 
 class DiffError(CoreError):
     """workbook_diff の実行時失敗 (before/after ファイルの読み込み・cells.db 構築失敗)."""
+
+
+class NamedRangeFixError(CoreError):
+    """名前付き範囲の修正 (提案/適用) に関する失敗 (対象名が見つからない等)."""
