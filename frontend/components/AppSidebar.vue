@@ -2,7 +2,7 @@
 /**
  * 左サイドバー.
  * - ブランド (アプリ名)
- * - グローバルナビ (Home / Spec / Chat). Spec/Chat はジョブ未選択時 disabled.
+ * - グローバルナビ (Home / Spec / Chat / Diff). Spec/Chat はジョブ未選択時 disabled.
  * - 現在のジョブ表示
  * - ダークモード切替 + Backend 接続状態
  */
@@ -44,6 +44,13 @@ const navItems = computed(() => {
       to: id ? `/chat/${id}` : '#',
       active: route.path.startsWith('/chat'),
       disabled: !id,
+    },
+    {
+      label: '差分比較',
+      icon: 'i-lucide-git-compare',
+      to: '/diff',
+      active: route.path.startsWith('/diff'),
+      disabled: false,
     },
   ]
 })
