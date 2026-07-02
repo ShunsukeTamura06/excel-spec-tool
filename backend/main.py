@@ -22,6 +22,7 @@ from backend.routes import (
     extract,
     feedback,
     jobs,
+    refactor,
     references,
     spec,
     system,
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(cells.router)
     app.include_router(diagrams.router)
     app.include_router(diff.router)
+    app.include_router(refactor.router)
     app.include_router(workbook.router)
     app.include_router(external_functions.router)
     app.include_router(feedback.router)
