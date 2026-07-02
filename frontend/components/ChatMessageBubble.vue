@@ -162,6 +162,7 @@ async function sendVote(kind: 'thumbs_up' | 'thumbs_down') {
         v-if="evidenceItems.length > 0"
         :items="evidenceItems"
         title="この回答の根拠カード"
+        :job-id="props.jobId"
         class="mt-2"
       />
     </div>

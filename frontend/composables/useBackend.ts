@@ -25,6 +25,8 @@ import {
   type FeedbackInput,
   type FeedbackResponse,
   type JobMeta,
+  type NamedRangeFixRequest,
+  type NamedRangeFixResponse,
   type ReferenceItem,
   type SpecResponse,
   type WorkbookData,
@@ -432,6 +434,18 @@ export function useBackend() {
         timeout: HEAVY_TIMEOUT_MS,
       })
       return res.diff
+    },
+
+    /** POST /jobs/{jobId}/named-range-fix — 名前定義修正を適用し、新ジョブと自己検証diffを得る */
+    async applyNamedRangeFix(
+      jobId: string,
+      body: NamedRangeFixRequest,
+    ): Promise<NamedRangeFixResponse> {
+      return await call<NamedRangeFixResponse>(
+        'applyNamedRangeFix',
+        `/jobs/${jobId}/named-range-fix`,
+        { method: 'POST', body, timeout: HEAVY_TIMEOUT_MS },
+      )
     },
 
     /** POST /feedback — フィードバック 1 件を送信. */
