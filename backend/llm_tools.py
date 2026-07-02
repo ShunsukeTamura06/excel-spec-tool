@@ -25,7 +25,9 @@ from collections import Counter
 from typing import Any
 
 from backend.storage import JobNotFoundError, Storage
+from core.exceptions import NamedRangeFixError
 from core.external_functions import get_function, list_functions
+from core.named_range_fix import propose_named_range_fix
 from core.reference_index import find_overlapping
 
 logger = logging.getLogger(__name__)
@@ -311,6 +313,37 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_named_range_fix",
+            "description": (
+                "名前付き範囲の参照先を書き換えたら何が変わるかを試算する。"
+                "この tool 自体はファイルを一切変更しない (読み取り専用の試算)。"
+                "ユーザーから名前定義の修正依頼を受けたら、実際に適用する前に必ずこれを呼んで"
+                "影響範囲 (波及範囲・既存リスク) を確認し、その内容をユーザーに提示すること。"
+                "実際の適用はユーザーが画面上のボタンで明示的に実行するものであり、"
+                "この tool を呼んだだけでは何も書き換わらない。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "書き換える名前付き範囲の名前 (例: 'TaxRate')",
+                    },
+                    "new_refers_to": {
+                        "type": "string",
+                        "description": (
+                            "新しい参照先 (Excel 形式、シート修飾付き。"
+                            '例: "Data!$B$1", "Data!$A$1:$A$200")'
+                        ),
+                    },
+                },
+                "required": ["name", "new_refers_to"],
+            },
+        },
+    },
 ]
 
 
@@ -356,6 +389,8 @@ def execute_tool_call(
             result = _exec_lookup_external_function(arguments)
         elif name == "list_external_functions_used":
             result = _exec_list_external_functions_used(storage, job_id, arguments)
+        elif name == "propose_named_range_fix":
+            result = _exec_propose_named_range_fix(storage, job_id, arguments)
         else:
             return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001 - tool ループは壊さない
@@ -701,6 +736,34 @@ def _exec_lookup_references(storage: Storage, job_id: str, args: dict[str, Any])
                 "静的解析で検出できる数式参照、VBA の静的 Range/Cells/短縮参照、"
                 "グラフ系列参照、ピボット元データが対象。"
                 "動的に組み立てる VBA 参照や実行時状態依存の参照は含まれない。"
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def _exec_propose_named_range_fix(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
+    name = args.get("name")
+    new_refers_to = args.get("new_refers_to")
+    if not name or not new_refers_to:
+        raise ToolExecutionError("name and new_refers_to are required")
+    try:
+        wb = storage.load_workbook(job_id)
+        idx = storage.load_references(job_id)
+    except JobNotFoundError as e:
+        raise ToolExecutionError(f"job not found: {e}") from e
+    except FileNotFoundError as e:
+        raise ToolExecutionError(f"workbook or references not built: {e}") from e
+    try:
+        diff = propose_named_range_fix(wb, idx, str(name), str(new_refers_to))
+    except NamedRangeFixError as e:
+        raise ToolExecutionError(str(e)) from e
+    return json.dumps(
+        {
+            "proposal": diff.model_dump(by_alias=True),
+            "note": (
+                "これは試算結果であり、ファイルはまだ変更されていない。"
+                "ユーザーが画面のボタンで適用を確定するまで実ファイルは変わらない。"
             ),
         },
         ensure_ascii=False,

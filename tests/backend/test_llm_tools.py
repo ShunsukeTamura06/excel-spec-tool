@@ -18,6 +18,7 @@ from core.models import (
     CellFormula,
     ChartObject,
     ChartSeries,
+    NamedRange,
     PivotTableInfo,
     PowerQueryInfo,
     Reference,
@@ -74,6 +75,7 @@ class TestToolDefinitions:
             "list_analysis_risks",
             "lookup_external_function",
             "list_external_functions_used",
+            "propose_named_range_fix",
         }
 
     def test_build_returns_list(self) -> None:
@@ -667,3 +669,73 @@ def test_tool_definitions_include_external_function_tools() -> None:
     names = {t["function"]["name"] for t in build_tool_definitions()}
     assert "lookup_external_function" in names
     assert "list_external_functions_used" in names
+
+
+@pytest.fixture
+def job_with_named_range(tmp_path: Path) -> tuple[Storage, str]:
+    """名前付き範囲を持つジョブ (workbook + references 済み) を用意する."""
+    storage = Storage(tmp_path / "jobs")
+    meta = storage.create_job("dummy.xlsx", b"x")
+
+    wb = Workbook(
+        filename="dummy.xlsx",
+        sheets=[
+            SheetInfo(
+                name="Data",
+                rows=5,
+                cols=5,
+                named_ranges=[NamedRange(name="TaxRate", refers_to="Data!$A$1")],
+            ),
+        ],
+    )
+    storage.save_workbook(meta.job_id, wb)
+    storage.save_references(
+        meta.job_id,
+        ReferenceIndex(
+            refs={"Data!A1": [Reference(kind="formula", from_="Calc!B2", to="Data!A1")]}
+        ),
+    )
+    return storage, meta.job_id
+
+
+class TestExecuteProposeNamedRangeFix:
+    def test_returns_proposal_with_blast_radius(
+        self, job_with_named_range: tuple[Storage, str]
+    ) -> None:
+        storage, job_id = job_with_named_range
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_named_range_fix",
+                {"name": "TaxRate", "new_refers_to": "Data!$B$1"},
+            )
+        )
+        proposal = result["proposal"]
+        assert len(proposal["named_ranges"]) == 1
+        nr = proposal["named_ranges"][0]
+        assert nr["name"] == "TaxRate"
+        assert nr["change_type"] == "modified"
+        assert nr["before_refers_to"] == "Data!$A$1"
+        assert nr["after_refers_to"] == "Data!$B$1"
+        assert len(proposal["blast_radius"]) == 1
+        assert "note" in result
+
+    def test_unknown_name_returns_error(self, job_with_named_range: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_named_range
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_named_range_fix",
+                {"name": "NoSuchName", "new_refers_to": "Data!$B$1"},
+            )
+        )
+        assert "error" in result
+
+    def test_missing_args_returns_error(self, job_with_named_range: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_named_range
+        result = json.loads(
+            execute_tool_call(storage, job_id, "propose_named_range_fix", {"name": "TaxRate"})
+        )
+        assert "error" in result

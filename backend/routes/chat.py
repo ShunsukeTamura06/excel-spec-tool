@@ -65,6 +65,7 @@ _TOOL_PROGRESS_MESSAGES = {
     "list_analysis_risks": "未解析リスクを確認中",
     "lookup_external_function": "外部関数の定義を確認中",
     "list_external_functions_used": "外部関数の使用箇所を確認中",
+    "propose_named_range_fix": "名前定義修正の影響範囲を試算中",
 }
 
 
@@ -399,6 +400,19 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "- `list_external_functions_used()`:",
         "    このブックで使われている外部 Add-In 関数の一覧 (回数 / 主な使用箇所) を返す。",
         "    「このブックは Bloomberg をどこで使っている？」のような問いの起点に使う。",
+        "- `propose_named_range_fix(name, new_refers_to)`:",
+        '    例: propose_named_range_fix("TaxRate", "Data!$B$1")',
+        "    名前付き範囲の参照先を書き換えたら何が変わるかを試算する読み取り専用ツール。"
+        "このツール自体はファイルを一切変更しない。",
+        "",
+        "# 名前定義の修正依頼を受けたとき",
+        "",
+        "- ユーザーから名前付き範囲の修正依頼を受けたら、まず `propose_named_range_fix` を呼び、"
+        "波及範囲・既存リスクを試算してから提示すること",
+        "- 実際の適用は必ずユーザーが画面上のボタンで明示的に行う。"
+        "あなた自身がファイルを書き換えることはできないし、してはいけない",
+        "- 提案した内容と実際の適用結果が食い違わないよう、`new_refers_to` は"
+        "ユーザーの意図を正確に反映した値にすること",
         "",
         "確実性を優先して必要な範囲でツールを呼んでください。",
         "同じ観点の確認を繰り返さず、十分な根拠が集まったら回答をまとめてください。",
