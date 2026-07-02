@@ -346,6 +346,16 @@ export interface WorkbookDiffData {
   existing_risks: AnalysisRiskItem[]
 }
 
+export interface NamedRangeFixRequest {
+  name: string
+  new_refers_to: string
+}
+
+export interface NamedRangeFixResponse {
+  new_job_id: string
+  diff: WorkbookDiffData
+}
+
 // ---------- external functions ----------
 
 export interface ExternalFunctionParam {

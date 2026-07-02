@@ -67,6 +67,7 @@ type VbaProcedureResult = {
 const props = withDefaults(defineProps<{
   items: ToolTraceItem[]
   title?: string
+  jobId?: string
 }>(), {
   title: '根拠カード',
 })
@@ -148,6 +149,8 @@ function evidenceTitle(item: ToolTraceItem): string {
       return '外部関数の使用箇所'
     case 'lookup_external_function':
       return '外部関数定義'
+    case 'propose_named_range_fix':
+      return '名前定義修正の提案'
     default:
       return item.name
   }
@@ -168,6 +171,8 @@ function evidenceIcon(item: ToolTraceItem): string {
       return 'i-lucide-chart-column'
     case 'list_sheet_formulas':
       return 'i-lucide-function-square'
+    case 'propose_named_range_fix':
+      return 'i-lucide-wand-2'
     default:
       return 'i-lucide-database'
   }
@@ -402,6 +407,13 @@ function codeLines(code: string | undefined, limit = 80): string {
               </div>
             </div>
           </div>
+
+          <!-- propose_named_range_fix -->
+          <NamedRangeFixCard
+            v-else-if="t.name === 'propose_named_range_fix'"
+            :item="t"
+            :job-id="props.jobId"
+          />
 
           <!-- fallback -->
           <details v-else>
