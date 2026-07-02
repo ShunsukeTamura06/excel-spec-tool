@@ -629,6 +629,21 @@ export default defineComponent({
   },
   setup(props) {
     const activeTooltip = ref<ActiveTooltip | null>(null)
+    const copiedBlockIndex = ref<number | null>(null)
+    let copiedResetTimer: ReturnType<typeof setTimeout> | undefined
+
+    async function copyCodeBlock(code: string, index: number) {
+      try {
+        await navigator.clipboard.writeText(code)
+      } catch {
+        return
+      }
+      copiedBlockIndex.value = index
+      clearTimeout(copiedResetTimer)
+      copiedResetTimer = setTimeout(() => {
+        copiedBlockIndex.value = null
+      }, 1500)
+    }
 
     function tooltipPosition(event: MouseEvent | FocusEvent): { x: number; y: number } {
       if ('clientX' in event && event.clientX > 0) {
@@ -686,7 +701,14 @@ export default defineComponent({
                 renderInline(item, evidenceIndex, showTooltip, moveTooltip, hideTooltip),
               )))
             case 'code':
-              return h('pre', { key: index }, [h('code', block.code)])
+              return h('div', { key: index, class: 'chat-code-block' }, [
+                h('button', {
+                  type: 'button',
+                  class: 'chat-code-copy-button',
+                  onClick: () => copyCodeBlock(block.code, index),
+                }, copiedBlockIndex.value === index ? 'コピーしました' : 'コピーしてそのまま貼り付け'),
+                h('pre', [h('code', block.code)]),
+              ])
             case 'paragraph':
               return h('p', { key: index }, renderInline(
                 block.text,
@@ -727,6 +749,32 @@ export default defineComponent({
 </script>
 
 <style scoped>
+.chat-code-block {
+  position: relative;
+}
+
+.chat-code-block pre {
+  margin: 0;
+}
+
+.chat-code-copy-button {
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 0.375rem;
+  color: var(--ui-text-muted);
+  cursor: pointer;
+  font-size: 0.6875rem;
+  padding: 0.125rem 0.5rem;
+  position: absolute;
+  right: 0.5rem;
+  top: 0.5rem;
+  z-index: 1;
+}
+
+.chat-code-copy-button:hover {
+  color: var(--ui-text);
+}
+
 .chat-evidence-token {
   display: inline;
 }
