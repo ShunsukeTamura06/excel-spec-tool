@@ -151,6 +151,10 @@ function evidenceTitle(item: ToolTraceItem): string {
       return '外部関数定義'
     case 'propose_named_range_fix':
       return '名前定義修正の提案'
+    case 'propose_fixed_ref_replace':
+      return '固定参照置換の提案'
+    case 'propose_range_expansion':
+      return '数式範囲拡張の提案'
     default:
       return item.name
   }
@@ -172,6 +176,8 @@ function evidenceIcon(item: ToolTraceItem): string {
     case 'list_sheet_formulas':
       return 'i-lucide-function-square'
     case 'propose_named_range_fix':
+    case 'propose_fixed_ref_replace':
+    case 'propose_range_expansion':
       return 'i-lucide-wand-2'
     default:
       return 'i-lucide-database'
@@ -411,6 +417,13 @@ function codeLines(code: string | undefined, limit = 80): string {
           <!-- propose_named_range_fix -->
           <NamedRangeFixCard
             v-else-if="t.name === 'propose_named_range_fix'"
+            :item="t"
+            :job-id="props.jobId"
+          />
+
+          <!-- propose_fixed_ref_replace / propose_range_expansion -->
+          <FormulaFixCard
+            v-else-if="t.name === 'propose_fixed_ref_replace' || t.name === 'propose_range_expansion'"
             :item="t"
             :job-id="props.jobId"
           />

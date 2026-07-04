@@ -24,6 +24,8 @@ import {
   type ExtractResponse,
   type FeedbackInput,
   type FeedbackResponse,
+  type FormulaFixRequest,
+  type FormulaFixResponse,
   type JobMeta,
   type NamedRangeFixRequest,
   type NamedRangeFixResponse,
@@ -446,6 +448,15 @@ export function useBackend() {
         `/jobs/${jobId}/named-range-fix`,
         { method: 'POST', body, timeout: HEAVY_TIMEOUT_MS },
       )
+    },
+
+    /** POST /jobs/{jobId}/formula-fix — 固定参照置換/範囲拡張を適用し、新ジョブと自己検証diffを得る */
+    async applyFormulaFix(jobId: string, body: FormulaFixRequest): Promise<FormulaFixResponse> {
+      return await call<FormulaFixResponse>('applyFormulaFix', `/jobs/${jobId}/formula-fix`, {
+        method: 'POST',
+        body,
+        timeout: HEAVY_TIMEOUT_MS,
+      })
     },
 
     /** POST /feedback — フィードバック 1 件を送信. */

@@ -356,6 +356,19 @@ export interface NamedRangeFixResponse {
   diff: WorkbookDiffData
 }
 
+export type FormulaFixKind = 'fixed_ref_replace' | 'range_expansion'
+
+export interface FormulaFixRequest {
+  kind: FormulaFixKind
+  old_ref: string
+  new_ref: string
+}
+
+export interface FormulaFixResponse {
+  new_job_id: string
+  diff: WorkbookDiffData
+}
+
 // ---------- external functions ----------
 
 export interface ExternalFunctionParam {
