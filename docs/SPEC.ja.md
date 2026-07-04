@@ -297,6 +297,38 @@ def generate_spec(wb: Workbook, ref_index: ReferenceIndex) -> str
 
 - LLM注釈は別関数 `annotate_with_llm(wb, llm_client) -> Workbook` で行い、`generate_spec` 自体はLLM非依存
 
+### 4.6 `core/workbook_diff.py` (P1 安全ゲート)
+
+```python
+def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -> WorkbookDiff
+```
+
+- 2バージョンのワークブックの構造差分 (セル・名前付き範囲・条件付き書式・
+  入力規則・グラフ・ピボット・VBAモジュール) と波及範囲 (blast radius) を計算する
+- セル差分は生XMLではなく正規化抽出 (`extract_cells_to_sqlite`) を比較基盤にして
+  保存ノイズを無視する (VISION §6.2/§6.3 のスパイクで実証済みの手法)
+
+### 4.7 `core/named_range_fix.py` / `core/formula_fix.py` (S2 安全パターン自動修正)
+
+§1.1 の 6 (自動適用) のうち、実装済みの安全パターン:
+
+| パターン | propose (試算, read-only) | apply (実ファイル書き込み) |
+|---|---|---|
+| 名前定義修正 | `propose_named_range_fix(wb, idx, name, new_refers_to)` | `apply_named_range_fix(path, name, new_refers_to, out)` |
+| 固定参照置換 | `propose_fixed_ref_replace(wb, idx, old_ref, new_ref)` | `apply_fixed_ref_replace(path, old_ref, new_ref, out)` |
+| 数式範囲拡張 | `propose_range_expansion(wb, idx, old_range, new_range)` | `apply_range_expansion(path, old_range, new_range, out)` |
+
+- propose はチャットの tool loop から LLM が呼んでよい (ファイル未変更の試算)。
+  apply は人間が画面のボタンを押した時だけ backend 経由で呼ばれる
+  (「黙って変更しない」、VISION §4.2)
+- 数式の書き換えは文字列置換ではなく openpyxl の formula Tokenizer による
+  参照トークン単位の置換 (VISION §4.3)。文字列リテラルや部分一致する別参照は
+  影響を受けない
+- 範囲拡張は「同一シートで旧範囲を包含する新範囲」だけを受け付ける
+  (縮小・移動は対象外)
+- apply 後は新ジョブを作り、`diff_workbooks` で before/after を比較して
+  意図した変更だけが起きたかを自己検証する
+
 ## 5. Backend層の仕様 (FastAPI)
 
 ### 5.1 エンドポイント
@@ -310,6 +342,9 @@ def generate_spec(wb: Workbook, ref_index: ReferenceIndex) -> str
 | POST | `/chat/{job_id}` | `{"message": "..."}` | `{"reply": "...", "history": [...]}` | 改修対話 |
 | GET | `/chat/{job_id}/history` | - | `{"history": [...]}` | チャット履歴取得 |
 | DELETE | `/jobs/{job_id}` | - | `{"deleted": true}` | ジョブ削除 |
+| GET | `/diff` | query: `before_job_id`, `after_job_id` | `{"diff": {...}}` | 2ジョブ間の構造差分 (§4.6) |
+| POST | `/jobs/{job_id}/named-range-fix` | `{"name": "...", "new_refers_to": "..."}` | `{"new_job_id": "...", "diff": {...}}` | 名前定義修正の適用+自己検証 (§4.7) |
+| POST | `/jobs/{job_id}/formula-fix` | `{"kind": "fixed_ref_replace" \| "range_expansion", "old_ref": "...", "new_ref": "..."}` | `{"new_job_id": "...", "diff": {...}}` | 固定参照置換/範囲拡張の適用+自己検証 (§4.7) |
 
 ### 5.2 ストレージ (backend/storage.py)
 

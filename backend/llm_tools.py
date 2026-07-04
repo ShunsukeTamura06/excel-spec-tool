@@ -14,6 +14,9 @@ LLM に渡す `tools` 配列を取得、`execute_tool_call()` で実行する。
 - list_analysis_risks: 動的参照など、静的解析では断定できない未解析リスクを取得
 - lookup_external_function: Bloomberg BDH/BDP/BDS 等の Add-In 関数定義を引く
 - list_external_functions_used: 当該ブックで使われている外部関数とその箇所を列挙
+- propose_named_range_fix: 名前定義修正の影響を試算する (read-only)
+- propose_fixed_ref_replace: 数式内の固定参照置換の影響を試算する (read-only)
+- propose_range_expansion: 数式の参照範囲拡張の影響を試算する (read-only)
 """
 
 from __future__ import annotations
@@ -25,8 +28,9 @@ from collections import Counter
 from typing import Any
 
 from backend.storage import JobNotFoundError, Storage
-from core.exceptions import NamedRangeFixError
+from core.exceptions import FormulaFixError, NamedRangeFixError
 from core.external_functions import get_function, list_functions
+from core.formula_fix import propose_fixed_ref_replace, propose_range_expansion
 from core.named_range_fix import propose_named_range_fix
 from core.reference_index import find_overlapping
 
@@ -344,6 +348,79 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_fixed_ref_replace",
+            "description": (
+                "数式内の固定参照 (例: Data!$B$5) を別の参照に置き換えたら"
+                "どの数式がどう変わるかを試算する。"
+                "この tool 自体はファイルを一切変更しない (読み取り専用の試算)。"
+                "文字列置換ではなく数式トークン単位の置換なので、"
+                "文字列リテラルや部分一致する別の参照は影響を受けない。"
+                "ユーザーから参照先の付け替え依頼を受けたら、適用前に必ずこれを呼んで"
+                "影響範囲 (変更される数式・波及範囲) を確認し、その内容をユーザーに提示すること。"
+                "実際の適用はユーザーが画面上のボタンで明示的に実行するものであり、"
+                "この tool を呼んだだけでは何も書き換わらない。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "old_ref": {
+                        "type": "string",
+                        "description": (
+                            "置換対象の参照 (シート修飾必須。"
+                            '例: "Data!$B$5", "Data!B5:C10"。$ の有無は無視して一致判定する)'
+                        ),
+                    },
+                    "new_ref": {
+                        "type": "string",
+                        "description": (
+                            "置換後の参照 (シート修飾必須。"
+                            '例: "Data!$B$6"。$ 表記はここで指定したとおりに書き込まれる)'
+                        ),
+                    },
+                },
+                "required": ["old_ref", "new_ref"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_range_expansion",
+            "description": (
+                "数式が参照している範囲 (例: Data!$A$1:$A$100) をより広い範囲に"
+                "拡張したらどの数式がどう変わるかを試算する。"
+                "データ行が増えて SUM/VLOOKUP 等の集計範囲が足りなくなったときに使う。"
+                "new_range は old_range と同一シートで、old_range を完全に包含する"
+                "こと (縮小や別領域への移動はこの tool では扱えない)。"
+                "この tool 自体はファイルを一切変更しない (読み取り専用の試算)。"
+                "実際の適用はユーザーが画面上のボタンで明示的に実行するものであり、"
+                "この tool を呼んだだけでは何も書き換わらない。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "old_range": {
+                        "type": "string",
+                        "description": (
+                            "拡張対象の範囲 (シート修飾必須。"
+                            '例: "Data!$A$1:$A$100"。$ の有無は無視して一致判定する)'
+                        ),
+                    },
+                    "new_range": {
+                        "type": "string",
+                        "description": (
+                            "拡張後の範囲 (同一シートで old_range を包含すること。"
+                            '例: "Data!$A$1:$A$200")'
+                        ),
+                    },
+                },
+                "required": ["old_range", "new_range"],
+            },
+        },
+    },
 ]
 
 
@@ -391,6 +468,10 @@ def execute_tool_call(
             result = _exec_list_external_functions_used(storage, job_id, arguments)
         elif name == "propose_named_range_fix":
             result = _exec_propose_named_range_fix(storage, job_id, arguments)
+        elif name == "propose_fixed_ref_replace":
+            result = _exec_propose_fixed_ref_replace(storage, job_id, arguments)
+        elif name == "propose_range_expansion":
+            result = _exec_propose_range_expansion(storage, job_id, arguments)
         else:
             return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001 - tool ループは壊さない
@@ -767,4 +848,59 @@ def _exec_propose_named_range_fix(storage: Storage, job_id: str, args: dict[str,
             ),
         },
         ensure_ascii=False,
+    )
+
+
+def _exec_propose_formula_fix(
+    storage: Storage,
+    job_id: str,
+    old_ref: str,
+    new_ref: str,
+    kind: str,
+) -> str:
+    """固定参照置換 / 範囲拡張の試算を実行する共通部."""
+    try:
+        wb = storage.load_workbook(job_id)
+        idx = storage.load_references(job_id)
+    except JobNotFoundError as e:
+        raise ToolExecutionError(f"job not found: {e}") from e
+    except FileNotFoundError as e:
+        raise ToolExecutionError(f"workbook or references not built: {e}") from e
+    try:
+        if kind == "range_expansion":
+            diff = propose_range_expansion(wb, idx, old_ref, new_ref)
+        else:
+            diff = propose_fixed_ref_replace(wb, idx, old_ref, new_ref)
+    except FormulaFixError as e:
+        raise ToolExecutionError(str(e)) from e
+    return json.dumps(
+        {
+            "proposal": diff.model_dump(by_alias=True),
+            "changed_formula_count": len(diff.cells),
+            "note": (
+                "これは試算結果であり、ファイルはまだ変更されていない。"
+                "ユーザーが画面のボタンで適用を確定するまで実ファイルは変わらない。"
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def _exec_propose_fixed_ref_replace(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
+    old_ref = args.get("old_ref")
+    new_ref = args.get("new_ref")
+    if not old_ref or not new_ref:
+        raise ToolExecutionError("old_ref and new_ref are required")
+    return _exec_propose_formula_fix(
+        storage, job_id, str(old_ref), str(new_ref), "fixed_ref_replace"
+    )
+
+
+def _exec_propose_range_expansion(storage: Storage, job_id: str, args: dict[str, Any]) -> str:
+    old_range = args.get("old_range")
+    new_range = args.get("new_range")
+    if not old_range or not new_range:
+        raise ToolExecutionError("old_range and new_range are required")
+    return _exec_propose_formula_fix(
+        storage, job_id, str(old_range), str(new_range), "range_expansion"
     )

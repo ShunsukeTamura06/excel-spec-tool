@@ -76,6 +76,8 @@ class TestToolDefinitions:
             "lookup_external_function",
             "list_external_functions_used",
             "propose_named_range_fix",
+            "propose_fixed_ref_replace",
+            "propose_range_expansion",
         }
 
     def test_build_returns_list(self) -> None:
@@ -737,5 +739,109 @@ class TestExecuteProposeNamedRangeFix:
         storage, job_id = job_with_named_range
         result = json.loads(
             execute_tool_call(storage, job_id, "propose_named_range_fix", {"name": "TaxRate"})
+        )
+        assert "error" in result
+
+
+@pytest.fixture
+def job_with_formulas(tmp_path: Path) -> tuple[Storage, str]:
+    """数式を持つジョブ (workbook + references 済み) を用意する."""
+    storage = Storage(tmp_path / "jobs")
+    meta = storage.create_job("dummy.xlsx", b"x")
+
+    wb = Workbook(
+        filename="dummy.xlsx",
+        sheets=[
+            SheetInfo(
+                name="Calc",
+                rows=5,
+                cols=5,
+                formulas=[
+                    CellFormula(coord="Calc!C1", formula="=Data!$B$5*2"),
+                    CellFormula(coord="Calc!C2", formula="=SUM(Data!$A$1:$A$100)"),
+                ],
+            ),
+        ],
+    )
+    storage.save_workbook(meta.job_id, wb)
+    storage.save_references(
+        meta.job_id,
+        ReferenceIndex(
+            refs={"Calc!C1": [Reference(kind="formula", from_="Report!D1", to="Calc!C1")]}
+        ),
+    )
+    return storage, meta.job_id
+
+
+class TestExecuteProposeFixedRefReplace:
+    def test_returns_proposal_with_changed_cells(
+        self, job_with_formulas: tuple[Storage, str]
+    ) -> None:
+        storage, job_id = job_with_formulas
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_fixed_ref_replace",
+                {"old_ref": "Data!$B$5", "new_ref": "Data!$B$6"},
+            )
+        )
+        proposal = result["proposal"]
+        assert len(proposal["cells"]) == 1
+        cell = proposal["cells"][0]
+        assert cell["sheet"] == "Calc"
+        assert cell["coord"] == "C1"
+        assert cell["before_formula"] == "=Data!$B$5*2"
+        assert cell["after_formula"] == "=Data!$B$6*2"
+        assert result["changed_formula_count"] == 1
+        assert len(proposal["blast_radius"]) == 1
+        assert "note" in result
+
+    def test_no_match_returns_error(self, job_with_formulas: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_formulas
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_fixed_ref_replace",
+                {"old_ref": "Data!Z99", "new_ref": "Data!Z100"},
+            )
+        )
+        assert "error" in result
+
+    def test_missing_args_returns_error(self, job_with_formulas: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_formulas
+        result = json.loads(
+            execute_tool_call(
+                storage, job_id, "propose_fixed_ref_replace", {"old_ref": "Data!$B$5"}
+            )
+        )
+        assert "error" in result
+
+
+class TestExecuteProposeRangeExpansion:
+    def test_returns_proposal(self, job_with_formulas: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_formulas
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_range_expansion",
+                {"old_range": "Data!$A$1:$A$100", "new_range": "Data!$A$1:$A$200"},
+            )
+        )
+        proposal = result["proposal"]
+        assert len(proposal["cells"]) == 1
+        assert proposal["cells"][0]["after_formula"] == "=SUM(Data!$A$1:$A$200)"
+
+    def test_shrinking_returns_error(self, job_with_formulas: tuple[Storage, str]) -> None:
+        storage, job_id = job_with_formulas
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_range_expansion",
+                {"old_range": "Data!$A$1:$A$100", "new_range": "Data!$A$1:$A$50"},
+            )
         )
         assert "error" in result

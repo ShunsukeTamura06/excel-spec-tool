@@ -80,6 +80,18 @@ for legacy `.xlsm` modernization.**
   `list_workbook_objects`, `list_analysis_risks`,
   `lookup_external_function`, `list_external_functions_used`
 
+### Safety gate & safe auto-fix (roadmap S1/S2, shipping incrementally)
+- **Structural diff** between two workbook versions (cells / named ranges /
+  conditional formats / validations / charts / pivots / VBA modules) with
+  **blast-radius** analysis — re-save noise is ignored by design
+  (normalized-extraction comparison, validated against real Excel re-saves)
+- **Safe auto-fix loop** for three narrow patterns: named-range
+  redefinition, fixed-reference replacement, formula range expansion.
+  The LLM can only *propose* (read-only impact estimate); applying
+  requires an explicit button click, writes to a **new job** (the
+  original file is never modified), and self-verifies with the
+  structural diff
+
 ### Frontend (Nuxt 3 SPA, dark theme)
 - **Insight dashboard**: TL;DR + input/output sheet candidates +
   ranking (most calc / most read / most reader) + risk summary
@@ -94,7 +106,7 @@ for legacy `.xlsm` modernization.**
 - **No data leaves your network**: LLM goes through whatever
   OpenAI-compatible endpoint you configure (Ollama, vLLM,
   self-hosted gateway, OpenAI, etc.)
-- **518 tests** (pytest), `mypy --strict` on `core/`, `ruff` clean
+- **617 tests** (pytest), `mypy --strict` on `core/`, `ruff` clean
 
 ## Quick start
 
@@ -218,7 +230,7 @@ uv run uvicorn backend.main:app --port 8001
 ## Project status
 
 - **0.1.x — Beta.** Core extraction is stable and well tested
-  (518 tests, `mypy --strict` on `core/`). LLM-side prompts and UI
+  (617 tests, `mypy --strict` on `core/`). LLM-side prompts and UI
   layout are still iterating.
 - **Maintained by**: Shunsuke Tamura ([@ShunsukeTamura06](https://github.com/ShunsukeTamura06)),
   solo, in open development. Issues and PRs are welcome (Japanese or English).

@@ -100,6 +100,7 @@ class Rule:
 HISTORICAL_DOCS = frozenset(
     {
         "CLAUDE.md",  # Invariants 表に禁止文字列を列挙する政策文書
+        "AGENTS.md",  # CLAUDE.md の他エージェント向けミラー (同じ Invariants 表を含む)
         "docs/OSS_LAUNCH_PLAN.md",  # 過去フェーズの記録に旧名が引用として残る
         "scripts/check_drift.py",  # ルール定義自身
         "CHANGELOG.md",  # 将来用意
