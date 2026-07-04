@@ -19,3 +19,7 @@ class DiffError(CoreError):
 
 class NamedRangeFixError(CoreError):
     """名前付き範囲の修正 (提案/適用) に関する失敗 (対象名が見つからない等)."""
+
+
+class FormulaFixError(CoreError):
+    """数式内参照の修正 (提案/適用) に関する失敗 (参照が不正・該当数式なし等)."""
