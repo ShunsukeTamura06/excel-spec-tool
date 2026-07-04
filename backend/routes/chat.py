@@ -66,6 +66,8 @@ _TOOL_PROGRESS_MESSAGES = {
     "lookup_external_function": "外部関数の定義を確認中",
     "list_external_functions_used": "外部関数の使用箇所を確認中",
     "propose_named_range_fix": "名前定義修正の影響範囲を試算中",
+    "propose_fixed_ref_replace": "固定参照置換の影響範囲を試算中",
+    "propose_range_expansion": "数式範囲拡張の影響範囲を試算中",
 }
 
 
@@ -442,15 +444,27 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         '    例: propose_named_range_fix("TaxRate", "Data!$B$1")',
         "    名前付き範囲の参照先を書き換えたら何が変わるかを試算する読み取り専用ツール。"
         "このツール自体はファイルを一切変更しない。",
+        "- `propose_fixed_ref_replace(old_ref, new_ref)`:",
+        '    例: propose_fixed_ref_replace("Data!$B$5", "Data!$B$6")',
+        "    数式内の固定参照を別の参照に置き換えたらどの数式がどう変わるかを試算する"
+        "読み取り専用ツール。参照はシート修飾付きで指定する。",
+        "- `propose_range_expansion(old_range, new_range)`:",
+        '    例: propose_range_expansion("Data!$A$1:$A$100", "Data!$A$1:$A$200")',
+        "    数式が参照している範囲を広げたらどの数式がどう変わるかを試算する"
+        "読み取り専用ツール。データ行が増えて集計範囲が足りない、という依頼で使う。"
+        "new_range は old_range と同一シートで old_range を包含すること。",
         "",
-        "# 名前定義の修正依頼を受けたとき",
+        "# 修正依頼 (名前定義・固定参照・範囲拡張) を受けたとき",
         "",
-        "- ユーザーから名前付き範囲の修正依頼を受けたら、まず `propose_named_range_fix` を呼び、"
-        "波及範囲・既存リスクを試算してから提示すること",
+        "- ユーザーから該当パターンの修正依頼を受けたら、まず対応する propose 系ツール"
+        "(`propose_named_range_fix` / `propose_fixed_ref_replace` / `propose_range_expansion`)"
+        "を呼び、変更される箇所・波及範囲・既存リスクを試算してから提示すること",
         "- 実際の適用は必ずユーザーが画面上のボタンで明示的に行う。"
         "あなた自身がファイルを書き換えることはできないし、してはいけない",
-        "- 提案した内容と実際の適用結果が食い違わないよう、`new_refers_to` は"
+        "- 提案した内容と実際の適用結果が食い違わないよう、propose 系ツールに渡す引数は"
         "ユーザーの意図を正確に反映した値にすること",
+        "- 上記3パターンに当てはまらない修正 (VBA 変更・行列の挿入削除・複雑な数式の"
+        "書き換え等) は自動適用できない。従来どおりコピペ完結の改修手順を提示すること",
         "",
         "確実性を優先して必要な範囲でツールを呼んでください。",
         "同じ観点の確認を繰り返さず、十分な根拠が集まったら回答をまとめてください。",
