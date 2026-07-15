@@ -33,6 +33,7 @@ htmlcov/
 # Project local data
 jobs/
 /var/
+runtime/
 
 # Node / Nuxt
 node_modules/
