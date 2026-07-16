@@ -58,6 +58,7 @@ async function refreshSessionsOnly() {
 
 async function loadHistory() {
   history.value = await backend.getChatHistory(jobId.value, activeSessionId.value)
+  scrollToConversationFocus()
 }
 
 async function loadWorkbook() {
@@ -244,7 +245,27 @@ function scrollToBottom() {
   })
 }
 
-watch(history, () => scrollToBottom(), { flush: 'post' })
+function scrollToLatestAnswer() {
+  nextTick(() => {
+    const container = scrollContainer.value
+    if (!container) return
+    const answers = container.querySelectorAll<HTMLElement>('[data-chat-role="assistant"]')
+    const latest = answers.item(answers.length - 1)
+    if (!latest) return
+    const containerTop = container.getBoundingClientRect().top
+    const answerTop = latest.getBoundingClientRect().top
+    container.scrollTop += answerTop - containerTop - 12
+  })
+}
+
+function scrollToConversationFocus() {
+  if (history.value.at(-1)?.role === 'assistant') {
+    scrollToLatestAnswer()
+  } else {
+    scrollToBottom()
+  }
+}
+
 onMounted(() => scrollToBottom())
 
 async function send() {
@@ -271,7 +292,7 @@ async function send() {
     })
     history.value = r.history
     await refreshSessionsOnly()
-    scrollToBottom()
+    scrollToLatestAnswer()
   } catch (e) {
     sendError.value = friendlyMessage(e)
     toast.add({
@@ -522,13 +543,17 @@ function replaceWithPendingTemplate() {
             </div>
 
             <!-- メッセージ -->
-            <ChatMessageBubble
+            <div
               v-for="(m, i) in history"
               :key="i"
-              :message="m"
-              :job-id="jobId"
-              :workbook="workbook"
-            />
+              :data-chat-role="m.role"
+            >
+              <ChatMessageBubble
+                :message="m"
+                :job-id="jobId"
+                :workbook="workbook"
+              />
+            </div>
 
             <!-- アシスタント応答中インジケータ -->
             <div v-if="sending" class="flex gap-3">

@@ -21,43 +21,56 @@ onMounted(() => {
 })
 const isDark = computed(() => mounted.value && colorMode.value === 'dark')
 
-const navItems = computed(() => {
+const navGroups = computed(() => {
   const id = jobStore.currentJobId
   return [
     {
-      label: 'ホーム',
-      icon: 'i-lucide-home',
-      to: '/',
-      active: route.path === '/',
-      disabled: false,
+      label: '',
+      items: [{
+        label: 'ホーム',
+        icon: 'i-lucide-home',
+        to: '/',
+        active: route.path === '/',
+        disabled: false,
+      }],
     },
     {
-      label: 'Excel診断',
-      icon: 'i-lucide-clipboard-check',
-      to: id ? `/spec/${id}` : '#',
-      active: route.path.startsWith('/spec'),
-      disabled: !id,
+      label: 'このExcelを知る',
+      items: [
+        {
+          label: '概要・構造を見る',
+          icon: 'i-lucide-clipboard-check',
+          to: id ? `/spec/${id}` : '#',
+          active: route.path.startsWith('/spec'),
+          disabled: !id,
+        },
+        {
+          label: '質問して調べる',
+          icon: 'i-lucide-message-circle-question',
+          to: id ? `/chat/${id}` : '#',
+          active: route.path.startsWith('/chat'),
+          disabled: !id,
+        },
+      ],
     },
     {
-      label: 'このExcelに質問する',
-      icon: 'i-lucide-message-circle-question',
-      to: id ? `/chat/${id}` : '#',
-      active: route.path.startsWith('/chat'),
-      disabled: !id,
-    },
-    {
-      label: 'このExcelを直す',
-      icon: 'i-lucide-wrench',
-      to: id ? `/change/${id}` : '#',
-      active: route.path.startsWith('/change'),
-      disabled: !id,
-    },
-    {
-      label: '変更結果を比べる',
-      icon: 'i-lucide-git-compare',
-      to: '/diff',
-      active: route.path.startsWith('/diff'),
-      disabled: false,
+      label: 'このExcelを変更する',
+      items: [
+        {
+          label: '改修を依頼する',
+          icon: 'i-lucide-wrench',
+          to: id ? `/change/${id}` : '#',
+          active: route.path.startsWith('/change'),
+          disabled: !id,
+        },
+        {
+          label: '変更結果を比べる',
+          icon: 'i-lucide-git-compare',
+          to: '/diff',
+          active: route.path.startsWith('/diff'),
+          disabled: false,
+        },
+      ],
     },
   ]
 })
@@ -83,18 +96,28 @@ function toggleDark() {
 
     <!-- Nav -->
     <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-      <template v-for="item in navItems" :key="item.label">
-        <UButton
-          :to="item.disabled ? undefined : item.to"
-          :icon="item.icon"
-          :color="item.active ? 'primary' : 'neutral'"
-          :variant="item.active ? 'soft' : 'ghost'"
-          :disabled="item.disabled"
-          block
-          class="justify-start"
+      <template v-for="group in navGroups" :key="group.label || 'global'">
+        <p
+          v-if="group.label"
+          class="px-2 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-(--ui-text-muted)"
         >
-          {{ item.label }}
-        </UButton>
+          {{ group.label }}
+        </p>
+        <div class="space-y-1">
+          <UButton
+            v-for="item in group.items"
+            :key="item.label"
+            :to="item.disabled ? undefined : item.to"
+            :icon="item.icon"
+            :color="item.active ? 'primary' : 'neutral'"
+            :variant="item.active ? 'soft' : 'ghost'"
+            :disabled="item.disabled"
+            block
+            class="justify-start"
+          >
+            {{ item.label }}
+          </UButton>
+        </div>
       </template>
 
       <USeparator class="my-3" />

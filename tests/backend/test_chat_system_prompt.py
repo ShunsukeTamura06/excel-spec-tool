@@ -41,8 +41,8 @@ class TestSystemPromptContainsCoreGuidelines:
         prompt = _build_system_prompt("")
         assert "結論または変更後の姿を最初" in prompt
         assert "最大3ブロック" in prompt
-        assert "600文字以内" in prompt
-        assert "箇条書きは5項目以内" in prompt
+        assert "400文字以内" in prompt
+        assert "箇条書きは4項目以内" in prompt
         assert "改修手順" in prompt
         assert "波及範囲" in prompt
         assert "未解析リスク" in prompt

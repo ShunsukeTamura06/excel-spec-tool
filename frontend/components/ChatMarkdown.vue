@@ -686,7 +686,7 @@ export default defineComponent({
         ...parseBlocks(props.markdown).map((block, index) => {
           switch (block.kind) {
             case 'heading':
-              return h(`h${block.level}`, { key: index }, renderInline(
+              return h(`h${block.level}`, { key: index, class: 'chat-section-heading' }, renderInline(
                 block.text,
                 evidenceIndex,
                 showTooltip,
@@ -695,7 +695,10 @@ export default defineComponent({
               ))
             case 'ul':
             case 'ol':
-              return h(block.kind, { key: index }, block.items.map((item, itemIndex) => h(
+              return h(block.kind, {
+                key: index,
+                class: `chat-answer-list chat-answer-${block.kind}`,
+              }, block.items.map((item, itemIndex) => h(
                 'li',
                 { key: itemIndex },
                 renderInline(item, evidenceIndex, showTooltip, moveTooltip, hideTooltip),
@@ -710,7 +713,10 @@ export default defineComponent({
                 h('pre', [h('code', block.code)]),
               ])
             case 'paragraph':
-              return h('p', { key: index }, renderInline(
+              return h('p', {
+                key: index,
+                class: index === 0 ? 'chat-answer-lead' : undefined,
+              }, renderInline(
                 block.text,
                 evidenceIndex,
                 showTooltip,
@@ -749,6 +755,59 @@ export default defineComponent({
 </script>
 
 <style scoped>
+.chat-markdown {
+  line-height: 1.65;
+}
+
+.chat-answer-lead {
+  background: color-mix(in srgb, var(--ui-primary) 9%, transparent);
+  border-left: 3px solid var(--ui-primary);
+  border-radius: 0.5rem;
+  color: var(--ui-text-highlighted);
+  font-weight: 500;
+  margin: 0 0 0.875rem;
+  padding: 0.75rem 0.875rem;
+}
+
+.chat-section-heading {
+  border-left: 3px solid var(--ui-primary);
+  color: var(--ui-text-highlighted);
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 1rem 0 0.5rem;
+  padding-left: 0.625rem;
+}
+
+.chat-answer-list {
+  display: grid;
+  gap: 0.375rem;
+  margin: 0.5rem 0 0.875rem;
+  padding-left: 0;
+}
+
+.chat-answer-ul {
+  list-style: none;
+}
+
+.chat-answer-ul > li {
+  padding-left: 1.125rem;
+  position: relative;
+}
+
+.chat-answer-ul > li::before {
+  color: var(--ui-primary);
+  content: '•';
+  font-weight: 700;
+  left: 0.125rem;
+  position: absolute;
+}
+
+.chat-answer-ol {
+  list-style-position: outside;
+  padding-left: 1.25rem;
+}
+
 .chat-code-block {
   position: relative;
 }
