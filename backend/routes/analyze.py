@@ -17,6 +17,7 @@ from backend.annotators import annotate_workbook
 from backend.dependencies import get_llm_client, get_storage
 from backend.llm_client import LLMClient
 from backend.storage import JobNotFoundError, Storage
+from core.diagnosis import build_workbook_diagnosis
 from core.models import ReferenceIndex, Workbook
 from core.risk_analyzer import detect_analysis_risks
 from core.spec_generator import generate_spec
@@ -40,6 +41,8 @@ def _run_analysis(
     annotated_wb = annotate_workbook(wb, llm)
     annotated_wb.analysis_risks = detect_analysis_risks(annotated_wb)
     storage.save_workbook(job_id, annotated_wb)
+    diagnosis = build_workbook_diagnosis(annotated_wb, idx)
+    storage.save_diagnosis(job_id, diagnosis)
     spec_md = generate_spec(annotated_wb, idx)
     storage.save_spec(job_id, spec_md)
     storage.update_status(job_id, "analyzed")

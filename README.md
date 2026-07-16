@@ -10,13 +10,25 @@
 
 📖 日本語版: [README.ja.md](./README.ja.md)
 
-`xlblueprint` extracts the structure of a complex business workbook — every
-sheet, formula, named range, conditional format, chart, pivot, VBA module,
-form control, external link — and turns it into:
+`xlblueprint` is built around two tasks for people who inherit an unfamiliar
+business workbook:
 
-1. A **structured spec** (Markdown + Mermaid)
+1. **Investigate this Excel file** — get a plain-language diagnosis of its
+   likely purpose, entry points, inputs, outputs, features, external
+   dependencies, and risks. Every claim carries evidence IDs and is labelled
+   as extracted fact, inference, or unknown.
+2. **I need to change this Excel file** — select the affected feature, describe
+   the desired business outcome, and turn it into a change brief containing
+   current behavior, likely impact areas, clarification questions, evidence,
+   and acceptance criteria before any edit begins.
+
+Under those workflows, `xlblueprint` extracts every sheet, formula, named
+range, conditional format, chart, pivot, VBA module, form control, and external
+link, and also provides:
+
+1. A **structured technical report** (Markdown + Mermaid)
 2. An **interactive dependency graph** (sheets & VBA call graph)
-3. A **chat assistant** that answers *"if I change X, what breaks?"*
+3. A **grounded change consultation** that answers *"if I change X, what breaks?"*
    by calling tools over the extracted index (cells / refs / VBA /
    risks / external functions)
 4. An honest **"what we can't statically analyze" report** — INDIRECT,
@@ -61,6 +73,12 @@ for legacy `.xlsm` modernization.**
 - **External link** detection
 
 ### Analysis
+- **Evidence-backed workbook diagnosis** — headline, overview, feature map,
+  inputs, outputs, external dependencies and warnings. It remains useful with
+  no LLM configured and never promotes an unsupported guess to a fact
+- **Business change brief** — desired outcome, current behavior, likely impact
+  areas, follow-up questions, acceptance criteria and automation boundary,
+  ready to hand into the grounded consultation flow
 - **Reverse reference index** with range-intersection lookup
   (formula + VBA + chart series + pivot source)
 - **Risk analyzer** — surfaces the things static analysis *cannot* track:
@@ -100,8 +118,12 @@ for legacy `.xlsm` modernization.**
   is not a required dependency and is never treated as the proof of safety
 
 ### Frontend (Nuxt 3 SPA, dark theme)
-- **Insight dashboard**: TL;DR + input/output sheet candidates +
-  ranking (most calc / most read / most reader) + risk summary
+- **Two primary journeys**: "investigate this Excel" and "change this Excel";
+  provider names and implementation details stay out of the normal workflow
+- **Grounded diagnosis**: purpose/structure summary, feature cards,
+  input/output candidates, dependencies, grouped warnings, evidence drill-down
+- **Guided change request**: feature selection, business outcome, impact areas,
+  questions and acceptance criteria, then pre-filled grounded consultation
 - **Interactive diagrams** (Vue Flow + dagre, themed minimap)
 - **Sheet explorer** with formula↔reference chips, A/B/C column
   headers and 1/2/3 row numbers in previews
@@ -113,7 +135,7 @@ for legacy `.xlsm` modernization.**
 - **No data leaves your network**: LLM goes through whatever
   OpenAI-compatible endpoint you configure (Ollama, vLLM,
   self-hosted gateway, OpenAI, etc.)
-- **637 tests** (pytest), `mypy --strict` on `core/`, `ruff` clean
+- **600+ tests** (pytest), `mypy --strict` on `core/`, `ruff` clean
 
 ## Quick start
 
@@ -148,18 +170,20 @@ workbook with 170 formulas, charts, pivots, INDIRECT/OFFSET, and
 21 "unresolvable risk" items — a small but realistic showcase of what
 the tool surfaces.
 
-Without an LLM configured (default), the spec / diagrams / search /
-risk analysis all work. The chat falls back to mock responses; an
-in-app onboarding card explains how to wire up Ollama / OpenAI / etc.
+Without an LLM configured (default), the diagnosis, feature map, change brief,
+technical report, diagrams, search, and risk analysis all work. The consultation
+screen tells users that an administrator must configure the assistant before it
+can create a grounded change plan.
 
 ## Architecture
 
 ```
 Frontend (Nuxt 3 SPA, TypeScript)        Backend (FastAPI)
 ├── Nuxt UI v3 + Tailwind v4        <──> ├── /extract, /analyze
-├── Vue Flow + dagre (diagrams)          ├── /spec, /workbook
-├── @nuxtjs/mdc (Markdown rendering)     ├── /references, /diagrams
-└── Pinia                                ├── /chat (function calling SSE)
+├── Vue Flow + dagre (diagrams)          ├── /diagnosis, /change-request
+├── @nuxtjs/mdc (Markdown rendering)     ├── /spec, /workbook
+└── Pinia                                ├── /references, /diagrams
+                                         ├── /chat (function calling SSE)
                                          ├── /system/llm-status
                                          └── /jobs
 
@@ -167,6 +191,7 @@ Frontend (Nuxt 3 SPA, TypeScript)        Backend (FastAPI)
                                          ├── olevba / openpyxl extraction
                                          ├── reference_index
                                          ├── risk_analyzer
+                                         ├── diagnosis / change brief
                                          ├── external_functions registry
                                          ├── mutation plan / provider boundary
                                          ├── exact structural-diff verification
@@ -194,6 +219,19 @@ idx = build_reference_index(wb)
 
 More detail: [docs/architecture.md](./docs/architecture.md) (English summary)
 and [docs/SPEC.ja.md](./docs/SPEC.ja.md) (full Japanese spec).
+
+## Verification boundary
+
+On macOS and Linux, xlblueprint can extract, diagnose, build a reference map,
+create change briefs, apply the currently supported narrow OOXML edits, and
+verify exact normalized structural diffs. That is **static and structural
+verification**, not proof that Excel executed the workbook correctly.
+
+Recalculation in Microsoft Excel, VBA compilation/execution, event macros,
+COM/VBIDE behavior, protected projects, and environment-specific external
+connections require a Windows machine with Microsoft Excel. OfficeCLI is an
+optional editing adapter, not a safety oracle; its process success is never
+accepted as verification without xlblueprint re-extraction and policy checks.
 
 ## Configuration
 

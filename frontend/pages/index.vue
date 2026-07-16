@@ -39,8 +39,8 @@ async function onSelect(file: File) {
       jobStore.setCurrentJobId(jobId)
       await jobStore.refreshJobs()
       toast.add({
-        title: '既存の分析結果を開きます',
-        description: `${file.name} は同じ内容のジョブがあるため、再分析せずに再利用しました`,
+        title: '既存の診断結果を開きます',
+        description: `${file.name} は以前と同じ内容のため、保存済みの結果を再利用しました`,
         color: 'neutral',
         icon: 'i-lucide-copy-check',
       })
@@ -54,8 +54,8 @@ async function onSelect(file: File) {
     jobStore.setCurrentJobId(jobId)
     await jobStore.refreshJobs()
     toast.add({
-      title: '分析完了',
-      description: `${file.name} の設計書が生成されました`,
+      title: 'Excel診断が完了しました',
+      description: `${file.name} の用途・機能・注意点を確認できます`,
       color: 'success',
       icon: 'i-lucide-check-circle-2',
     })
@@ -105,7 +105,7 @@ function openCurrentSpec() {
   if (jobStore.currentJobId) navigateTo(`/spec/${jobStore.currentJobId}`)
 }
 function openCurrentChat() {
-  if (jobStore.currentJobId) navigateTo(`/chat/${jobStore.currentJobId}`)
+  if (jobStore.currentJobId) navigateTo(`/change/${jobStore.currentJobId}`)
 }
 
 // メトリクス (ジョブ一覧サマリ)
@@ -128,15 +128,14 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
           xlblueprint
         </h1>
         <p class="mt-2 text-(--ui-text-muted) max-w-2xl">
-          VBA / 数式 / 参照関係を含む <code class="text-xs px-1 py-0.5 rounded bg-(--ui-bg-elevated)">.xlsm</code> /
-          <code class="text-xs px-1 py-0.5 rounded bg-(--ui-bg-elevated)">.xlsx</code>
-          ツールの統合設計書を生成し、LLM と対話しながら安全に改修するためのワークベンチ。
+          引き継いだExcelが何をするものか、どこに注意すべきかを根拠付きで調べます。
+          直したい内容は業務の言葉で整理し、原本を残した安全な改修と検証につなげます。
         </p>
       </div>
       <div class="flex gap-3">
         <div class="flex flex-col items-center px-4 py-2 rounded-xl bg-(--ui-bg-elevated)">
           <span class="text-2xl font-bold text-(--ui-text-highlighted) tabular-nums">{{ stats.total }}</span>
-          <span class="text-[10px] uppercase tracking-wide text-(--ui-text-muted)">総ジョブ</span>
+          <span class="text-[10px] uppercase tracking-wide text-(--ui-text-muted)">登録ファイル</span>
         </div>
         <div class="flex flex-col items-center px-4 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950">
           <span class="text-2xl font-bold text-emerald-700 dark:text-emerald-300 tabular-nums">{{ stats.analyzed }}</span>
@@ -149,9 +148,9 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
       </div>
     </header>
 
-    <!-- 現在のジョブ -->
+    <!-- 現在のファイル -->
     <section v-if="jobStore.currentJob" class="space-y-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-(--ui-text-muted)">現在のジョブ</h2>
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-(--ui-text-muted)">現在のExcel</h2>
       <UCard>
         <div class="flex items-center justify-between flex-wrap gap-3">
           <div class="flex items-center gap-3">
@@ -169,23 +168,20 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
           </div>
           <div class="flex gap-2">
             <UButton icon="i-lucide-file-text" color="primary" variant="solid" @click="openCurrentSpec">
-              設計書を見る
+              診断結果を見る
             </UButton>
-            <UButton icon="i-lucide-message-circle" color="primary" variant="soft" @click="openCurrentChat">
-              チャット
+            <UButton icon="i-lucide-wrench" color="primary" variant="soft" @click="openCurrentChat">
+              このExcelを直したい
             </UButton>
           </div>
         </div>
       </UCard>
     </section>
 
-    <!-- LLM 未接続 onboarding (configured ならレンダされない) -->
-    <LlmOnboardingCard />
-
     <!-- アップロード or 進捗 -->
     <section class="space-y-3">
       <h2 class="text-sm font-semibold uppercase tracking-wide text-(--ui-text-muted)">
-        {{ jobStore.currentJob ? '別の Excel を分析' : 'Excel を分析' }}
+        {{ jobStore.currentJob ? '別の Excel を調べる' : 'この Excel を調べる' }}
       </h2>
       <AnalyzeProgress
         v-if="phase !== 'idle'"
@@ -225,10 +221,10 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
       </div>
     </section>
 
-    <!-- ジョブ一覧 -->
+    <!-- ファイル一覧 -->
     <section class="space-y-3">
       <div class="flex items-center justify-between">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-(--ui-text-muted)">過去のジョブ</h2>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-(--ui-text-muted)">以前に調べたExcel</h2>
         <UButton
           icon="i-lucide-refresh-cw"
           color="neutral"
@@ -246,7 +242,7 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
         color="error"
         variant="subtle"
         icon="i-lucide-alert-triangle"
-        title="ジョブ一覧の取得に失敗"
+        title="Excel一覧の取得に失敗"
         :description="jobStore.error"
       />
 

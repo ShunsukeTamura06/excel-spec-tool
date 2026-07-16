@@ -7,7 +7,7 @@
  */
 
 definePageMeta({ layout: 'default' })
-useHead({ title: '設計書 — xlblueprint' })
+useHead({ title: 'Excel診断 — xlblueprint' })
 
 const route = useRoute()
 const backend = useBackend()
@@ -36,6 +36,11 @@ const { data: spec, error: specError, pending: specPending } = useAsyncData(
 const { data: workbook, error: wbError, pending: wbPending } = useAsyncData(
   () => `workbook-${jobId.value}`,
   () => backend.getWorkbook(jobId.value),
+  { lazy: true },
+)
+const { data: diagnosis, error: diagnosisError, pending: diagnosisPending } = useAsyncData(
+  () => `diagnosis-${jobId.value}`,
+  () => backend.getDiagnosis(jobId.value),
   { lazy: true },
 )
 
@@ -76,17 +81,18 @@ function downloadSpec() {
 }
 
 const tabItems = computed(() => [
-  { value: 'overview',   label: '概要',         icon: 'i-lucide-file-text' },
-  { value: 'sheets',     label: 'シート',       icon: 'i-lucide-layout-grid' },
-  { value: 'vba',        label: 'VBA',          icon: 'i-lucide-code-2' },
+  { value: 'overview',   label: '診断',         icon: 'i-lucide-clipboard-check' },
+  { value: 'sheets',     label: 'シート詳細',   icon: 'i-lucide-layout-grid' },
+  { value: 'vba',        label: 'VBA詳細',      icon: 'i-lucide-code-2' },
   { value: 'external',   label: '外部関数',     icon: 'i-lucide-puzzle' },
-  { value: 'references', label: '参照検索',     icon: 'i-lucide-search' },
-  { value: 'diagrams',   label: 'ダイアグラム', icon: 'i-lucide-network' },
+  { value: 'references', label: '参照を調べる', icon: 'i-lucide-search' },
+  { value: 'diagrams',   label: '構造図',       icon: 'i-lucide-network' },
 ])
 
 const errorMsg = computed(() => {
   if (specError.value) return friendlyMessage(specError.value)
   if (wbError.value) return friendlyMessage(wbError.value)
+  if (diagnosisError.value) return friendlyMessage(diagnosisError.value)
   return null
 })
 </script>
@@ -99,7 +105,7 @@ const errorMsg = computed(() => {
         <UIcon name="i-lucide-home" class="size-3.5" /> ホーム
       </NuxtLink>
       <UIcon name="i-lucide-chevron-right" class="size-4" />
-      <span class="text-(--ui-text-highlighted)">設計書</span>
+      <span class="text-(--ui-text-highlighted)">Excel診断</span>
     </div>
 
     <UAlert
@@ -112,7 +118,7 @@ const errorMsg = computed(() => {
     />
 
     <!-- ヘッダー -->
-    <div v-if="spec && workbook" class="flex items-start justify-between gap-4 flex-wrap">
+    <div v-if="spec && workbook && diagnosis" class="flex items-start justify-between gap-4 flex-wrap">
       <div>
         <h1 class="text-2xl font-bold tracking-tight text-(--ui-text-highlighted) flex items-center gap-2">
           <UIcon name="i-lucide-file-spreadsheet" class="size-6 text-emerald-600" />
@@ -133,27 +139,26 @@ const errorMsg = computed(() => {
           variant="soft"
           @click="downloadSpec"
         >
-          設計書をダウンロード
+          技術レポートを保存
         </UButton>
         <UButton
-          icon="i-lucide-message-circle"
+          icon="i-lucide-wrench"
           color="primary"
-          :to="`/chat/${jobId}`"
+          :to="`/change/${jobId}`"
         >
-          チャットで改修相談
+          このExcelを直したい
         </UButton>
       </div>
     </div>
 
-    <!-- メトリクス -->
-    <SpecMetrics v-if="workbook" :workbook="workbook" />
-
     <!-- 初回ロード中: スケルトン表示 -->
-    <SpecSkeleton v-if="(specPending || wbPending) && (!spec || !workbook)" />
+    <SpecSkeleton
+      v-if="(specPending || wbPending || diagnosisPending) && (!spec || !workbook || !diagnosis)"
+    />
 
     <!-- タブ -->
     <UTabs
-      v-if="spec && workbook"
+      v-if="spec && workbook && diagnosis"
       v-model="tab"
       :items="tabItems"
       class="w-full"
@@ -165,6 +170,8 @@ const errorMsg = computed(() => {
             v-if="item.value === 'overview'"
             :markdown="spec.spec_md"
             :workbook="workbook"
+            :diagnosis="diagnosis"
+            :job-id="jobId"
           />
 
           <SheetExplorer

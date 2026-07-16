@@ -85,6 +85,8 @@ async function loadChatState() {
       loadHistory(),
       loadWorkbook(),
     ])
+    const requestedPrefill = typeof route.query.request === 'string' ? route.query.request : ''
+    if (requestedPrefill && !input.value) input.value = requestedPrefill
   } catch (e) {
     loadError.value = friendlyMessage(e)
   } finally {
@@ -282,9 +284,9 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 const examples = [
-  'このブックの目的を要約してください',
-  'Calc シートの H2 セルを変更したら、どこに波及しますか？',
-  '商品マスタの単価を変えた時の影響範囲を教えてください',
+  'このExcelの使い方を、根拠を示しながら説明してください',
+  '入力項目を1つ追加したいです。影響する機能と確認事項を教えてください',
+  '集計結果の項目を変えた場合、どこを確認すべきですか？',
 ]
 </script>
 
@@ -297,7 +299,7 @@ const examples = [
           <UIcon name="i-lucide-home" class="size-3.5" /> ホーム
         </NuxtLink>
         <UIcon name="i-lucide-chevron-right" class="size-4" />
-        <NuxtLink :to="`/spec/${jobId}`" class="hover:text-(--ui-primary)">設計書</NuxtLink>
+        <NuxtLink :to="`/spec/${jobId}`" class="hover:text-(--ui-primary)">Excel診断</NuxtLink>
         <UIcon name="i-lucide-chevron-right" class="size-4" />
         <span class="text-(--ui-text-highlighted)">チャット</span>
       </div>
@@ -308,7 +310,7 @@ const examples = [
         variant="soft"
         size="sm"
       >
-        設計書に戻る
+        Excel診断に戻る
       </UButton>
     </div>
 
@@ -480,7 +482,7 @@ const examples = [
               <div class="space-y-1">
                 <p class="font-semibold text-(--ui-text-highlighted)">改修について質問しましょう</p>
                 <p class="text-xs text-(--ui-text-muted) max-w-md">
-                  設計書とツールを根拠に、改修手順と波及範囲を提案します。
+                  Excel診断の根拠を使い、改修手順と影響範囲を提案します。
                   質問例から始めるか、自由に入力してください.
                 </p>
               </div>
@@ -555,7 +557,7 @@ const examples = [
             <div class="flex items-center justify-between gap-2">
               <p class="text-[10px] text-(--ui-text-muted) flex items-center gap-1">
                 <UIcon name="i-lucide-info" class="size-3" />
-                応答には数十秒かかる場合があります (LLM 呼び出し + ツール反復)。
+                回答の作成には数十秒かかる場合があります。
               </p>
               <UButton
                 :loading="sending"

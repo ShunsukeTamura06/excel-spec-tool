@@ -21,6 +21,67 @@ export interface SpecResponse {
   meta: JobMeta
 }
 
+export type DiagnosisConfidence = 'explicit' | 'inferred' | 'unknown'
+
+export interface DiagnosisEvidence {
+  id: string
+  kind: 'sheet' | 'control' | 'vba' | 'reference' | 'external' | 'risk'
+  location: string
+  detail: string
+}
+
+export interface GroundedClaim {
+  text: string
+  confidence: DiagnosisConfidence
+  evidence_ids: string[]
+}
+
+export interface WorkbookFeature {
+  id: string
+  name: string
+  summary: string
+  confidence: DiagnosisConfidence
+  entry_points: string[]
+  related_sheets: string[]
+  inputs: string[]
+  outputs: string[]
+  evidence_ids: string[]
+}
+
+export interface WorkbookDiagnosis {
+  filename: string
+  headline: GroundedClaim
+  overview: GroundedClaim
+  features: WorkbookFeature[]
+  inputs: GroundedClaim[]
+  outputs: GroundedClaim[]
+  external_dependencies: GroundedClaim[]
+  warnings: GroundedClaim[]
+  evidence: DiagnosisEvidence[]
+  coverage: {
+    sheets: number
+    formulas: number
+    vba_procedures: number
+    controls: number
+    external_dependencies: number
+  }
+  limitations: string[]
+}
+
+export interface ChangeBrief {
+  title: string
+  feature_id: string | null
+  current_behavior: string
+  requested_outcome: string
+  affected_areas: string[]
+  evidence_ids: string[]
+  clarification_questions: string[]
+  acceptance_criteria: string[]
+  automation: 'supported' | 'needs_review' | 'unsupported'
+  automation_reason: string
+  next_step: string
+}
+
 export interface ReferenceItem {
   kind: 'formula' | 'vba' | 'chart' | 'pivot' | 'power_query'
   /** Pydantic 側で `from_` を alias `from` で吐く. JSON では `from`. */

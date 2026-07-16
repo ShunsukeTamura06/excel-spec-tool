@@ -168,6 +168,9 @@ class TestAnalyze:
 
         spec_md = backend_storage.load_spec(job_id)
         assert "# 設計書: a.xlsx" in spec_md
+        diagnosis = backend_storage.load_diagnosis(job_id)
+        assert diagnosis.filename == "a.xlsx"
+        assert diagnosis.coverage.sheets > 0
         assert backend_storage.get_meta(job_id).status == "analyzed"
 
     def test_analyze_invalid_job_id(self, client: TestClient) -> None:
@@ -220,6 +223,78 @@ class TestSpec:
 
     def test_get_spec_missing(self, client: TestClient) -> None:
         assert client.get(f"/spec/{uuid.uuid4()}").status_code == 404
+
+
+# ---------- /diagnosis ----------
+
+
+class TestDiagnosis:
+    def test_get_grounded_diagnosis(self, client: TestClient, sample_xlsx_bytes: bytes) -> None:
+        job_id = client.post(
+            "/extract",
+            files={"file": ("a.xlsx", sample_xlsx_bytes, "application/octet-stream")},
+        ).json()["job_id"]
+        client.post(f"/analyze/{job_id}")
+
+        response = client.get(f"/diagnosis/{job_id}")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["filename"] == "a.xlsx"
+        assert body["headline"]["evidence_ids"]
+        assert body["coverage"]["sheets"] > 0
+
+    def test_get_diagnosis_before_analyze_returns_409(
+        self, client: TestClient, sample_xlsx_bytes: bytes
+    ) -> None:
+        job_id = client.post(
+            "/extract",
+            files={"file": ("a.xlsx", sample_xlsx_bytes, "application/octet-stream")},
+        ).json()["job_id"]
+
+        assert client.get(f"/diagnosis/{job_id}").status_code == 409
+
+    def test_get_diagnosis_rejects_invalid_id(self, client: TestClient) -> None:
+        assert client.get("/diagnosis/not-uuid").status_code == 400
+
+
+# ---------- /change-request ----------
+
+
+class TestChangeRequest:
+    def test_create_change_brief(self, client: TestClient, sample_xlsx_bytes: bytes) -> None:
+        job_id = client.post(
+            "/extract",
+            files={"file": ("a.xlsx", sample_xlsx_bytes, "application/octet-stream")},
+        ).json()["job_id"]
+        client.post(f"/analyze/{job_id}")
+
+        response = client.post(
+            f"/change-request/{job_id}",
+            json={"requested_outcome": "集計結果に部署列を追加したい"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["requested_outcome"] == "集計結果に部署列を追加したい"
+        assert body["automation"] == "needs_review"
+        assert len(body["acceptance_criteria"]) >= 3
+
+    def test_change_request_rejects_unknown_feature(
+        self, client: TestClient, sample_xlsx_bytes: bytes
+    ) -> None:
+        job_id = client.post(
+            "/extract",
+            files={"file": ("a.xlsx", sample_xlsx_bytes, "application/octet-stream")},
+        ).json()["job_id"]
+        client.post(f"/analyze/{job_id}")
+
+        response = client.post(
+            f"/change-request/{job_id}",
+            json={"requested_outcome": "変更したい", "feature_id": "F999"},
+        )
+
+        assert response.status_code == 400
 
 
 # ---------- /references ----------

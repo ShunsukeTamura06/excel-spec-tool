@@ -32,21 +32,21 @@ const navItems = computed(() => {
       disabled: false,
     },
     {
-      label: '設計書',
-      icon: 'i-lucide-file-text',
+      label: 'Excel診断',
+      icon: 'i-lucide-clipboard-check',
       to: id ? `/spec/${id}` : '#',
       active: route.path.startsWith('/spec'),
       disabled: !id,
     },
     {
-      label: 'チャット',
-      icon: 'i-lucide-message-circle',
-      to: id ? `/chat/${id}` : '#',
-      active: route.path.startsWith('/chat'),
+      label: 'このExcelを直す',
+      icon: 'i-lucide-wrench',
+      to: id ? `/change/${id}` : '#',
+      active: route.path.startsWith('/change') || route.path.startsWith('/chat'),
       disabled: !id,
     },
     {
-      label: '差分比較',
+      label: '変更結果を比べる',
       icon: 'i-lucide-git-compare',
       to: '/diff',
       active: route.path.startsWith('/diff'),
@@ -92,19 +92,16 @@ function toggleDark() {
 
       <USeparator class="my-3" />
 
-      <!-- Current job -->
+      <!-- Current workbook -->
       <div v-if="jobStore.currentJob" class="px-2 py-2 space-y-1">
-        <p class="text-[11px] uppercase tracking-wide text-(--ui-text-muted)">選択中のジョブ</p>
+        <p class="text-[11px] uppercase tracking-wide text-(--ui-text-muted)">選択中のExcel</p>
         <p class="text-sm font-medium text-(--ui-text-highlighted) truncate" :title="jobStore.currentJob.filename">
           {{ jobStore.currentJob.filename }}
         </p>
         <JobStatusBadge :status="jobStore.currentJob.status" size="sm" />
-        <p class="text-[10px] font-mono text-(--ui-text-muted) truncate">
-          {{ jobStore.currentJob.job_id.slice(0, 8) }}…
-        </p>
       </div>
       <div v-else class="px-2 py-3 rounded-lg bg-(--ui-bg-muted) text-xs text-(--ui-text-muted) text-center">
-        ジョブ未選択
+        Excel未選択
       </div>
     </nav>
 

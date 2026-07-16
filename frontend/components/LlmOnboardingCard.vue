@@ -31,30 +31,16 @@ const { data: status } = useAsyncData('llm-status', () => backend.llmStatus(), {
       <div class="flex items-center gap-2">
         <UIcon name="i-lucide-plug-zap" class="size-4 text-amber-600 dark:text-amber-400" />
         <span class="font-semibold text-amber-900 dark:text-amber-200">
-          LLM 未接続
+          改修相談は現在利用できません
         </span>
-        <UBadge color="warning" variant="subtle" size="xs">mock mode</UBadge>
       </div>
     </template>
 
     <div class="space-y-3 text-sm">
       <p class="text-(--ui-text)">
-        現在 LLM が設定されていないため、<strong>チャット応答と LLM 注釈はモック</strong>のままです。
-        設計書生成 / 依存グラフ / 参照逆引きは LLM 無しでも動作します。
+        Excel診断と改修依頼の整理は利用できますが、この内容から変更計画を作る相談機能は
+        管理者による接続設定が必要です。設定後にこの画面を開き直してください。
       </p>
-
-      <div>
-        <p class="text-xs text-(--ui-text-muted) mb-1.5">
-          実 LLM に接続するには、Backend 側で以下を環境変数に設定してから再起動してください:
-        </p>
-        <pre class="font-mono text-xs bg-(--ui-bg-elevated) rounded p-2 overflow-x-auto"><code>LLM_BASE_URL=http://localhost:11434/v1   # 例: Ollama
-LLM_API_KEY=ollama                       # ローカルなら任意の文字列で可
-LLM_MODEL=llama3.1:8b                    # ご利用のモデル</code></pre>
-        <p class="text-[11px] text-(--ui-text-muted) mt-1.5">
-          OpenAI 互換 API ならどのプロバイダでも動作します (Ollama / vLLM / セルフホスト LLM / OpenAI 等)。
-          詳細は <code class="font-mono">README.md</code> の「環境変数」セクションを参照。
-        </p>
-      </div>
     </div>
   </UCard>
 </template>

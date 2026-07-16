@@ -16,6 +16,7 @@ import {
   type ChatReply,
   type ChatSessionMeta,
   type ChatSessionResponse,
+  type ChangeBrief,
   type ChatStreamEventName,
   type DeleteResponse,
   type DiagramSet,
@@ -29,6 +30,7 @@ import {
   type JobMeta,
   type NamedRangeFixRequest,
   type NamedRangeFixResponse,
+  type WorkbookDiagnosis,
   type ReferenceItem,
   type SpecResponse,
   type WorkbookData,
@@ -248,6 +250,29 @@ export function useBackend() {
     /** GET /spec/{job_id} */
     async getSpec(jobId: string): Promise<SpecResponse> {
       return await call<SpecResponse>('getSpec', `/spec/${jobId}`, {
+        timeout: DEFAULT_TIMEOUT_MS,
+      })
+    },
+
+    /** GET /diagnosis/{job_id} — 根拠付きの一般ユーザー向け Excel 診断 */
+    async getDiagnosis(jobId: string): Promise<WorkbookDiagnosis> {
+      return await call<WorkbookDiagnosis>('getDiagnosis', `/diagnosis/${jobId}`, {
+        timeout: DEFAULT_TIMEOUT_MS,
+      })
+    },
+
+    /** POST /change-request/{job_id} — 業務要望を改修依頼書へ整理 */
+    async createChangeBrief(
+      jobId: string,
+      requestedOutcome: string,
+      featureId?: string,
+    ): Promise<ChangeBrief> {
+      return await call<ChangeBrief>('createChangeBrief', `/change-request/${jobId}`, {
+        method: 'POST',
+        body: {
+          requested_outcome: requestedOutcome,
+          feature_id: featureId || null,
+        },
         timeout: DEFAULT_TIMEOUT_MS,
       })
     },
