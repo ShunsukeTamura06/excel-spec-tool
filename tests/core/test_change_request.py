@@ -48,6 +48,22 @@ def test_build_change_brief_can_target_whole_workbook() -> None:
     assert brief.current_behavior == "月次集計を行います。"
 
 
+def test_build_change_brief_supports_explicit_range_expansion() -> None:
+    """明示的な参照範囲拡張だけを限定変更として扱う."""
+    brief = build_change_brief(_diagnosis(), "集計範囲を100行目まで広げたい")
+
+    assert brief.automation == "supported"
+    assert "対象範囲" in brief.next_step
+
+
+def test_build_change_brief_does_not_offer_range_expansion_for_formatting() -> None:
+    """見た目の改善に無関係な範囲拡張を提示しない."""
+    brief = build_change_brief(_diagnosis(), "Outputシートの結果を見やすくしたい")
+
+    assert brief.automation == "needs_review"
+    assert "改修案" in brief.automation_reason
+
+
 @pytest.mark.parametrize("value", ["", "   ", "\n"])
 def test_build_change_brief_rejects_empty_request(value: str) -> None:
     """空の業務要望は受け付けない."""

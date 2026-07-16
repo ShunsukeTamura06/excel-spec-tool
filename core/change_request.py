@@ -35,6 +35,25 @@ def _find_feature(diagnosis: WorkbookDiagnosis, feature_id: str | None) -> Workb
     raise ValueError(f"unknown feature_id: {feature_id}")
 
 
+def _is_range_expansion_request(outcome: str) -> bool:
+    """数式の参照範囲拡張を明示した要望かを保守的に判定する."""
+    normalized = outcome.lower().replace(" ", "").replace("　", "")
+    range_targets = ("参照範囲", "数式範囲", "集計範囲")
+    expansion_actions = ("広げ", "拡張", "伸ば", "増や")
+    direct_phrases = (
+        "最終行を増や",
+        "最終行を伸ば",
+        "行数を増や",
+        "データ件数を増や",
+        "expandtherange",
+        "extendtherange",
+    )
+    explicit_range_expansion = any(target in normalized for target in range_targets) and any(
+        action in normalized for action in expansion_actions
+    )
+    return explicit_range_expansion or any(phrase in normalized for phrase in direct_phrases)
+
+
 def build_change_brief(
     diagnosis: WorkbookDiagnosis,
     requested_outcome: str,
@@ -93,6 +112,8 @@ def build_change_brief(
     if diagnosis.warnings:
         criteria.append("診断で示された未解析リスクについて、確認結果または未確認の記録がある")
 
+    range_expansion_requested = _is_range_expansion_request(outcome)
+
     return ChangeBrief(
         title=title,
         feature_id=feature_id,
@@ -102,9 +123,15 @@ def build_change_brief(
         evidence_ids=evidence_ids,
         clarification_questions=questions,
         acceptance_criteria=criteria,
-        automation="needs_review",
+        automation="supported" if range_expansion_requested else "needs_review",
         automation_reason=(
-            "自然文の要望を変更計画へ変換し、現在対応している変更種類と照合する必要があります。"
+            "数式が参照するデータ範囲の拡張として、適用前に変更計画を確認できます。"
+            if range_expansion_requested
+            else "要望に合う改修案をExcelの根拠から作成します。"
         ),
-        next_step="確認事項を補い、根拠付きの改修相談で変更計画を作成してください。",
+        next_step=(
+            "対象範囲と新しい最終行を確認してください。"
+            if range_expansion_requested
+            else "Excelを調査し、具体的な改修案を提示します。"
+        ),
     )

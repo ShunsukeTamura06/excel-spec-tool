@@ -72,7 +72,7 @@ const props = withDefaults(defineProps<{
   title: '根拠カード',
 })
 
-const open = ref(true)
+const open = ref(false)
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

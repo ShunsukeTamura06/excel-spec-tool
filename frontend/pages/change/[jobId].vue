@@ -124,11 +124,15 @@ async function createBrief() {
   execution.value = null
   approved.value = false
   try {
-    brief.value = await backend.createChangeBrief(
+    const createdBrief = await backend.createChangeBrief(
       jobId.value,
       requestedOutcome.value,
       selectedFeature.value || undefined,
     )
+    brief.value = createdBrief
+    if (createdBrief.automation !== 'supported' || rangeCandidates.value.length === 0) {
+      await openConsultation(createdBrief)
+    }
   } catch (cause) {
     createError.value = friendlyMessage(cause)
   } finally {
@@ -213,20 +217,21 @@ async function downloadResult() {
   }
 }
 
-function openConsultation() {
-  if (!brief.value) return
-  const value = brief.value
-  const prompt = [
-    `次の改修依頼について、根拠を確認しながら変更計画を作ってください。`,
-    `対象: ${value.title}`,
-    `現状: ${value.current_behavior}`,
-    `実現したいこと: ${value.requested_outcome}`,
-    value.affected_areas.length ? `影響候補: ${value.affected_areas.join('、')}` : '',
-    value.evidence_ids.length ? `確認すべき根拠: ${value.evidence_ids.join('、')}` : '',
-    `受入条件:\n- ${value.acceptance_criteria.join('\n- ')}`,
-    `不明点は断定せず、確認事項として示してください。`,
-  ].filter(Boolean).join('\n')
-  void navigateTo({ path: `/chat/${jobId.value}`, query: { request: prompt } })
+async function openConsultation(changeBrief: ChangeBrief | null = brief.value) {
+  if (!changeBrief) return
+  const value = changeBrief
+  const featureName = diagnosis.value?.features.find(item => item.id === value.feature_id)?.name
+  const prompt = featureName
+    ? `${featureName}について、${value.requested_outcome}`
+    : value.requested_outcome
+  const title = value.requested_outcome.length > 28
+    ? `${value.requested_outcome.slice(0, 27)}…`
+    : value.requested_outcome
+  const session = await backend.createChatSession(jobId.value, title)
+  await navigateTo({
+    path: `/chat/${jobId.value}`,
+    query: { session: session.session_id, request: prompt, autosend: '1' },
+  })
 }
 
 function rewriteRequest() {
@@ -248,9 +253,9 @@ function rewriteRequest() {
     </div>
 
     <div>
-      <h1 class="text-2xl font-bold text-(--ui-text-highlighted)">このExcelをどう直したいですか？</h1>
+      <h1 class="text-2xl font-bold text-(--ui-text-highlighted)">何を変えたいですか？</h1>
       <p class="mt-2 text-sm text-(--ui-text-muted)">
-        技術的な変更方法ではなく、困っていることや変更後に実現したい結果を書いてください。
+        普段の言葉で大丈夫です。必要な場所はこちらで調べます。
       </p>
     </div>
 
@@ -264,43 +269,39 @@ function rewriteRequest() {
     />
 
     <UCard v-if="diagnosis">
-      <div class="space-y-5">
+      <div class="space-y-4">
         <div>
-          <label for="feature" class="block text-sm font-semibold mb-2">対象の機能</label>
+          <UTextarea
+            id="request"
+            v-model="requestedOutcome"
+            :rows="3"
+            autoresize
+            :maxrows="8"
+            class="w-full"
+            placeholder="例: Outputシートの結果を見やすくしたい"
+          />
+        </div>
+        <details v-if="diagnosis.features.length" class="text-sm">
+          <summary class="cursor-pointer text-(--ui-text-muted)">対象の機能を指定する（任意）</summary>
           <select
             id="feature"
             v-model="selectedFeature"
-            class="w-full rounded-lg border border-(--ui-border) bg-(--ui-bg) px-3 py-2 text-sm"
+            class="w-full mt-3 rounded-lg border border-(--ui-border) bg-(--ui-bg) px-3 py-2 text-sm"
           >
-            <option value="">ファイル全体／どの機能か分からない</option>
+            <option value="">ファイル全体／分からない</option>
             <option v-for="feature in diagnosis.features" :key="feature.id" :value="feature.id">
               {{ feature.name }} — {{ feature.summary }}
             </option>
           </select>
-        </div>
-        <div>
-          <label for="request" class="block text-sm font-semibold mb-2">実現したいこと</label>
-          <UTextarea
-            id="request"
-            v-model="requestedOutcome"
-            :rows="5"
-            autoresize
-            :maxrows="10"
-            class="w-full"
-            placeholder="例: 集計結果に担当部署の列を追加し、部署別に絞り込めるようにしたい"
-          />
-          <p class="text-xs text-(--ui-text-muted) mt-2">
-            例外条件、残したい現在の動作、確認に使えるデータがあれば一緒に書くと安全性が上がります。
-          </p>
-        </div>
+        </details>
         <UButton
           color="primary"
-          icon="i-lucide-clipboard-list"
+          icon="i-lucide-sparkles"
           :loading="creating"
           :disabled="!requestedOutcome.trim()"
           @click="createBrief"
         >
-          改修依頼を整理する
+          改修案を見る
         </UButton>
       </div>
     </UCard>
@@ -308,75 +309,49 @@ function rewriteRequest() {
 
     <div v-if="brief" class="space-y-4">
       <UCard>
-        <template #header>
-          <div class="flex items-center justify-between gap-3 flex-wrap">
-            <h2 class="text-lg font-semibold">{{ brief.title }}</h2>
-            <UBadge color="warning" variant="subtle">適用前の確認が必要</UBadge>
-          </div>
-        </template>
-        <div class="space-y-5">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="rounded-lg bg-(--ui-bg-elevated) p-4">
-              <p class="text-xs font-semibold text-(--ui-text-muted) mb-1">現在分かっている動作</p>
-              <p class="text-sm">{{ brief.current_behavior }}</p>
-            </div>
-            <div class="rounded-lg bg-emerald-50 dark:bg-emerald-950 p-4">
-              <p class="text-xs font-semibold text-emerald-700 dark:text-emerald-300 mb-1">変更後に実現したいこと</p>
-              <p class="text-sm">{{ brief.requested_outcome }}</p>
-            </div>
-          </div>
-
-          <div>
-            <h3 class="text-sm font-semibold mb-2">影響を確認する場所</h3>
-            <div v-if="brief.affected_areas.length" class="flex flex-wrap gap-2">
-              <UBadge v-for="area in brief.affected_areas" :key="area" color="neutral" variant="subtle">
-                {{ area }}
-              </UBadge>
-            </div>
-            <p v-else class="text-sm text-(--ui-text-muted)">診断だけでは場所を絞れませんでした。</p>
-            <p v-if="brief.evidence_ids.length" class="text-xs font-mono text-(--ui-text-muted) mt-2">
-              根拠 {{ brief.evidence_ids.join(', ') }}
-            </p>
-          </div>
-
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <div>
-              <h3 class="text-sm font-semibold mb-2">先に確認したいこと</h3>
-              <ul class="list-disc pl-5 space-y-2 text-sm">
-                <li v-for="item in brief.clarification_questions" :key="item">{{ item }}</li>
-              </ul>
+        <div class="space-y-4">
+          <div class="flex items-start gap-3">
+            <div class="rounded-full bg-emerald-100 dark:bg-emerald-950 p-2 shrink-0">
+              <UIcon name="i-lucide-check" class="size-5 text-emerald-700 dark:text-emerald-300" />
             </div>
             <div>
-              <h3 class="text-sm font-semibold mb-2">完了の判定条件</h3>
-              <ul class="space-y-2 text-sm">
-                <li v-for="item in brief.acceptance_criteria" :key="item" class="flex gap-2">
-                  <UIcon name="i-lucide-square-check-big" class="size-4 mt-0.5 text-emerald-600 shrink-0" />
-                  <span>{{ item }}</span>
-                </li>
-              </ul>
+              <p class="text-xs text-(--ui-text-muted)">実現したいこと</p>
+              <p class="font-semibold mt-1">{{ brief.requested_outcome }}</p>
             </div>
           </div>
 
-          <UAlert
-            color="info"
-            variant="subtle"
-            icon="i-lucide-route"
-            title="次に変更方法を選びます"
-            description="対応している限定変更は、予定差分を確認してから修正版を作れます。それ以外はExcelの根拠を添えて相談できます。"
-          />
+          <details class="rounded-lg border border-(--ui-border) px-4 py-3">
+            <summary class="cursor-pointer text-sm text-(--ui-text-muted)">調査対象と確認基準を見る</summary>
+            <div class="mt-3 space-y-3 text-sm">
+              <p>{{ brief.current_behavior }}</p>
+              <div v-if="brief.affected_areas.length" class="flex flex-wrap gap-2">
+                <UBadge v-for="area in brief.affected_areas" :key="area" color="neutral" variant="subtle">
+                  {{ area }}
+                </UBadge>
+              </div>
+              <ul class="list-disc pl-5 text-(--ui-text-muted)">
+                <li v-for="item in brief.acceptance_criteria" :key="item">{{ item }}</li>
+              </ul>
+            </div>
+          </details>
 
           <div class="flex gap-2 flex-wrap">
-            <UButton color="neutral" variant="soft" icon="i-lucide-messages-square" @click="openConsultation">
-              対応外の変更を相談する
+            <UButton
+              v-if="brief.automation !== 'supported'"
+              color="primary"
+              icon="i-lucide-sparkles"
+              @click="openConsultation()"
+            >
+              改修案を作る
             </UButton>
             <UButton color="neutral" variant="ghost" icon="i-lucide-pencil" @click="rewriteRequest">
-              要望を書き直す
+              書き直す
             </UButton>
           </div>
         </div>
       </UCard>
 
-      <UCard>
+      <UCard v-if="brief.automation === 'supported' && rangeCandidates.length">
         <template #header>
           <div class="flex items-center justify-between gap-3 flex-wrap">
             <div>
@@ -449,7 +424,7 @@ function rewriteRequest() {
             title="自動変更できる範囲が見つかりませんでした"
             description="数式内に、下方向へ安全に広げられるシート付きセル範囲がありません。"
           />
-          <UButton color="primary" variant="soft" icon="i-lucide-messages-square" @click="openConsultation">
+          <UButton color="primary" variant="soft" icon="i-lucide-messages-square" @click="openConsultation()">
             根拠を添えて相談する
           </UButton>
         </div>

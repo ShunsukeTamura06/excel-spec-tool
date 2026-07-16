@@ -71,6 +71,7 @@ async function loadWorkbook() {
 async function loadChatState() {
   loading.value = true
   loadError.value = ''
+  let shouldAutoSend = false
   try {
     await refreshSessionsOnly()
     const querySession = typeof route.query.session === 'string' ? route.query.session : ''
@@ -88,10 +89,19 @@ async function loadChatState() {
     ])
     const requestedPrefill = typeof route.query.request === 'string' ? route.query.request : ''
     if (requestedPrefill && !input.value) input.value = requestedPrefill
+    shouldAutoSend = Boolean(requestedPrefill && route.query.autosend === '1')
   } catch (e) {
     loadError.value = friendlyMessage(e)
   } finally {
     loading.value = false
+  }
+  if (shouldAutoSend && !autoRequestSent.value) {
+    autoRequestSent.value = true
+    await navigateTo(
+      { path: route.path, query: { session: activeSessionId.value } },
+      { replace: true },
+    )
+    void send()
   }
 }
 
@@ -204,6 +214,7 @@ async function saveTitle() {
 const input = ref('')
 const sending = ref(false)
 const sendError = ref('')
+const autoRequestSent = ref(false)
 const scrollContainer = ref<HTMLElement | null>(null)
 type ProgressItem = {
   id: string
