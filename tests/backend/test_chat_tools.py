@@ -78,6 +78,38 @@ class TestToolLoop:
         assert body["reply"] == "ok"
         assert body["tool_trace"] == []
 
+    def test_does_not_claim_nonexistent_change_card(
+        self,
+        app_client: TestClient,
+        xlsx_bytes: bytes,
+        scripted_llm: MockLLMClient,
+    ) -> None:
+        """propose未実行の回答から、存在しないボタン案内を除去する."""
+
+        scripted_llm.queue_response(
+            LLMResponse(
+                content=(
+                    "入力規則とデータ検証の修正カードを作りました。"
+                    "画面の「修正版を作る」ボタンを押してください。"
+                )
+            )
+        )
+
+        job_id = _setup_job(app_client, xlsx_bytes)
+        response = app_client.post(
+            f"/chat/{job_id}",
+            json={"message": "入力規則とデータ検証を追加したい"},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["tool_trace"] == []
+        assert body["reply"] == (
+            "この依頼では変更カードを作成できませんでした。"
+            "そのため「修正版を作る」ボタンは表示されません。\n\n"
+            "入力規則やデータ検証の設定は、現在の自動変更範囲外です。"
+        )
+
     def test_cell_text_request_retries_until_change_card_is_created(
         self,
         app_client: TestClient,

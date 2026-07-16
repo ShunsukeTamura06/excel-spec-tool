@@ -142,11 +142,17 @@ async function downloadRevisedWorkbook() {
         <UButton
           color="neutral"
           variant="soft"
-          icon="i-lucide-search-check"
+          icon="i-lucide-git-compare"
           size="sm"
-          :to="`/spec/${execution.new_job_id}`"
+          :to="{
+            path: '/diff',
+            query: {
+              before_job_id: props.jobId,
+              after_job_id: execution.new_job_id,
+            },
+          }"
         >
-          修正版を確認
+          差分を別画面で確認
         </UButton>
       </div>
       <details class="rounded-md border border-(--ui-border) p-2">

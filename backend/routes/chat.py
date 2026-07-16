@@ -474,6 +474,8 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "あなた自身がファイルを書き換えることはできないし、してはいけない",
         "- propose 系ツールで対応できる依頼に対して、Excelを手作業で編集する手順を"
         "長々と案内しない。変更カードの「修正版を作る」ボタンを案内すること",
+        "- propose 系ツールを実際に呼んでいない場合は、「修正カードを作った」"
+        "「修正版を作るボタンを押す」など、存在しないUIを絶対に案内しないこと",
         "- 提案した内容と実際の適用結果が食い違わないよう、propose 系ツールに渡す引数は"
         "ユーザーの意図を正確に反映した値にすること",
         "- 上記パターンに当てはまらない修正 (VBA 変更・行列の挿入削除・複雑な数式の"
@@ -554,21 +556,41 @@ def _final_reply_for_tool_trace(
 ) -> str:
     """操作カードが主役の応答は、LLMの長文を短い操作案内へ置き換える."""
 
+    actionable_names = {
+        "propose_named_range_fix",
+        "propose_fixed_ref_replace",
+        "propose_range_expansion",
+        "propose_cell_text_edits",
+    }
     cell_text_item = next(
         (item for item in tool_trace if item.get("name") == "propose_cell_text_edits"),
         None,
     )
-    if cell_text_item is None:
+    if cell_text_item is None and any(item.get("name") in actionable_names for item in tool_trace):
         return content
-    result = cell_text_item.get("result")
-    safe_plan = result.get("safe_plan") if isinstance(result, dict) else None
-    summary = safe_plan.get("summary") if isinstance(safe_plan, dict) else None
-    lead = str(summary) if summary else "説明テキストの追加案を作りました。"
-    return (
-        f"{lead}\n\n"
-        "下の「変更内容を確認」で内容を見て、「修正版を作る」を押してください。"
-        "原本は変更されません。"
-    )
+    if cell_text_item is not None:
+        result = cell_text_item.get("result")
+        safe_plan = result.get("safe_plan") if isinstance(result, dict) else None
+        summary = safe_plan.get("summary") if isinstance(safe_plan, dict) else None
+        lead = str(summary) if summary else "説明テキストの追加案を作りました。"
+        return (
+            f"{lead}\n\n"
+            "下の「変更内容を確認」で内容を見て、「修正版を作る」を押してください。"
+            "原本は変更されません。"
+        )
+    false_action_markers = ("修正カード", "修正版を作る", "変更カード")
+    if any(marker in content for marker in false_action_markers):
+        detail = (
+            "入力規則やデータ検証の設定は、現在の自動変更範囲外です。"
+            if "入力規則" in content or "データ検証" in content
+            else "依頼内容に対応する安全な自動変更操作がまだありません。"
+        )
+        return (
+            "この依頼では変更カードを作成できませんでした。"
+            "そのため「修正版を作る」ボタンは表示されません。\n\n"
+            f"{detail}"
+        )
+    return content
 
 
 def _run_tool_loop(

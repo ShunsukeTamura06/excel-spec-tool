@@ -554,10 +554,16 @@ function rewriteRequest() {
             <UButton
               color="neutral"
               variant="soft"
-              icon="i-lucide-search-check"
-              :to="`/spec/${execution.new_job_id}`"
+              icon="i-lucide-git-compare"
+              :to="{
+                path: '/diff',
+                query: {
+                  before_job_id: jobId,
+                  after_job_id: execution.new_job_id,
+                },
+              }"
             >
-              修正版を診断画面で確認
+              差分を別画面で確認
             </UButton>
           </div>
         </div>
