@@ -54,6 +54,8 @@ fresh extraction and verification:
 | `workbook_diff.py` | Compare normalized workbook structures and compute blast radius |
 | `mutation.py` | Provider-independent mutation plans and the `MutationProvider` contract; includes the existing openpyxl adapter |
 | `officecli_provider.py` | Optional subprocess adapter for OfficeCLI (`.xlsx` named-range updates and fixed-text additions to empty cells in the current contract) |
+| `vba_change.py` | Validate and propose an exact replacement for one existing VBA `Sub` or `Function` |
+| `vba_package.py` | Build a Windows Excel/VBIDE execution ZIP without editing or running macros on macOS |
 | `verification.py` | Exact expected-vs-observed structural-diff policy (`passed` / `needs_review` / `failed`) |
 | `change_record.py` | Auditable execution record containing the plan, provider result, both diffs, and policy verdict |
 | `exceptions.py` | `CoreError`, `ExtractionError`, `UnsupportedFormatError` |
@@ -100,6 +102,8 @@ guessing.
 | POST | `/jobs/{id}/formula-fix` | Execute a deterministic formula-reference plan and verify its output |
 | POST | `/jobs/{id}/change-plan` | Preview a general-user safe change, including empty-cell text additions |
 | POST | `/jobs/{id}/change-plan/execute` | Execute the exact displayed plan, re-extract it, and enforce the diff policy |
+| POST | `/jobs/{id}/vba-change/package` | Download a Windows Excel/VBIDE package for one procedure replacement |
+| POST | `/jobs/{id}/vba-change/verify` | Upload the Windows-generated `.xlsm` and enforce the expected VBA diff |
 | GET | `/jobs/{id}/download` | Download an original or verified revised workbook |
 | GET | `/jobs/{id}/verification` | Read the persisted mutation and verification audit record |
 
@@ -124,6 +128,12 @@ missing, unexpected, or mismatched structural changes. A structurally exact
 change with blast radius or unresolved high-risk items is marked
 `needs_review`, not silently accepted as safe. Dynamic Excel behavior remains
 outside this first gate until COM recalculation and macro tests are integrated.
+
+VBA writes deliberately use a separate path. OfficeCLI does not expose a VBA/VBProject
+element, and `vbaProject.bin` is not edited directly. xlblueprint prepares an auditable
+procedure-replacement package; Windows Excel applies it through VBIDE to a copy, and the
+result returns to the normal extraction and exact-diff gate. This phase does not compile
+or execute the macro.
 
 ## Frontend shape
 

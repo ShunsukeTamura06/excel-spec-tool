@@ -18,6 +18,7 @@ LLM に渡す `tools` 配列を取得、`execute_tool_call()` で実行する。
 - propose_fixed_ref_replace: 数式内の固定参照置換の影響を試算する (read-only)
 - propose_range_expansion: 数式の参照範囲拡張の影響を試算する (read-only)
 - propose_cell_text_edits: 空セルへの固定テキスト追加を試算する (read-only)
+- propose_vba_procedure_replace: 既存VBAプロシージャ置換パッケージを試算する (read-only)
 """
 
 from __future__ import annotations
@@ -30,10 +31,15 @@ from typing import Any
 
 from backend.cell_text_plan import build_cell_text_safe_plan
 from backend.storage import JobNotFoundError, Storage
-from core.exceptions import FormulaFixError, NamedRangeFixError
+from core.exceptions import FormulaFixError, NamedRangeFixError, VbaChangeError
 from core.external_functions import get_function, list_functions
 from core.formula_fix import propose_fixed_ref_replace, propose_range_expansion
-from core.mutation import CellTextEdit
+from core.mutation import (
+    CellTextEdit,
+    MutationPlan,
+    VbaProcedureReplaceOperation,
+    build_safe_change_plan,
+)
 from core.named_range_fix import propose_named_range_fix
 from core.reference_index import find_overlapping
 
@@ -468,6 +474,40 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_vba_procedure_replace",
+            "description": (
+                "既存VBAモジュール内の既存SubまたはFunctionを、完全な新コードへ"
+                "丸ごと置換するWindows実行パッケージ計画を作る。"
+                "呼び出す前に get_vba_procedure で現行コード全体を取得すること。"
+                "new_codeには宣言行からEnd Sub/Functionまでを含む完全なコードを渡す。"
+                "同名・同種のプロシージャだけを対象とし、Propertyや新規追加は扱わない。"
+                "このtoolは.xlsmを変更しない。ユーザーはZIPをWindows Excelで実行し、"
+                "生成されたrevised.xlsmをxlblueprintへ戻して静的差分検証する。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "module_name": {
+                        "type": "string",
+                        "description": "対象VBAモジュール名。例: Module1",
+                    },
+                    "procedure_name": {
+                        "type": "string",
+                        "description": "対象SubまたはFunction名。",
+                    },
+                    "new_code": {
+                        "type": "string",
+                        "maxLength": 12000,
+                        "description": "置換後の完全なSubまたはFunctionコード。",
+                    },
+                },
+                "required": ["module_name", "procedure_name", "new_code"],
+            },
+        },
+    },
 ]
 
 
@@ -521,6 +561,8 @@ def execute_tool_call(
             result = _exec_propose_range_expansion(storage, job_id, arguments)
         elif name == "propose_cell_text_edits":
             result = _exec_propose_cell_text_edits(storage, job_id, arguments)
+        elif name == "propose_vba_procedure_replace":
+            result = _exec_propose_vba_procedure_replace(storage, job_id, arguments)
         else:
             return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001 - tool ループは壊さない
@@ -976,6 +1018,50 @@ def _exec_propose_cell_text_edits(
             "note": (
                 "これは試算結果であり、ファイルはまだ変更されていない。"
                 "ユーザーが画面のボタンで確定した場合だけOfficeCLIが修正版コピーを作る。"
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def _exec_propose_vba_procedure_replace(
+    storage: Storage,
+    job_id: str,
+    args: dict[str, Any],
+) -> str:
+    """既存VBAプロシージャ置換のWindows実行計画を返す."""
+
+    module_name = args.get("module_name")
+    procedure_name = args.get("procedure_name")
+    new_code = args.get("new_code")
+    if not module_name or not procedure_name or not new_code:
+        raise ToolExecutionError("module_name, procedure_name and new_code are required")
+    try:
+        workbook = storage.load_workbook(job_id)
+        references = storage.load_references(job_id)
+        plan = MutationPlan(
+            source_job_id=job_id,
+            requested_provider="windows_vbide",
+            operation=VbaProcedureReplaceOperation(
+                module_name=str(module_name),
+                procedure_name=str(procedure_name),
+                new_code=str(new_code),
+            ),
+        )
+        safe_plan = build_safe_change_plan(plan, workbook, references)
+    except (JobNotFoundError, FileNotFoundError, VbaChangeError, ValueError) as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    compact_plan = safe_plan.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude={"expected_diff"},
+    )
+    return json.dumps(
+        {
+            "safe_plan": compact_plan,
+            "note": (
+                "Macではファイルを変更しない。Windows用ZIPをダウンロードし、"
+                "revised.xlsmを戻して静的検証する。"
             ),
         },
         ensure_ascii=False,

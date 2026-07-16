@@ -55,6 +55,7 @@ class TestSystemPromptContainsCoreGuidelines:
         assert "lookup_references" in prompt
         assert "list_workbook_objects" in prompt
         assert "list_analysis_risks" in prompt
+        assert "propose_vba_procedure_replace" in prompt
 
     def test_includes_reference_analysis_limitations(self) -> None:
         prompt = _build_system_prompt("")

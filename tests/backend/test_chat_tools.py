@@ -65,6 +65,20 @@ def _setup_job(client: TestClient, body: bytes) -> str:
 
 
 class TestToolLoop:
+    def test_vba_package_trace_uses_short_windows_guidance(self) -> None:
+        """VBA提案カードがある場合は長文手順でなくZIP導線を返す."""
+
+        from backend.routes.chat import _final_reply_for_tool_trace
+
+        reply = _final_reply_for_tool_trace(
+            "長い手順",
+            [{"name": "propose_vba_procedure_replace", "result": {}}],
+        )
+
+        assert "Windows用ZIP" in reply
+        assert "revised.xlsm" in reply
+        assert "長い手順" not in reply
+
     def test_no_tool_calls_returns_simple_reply(
         self, app_client: TestClient, xlsx_bytes: bytes, scripted_llm: MockLLMClient
     ) -> None:

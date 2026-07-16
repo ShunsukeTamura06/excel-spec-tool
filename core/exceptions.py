@@ -25,6 +25,10 @@ class FormulaFixError(CoreError):
     """数式内参照の修正 (提案/適用) に関する失敗 (参照が不正・該当数式なし等)."""
 
 
+class VbaChangeError(CoreError):
+    """VBAプロシージャ変更計画またはパッケージ生成に関する失敗."""
+
+
 class MutationProviderError(CoreError):
     """外部/内部の変更プロバイダーによる適用処理の失敗."""
 

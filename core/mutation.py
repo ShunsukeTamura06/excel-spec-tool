@@ -22,14 +22,16 @@ from core.formula_fix import (
 )
 from core.models import CellDiff, ReferenceIndex, Workbook, WorkbookDiff
 from core.named_range_fix import apply_named_range_fix, propose_named_range_fix
+from core.vba_change import propose_vba_procedure_replace
 
 MutationKind = Literal[
     "named_range_set",
     "fixed_ref_replace",
     "range_expansion",
     "cell_text_batch",
+    "vba_procedure_replace",
 ]
-ProviderName = Literal["openpyxl", "officecli"]
+ProviderName = Literal["openpyxl", "officecli", "windows_vbide"]
 
 
 def _utc_now_iso() -> str:
@@ -77,11 +79,21 @@ class CellTextBatchOperation(BaseModel):
     edits: list[CellTextEdit] = Field(min_length=1, max_length=50)
 
 
+class VbaProcedureReplaceOperation(BaseModel):
+    """既存VBAプロシージャを同名・同種の完全なコードへ置換する操作."""
+
+    kind: Literal["vba_procedure_replace"] = "vba_procedure_replace"
+    module_name: str = Field(min_length=1, max_length=128)
+    procedure_name: str = Field(min_length=1, max_length=128)
+    new_code: str = Field(min_length=1, max_length=12_000)
+
+
 MutationOperation = Annotated[
     NamedRangeSetOperation
     | FixedRefReplaceOperation
     | RangeExpansionOperation
-    | CellTextBatchOperation,
+    | CellTextBatchOperation
+    | VbaProcedureReplaceOperation,
     Field(discriminator="kind"),
 ]
 
@@ -160,6 +172,13 @@ def propose_mutation(
     """
 
     operation = plan.operation
+    if isinstance(operation, VbaProcedureReplaceOperation):
+        return propose_vba_procedure_replace(
+            before_wb,
+            operation.module_name,
+            operation.procedure_name,
+            operation.new_code,
+        )
     if isinstance(operation, CellTextBatchOperation):
         seen: set[tuple[str, str]] = set()
         cells: list[CellDiff] = []
@@ -225,6 +244,7 @@ def build_safe_change_plan(
     operation = plan.operation
     changed_locations = [f"{item.sheet}!{item.coord}" for item in expected_diff.cells]
     changed_locations.extend(item.name for item in expected_diff.named_ranges)
+    changed_locations.extend(f"VBA:{item.name}" for item in expected_diff.vba_modules)
     expected_change_count = (
         len(expected_diff.cells)
         + len(expected_diff.named_ranges)
@@ -235,7 +255,19 @@ def build_safe_change_plan(
         + len(expected_diff.vba_modules)
     )
 
-    if isinstance(operation, CellTextBatchOperation):
+    if isinstance(operation, VbaProcedureReplaceOperation):
+        title = f"{operation.module_name}.{operation.procedure_name} を置き換える"
+        summary = (
+            f"既存VBAプロシージャ {operation.module_name}.{operation.procedure_name} を"
+            "Windows Excelで置き換えるパッケージを作ります。"
+        )
+        preconditions = [
+            "Windows版Microsoft Excelを利用できる",
+            "対象VBAプロジェクトがロックされていない",
+            "VBAプロジェクト オブジェクト モデルへのアクセスを一時的に許可できる",
+            "置換後コードが同名・同種の完全なSubまたはFunctionである",
+        ]
+    elif isinstance(operation, CellTextBatchOperation):
         title = "説明テキストを追加する"
         summary = f"{len(operation.edits)}個の空セルへ説明テキストを追加します。"
         preconditions = [
@@ -269,6 +301,15 @@ def build_safe_change_plan(
         ]
 
     warnings = list(dict.fromkeys(item.description for item in expected_diff.existing_risks))
+    if isinstance(operation, VbaProcedureReplaceOperation):
+        warnings.insert(
+            0,
+            "Windowsで適用後、revised.xlsmを戻して静的差分検証するまで完了扱いにしません。",
+        )
+        warnings.insert(
+            1,
+            "VBA署名がある場合、保存により署名が無効になります。",
+        )
     if expected_diff.blast_radius:
         warnings.insert(
             0,
@@ -292,8 +333,15 @@ def build_safe_change_plan(
         ],
         warnings=warnings,
         verification_scope=(
-            "Macではファイル構造の一致を検証します。Excelでの再計算値とマクロ実行は"
-            "Windows + Microsoft Excelでの追加確認が必要です。"
+            (
+                "Windowsで生成された.xlsmを再抽出し、期待したVBAモジュール差分だけを"
+                "静的検証します。VBAのコンパイルとマクロ実行結果はまだ保証しません。"
+            )
+            if isinstance(operation, VbaProcedureReplaceOperation)
+            else (
+                "Macではファイル構造の一致を検証します。Excelでの再計算値とマクロ実行は"
+                "Windows + Microsoft Excelでの追加確認が必要です。"
+            )
         ),
     )
 

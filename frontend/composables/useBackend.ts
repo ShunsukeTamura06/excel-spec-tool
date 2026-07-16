@@ -534,6 +534,42 @@ export function useBackend() {
       }
     },
 
+    /** POST /jobs/{jobId}/vba-change/package — Windows Excel/VBIDE用ZIPを取得する */
+    async downloadVbaChangePackage(
+      jobId: string,
+      plan: MutationPlanData,
+    ): Promise<Blob> {
+      try {
+        const root = String(baseURL || '').replace(/\/$/, '')
+        const response = await fetch(`${root}/jobs/${jobId}/vba-change/package`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan }),
+        })
+        if (!response.ok) throw await backendErrorFromResponse(response)
+        return await response.blob()
+      } catch (e) {
+        if (e instanceof BackendError) throw e
+        throw toBackendError(e, 'downloadVbaChangePackage')
+      }
+    },
+
+    /** POST /jobs/{jobId}/vba-change/verify — Windows適用後.xlsmを静的検証する */
+    async verifyVbaChangedWorkbook(
+      jobId: string,
+      plan: MutationPlanData,
+      file: File,
+    ): Promise<FormulaFixResponse> {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('plan_json', JSON.stringify(plan))
+      return await call<FormulaFixResponse>(
+        'verifyVbaChangedWorkbook',
+        `/jobs/${jobId}/vba-change/verify`,
+        { method: 'POST', body: form, timeout: HEAVY_TIMEOUT_MS },
+      )
+    },
+
     /** POST /feedback — フィードバック 1 件を送信. */
     async submitFeedback(input: FeedbackInput): Promise<FeedbackResponse> {
       return await call<FeedbackResponse>('submitFeedback', '/feedback', {

@@ -77,6 +77,7 @@ const actionableToolNames = new Set([
   'propose_fixed_ref_replace',
   'propose_range_expansion',
   'propose_cell_text_edits',
+  'propose_vba_procedure_replace',
 ])
 const open = ref(props.items.some(item => actionableToolNames.has(item.name)))
 
@@ -163,6 +164,8 @@ function evidenceTitle(item: ToolTraceItem): string {
       return '数式範囲拡張の提案'
     case 'propose_cell_text_edits':
       return '説明テキスト追加の提案'
+    case 'propose_vba_procedure_replace':
+      return 'VBA変更パッケージの提案'
     default:
       return item.name
   }
@@ -187,6 +190,7 @@ function evidenceIcon(item: ToolTraceItem): string {
     case 'propose_fixed_ref_replace':
     case 'propose_range_expansion':
     case 'propose_cell_text_edits':
+    case 'propose_vba_procedure_replace':
       return 'i-lucide-wand-2'
     default:
       return 'i-lucide-database'
@@ -440,6 +444,13 @@ function codeLines(code: string | undefined, limit = 80): string {
           <!-- propose_cell_text_edits -->
           <CellTextEditCard
             v-else-if="t.name === 'propose_cell_text_edits'"
+            :item="t"
+            :job-id="props.jobId"
+          />
+
+          <!-- propose_vba_procedure_replace -->
+          <VbaChangePackageCard
+            v-else-if="t.name === 'propose_vba_procedure_replace'"
             :item="t"
             :job-id="props.jobId"
           />

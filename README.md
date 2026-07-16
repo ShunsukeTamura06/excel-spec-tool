@@ -96,26 +96,37 @@ for legacy `.xlsm` modernization.**
   `get_cells_range`, `find_cells`, `lookup_references`,
   `list_vba_modules`, `get_vba_procedure`, `list_sheet_formulas`,
   `list_workbook_objects`, `list_analysis_risks`,
-  `lookup_external_function`, `list_external_functions_used`
+  `lookup_external_function`, `list_external_functions_used`, plus
+  read-only mutation proposals for supported changes
 
 ### Safety gate & safe auto-fix (roadmap S1/S2, shipping incrementally)
 - **Structural diff** between two workbook versions (cells / named ranges /
   conditional formats / validations / charts / pivots / VBA modules) with
   **blast-radius** analysis — re-save noise is ignored by design
   (normalized-extraction comparison, validated against real Excel re-saves)
-- **Safe auto-fix loop** for three narrow patterns: named-range
-  redefinition, fixed-reference replacement, formula range expansion.
+- **Safe auto-fix loop** for four narrow patterns: named-range
+  redefinition, fixed-reference replacement, formula range expansion,
+  and fixed-text additions to empty cells.
   The LLM can only *propose* (read-only impact estimate); applying
   requires an explicit button click, writes to a **new job** (the
   original file is never modified), and passes the result through an
   **exact structural-diff policy gate**. Every execution stores the
   provider, mutation plan, expected diff, observed diff, and verdict
   (`passed` / `needs_review` / `failed`) as an audit record
+- **VBA procedure replacement package** for one existing `Sub` or
+  `Function`. xlblueprint creates a ZIP containing the original `.xlsm`,
+  the complete replacement procedure, an auditable plan, and a Windows
+  PowerShell runner. Windows Excel applies the change through VBIDE to a
+  copy with macros/events disabled; the resulting `.xlsm` must be uploaded
+  back to xlblueprint and pass the exact structural-diff gate. This phase
+  does not compile or execute the macro
 - **Pluggable mutation providers** separate the component that edits a
   workbook from xlblueprint's understanding and verification. The built-in
-  openpyxl provider supports all three patterns. An optional OfficeCLI
-  process adapter currently supports `.xlsx` named-range updates; OfficeCLI
-  is not a required dependency and is never treated as the proof of safety
+  openpyxl provider supports deterministic formula/name operations. An
+  optional OfficeCLI process adapter supports `.xlsx` named-range updates and
+  empty-cell text additions. OfficeCLI does not edit VBA; VBA writes use the
+  Windows Excel/VBIDE package workflow. No editor is ever treated as the proof
+  of safety
 
 ### Frontend (Nuxt 3 SPA, dark theme)
 - **Two primary journeys**: "investigate this Excel" and "change this Excel";

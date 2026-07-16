@@ -57,8 +57,9 @@ Web UI の主語は Excel の内部構造ではなく、一般ユーザーが達
 強制せず、推奨案または少数の選択肢を優先する。根拠、受入条件、未解析リスク、完全な
 差分等は保持するが、通常は段階表示とし、ユーザーが必要なときに開けるようにする。
 
-> C の構造検証部分と、3種類の限定変更は実装済み。COM 再計算・マクロ実行による
-> 動的検証と、VBAを含む任意変更は未実装。段階分け・実現可能性の検証結果・根拠は
+> C の構造検証部分と、限定変更は実装済み。COM 再計算・マクロ実行による
+> 動的検証と、VBAを含む任意変更の直接適用は未実装。既存VBAプロシージャの置換は
+> Windows実行パッケージ方式で扱う。段階分け・実現可能性の検証結果・根拠は
 > [docs/VISION.ja.md](./VISION.ja.md) を参照。
 
 ### 1.2 想定ユーザー
@@ -446,6 +447,28 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
   ダウンロードできるようにする
 - 対応外の改修依頼は自動適用可能と見せず、根拠付き相談へ案内する
 
+### 4.10 VBA変更パッケージ
+
+- OfficeCLI 1.0.136にはVBA/VBProjectを編集するsemantic elementがないため、VBA変更には
+  使用しない。`vbaProject.bin` の直接編集も行わない
+- 最初の対応範囲は、既存モジュール内にある既存の `Sub` / `Function` 1件を、
+  同名・同種の完全なプロシージャコードへ置換する操作に限定する
+- xlblueprintはMac上で以下を含むZIPパッケージを作る
+  - 変更しない原本 `.xlsm`
+  - 置換後の完全なプロシージャコード
+  - 変更計画と期待VBAモジュール差分
+  - Windows PowerShell + Excel/VBIDE COMの適用スクリプト
+  - 実行条件と注意事項を記載したREADME
+- Windowsスクリプトは原本を別名コピーしてから開き、Excelイベントとマクロ実行を無効化し、
+  VBIDE `CodeModule.ProcStartLine` / `ProcCountLines` / `DeleteLines` / `InsertLines` で置換する
+- 実行にはWindows版Microsoft Excelと「VBAプロジェクト オブジェクト モデルへのアクセスを
+  信頼する」設定が必要。VBAプロジェクトロック、読み取り専用、対象不在では停止する
+- VBA署名が存在するブックは保存により署名が無効になるため、パッケージ作成時に警告する
+- Windowsで生成した `.xlsm` はxlblueprintへ戻して再アップロードし、原本との構造差分を
+  フル抽出する。期待したVBAモジュール1件の変更以外があれば不合格とする
+- Mac側では未信頼VBAを実行しない。Windows側のコンパイル、代表マクロ実行、業務結果確認は
+  後続の動的検証フェーズで追加するため、この段階の合格は静的構造差分の一致だけを保証する
+
 ## 5. Backend層の仕様 (FastAPI)
 
 ### 5.1 エンドポイント
@@ -469,6 +492,8 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 | POST | `/jobs/{job_id}/formula-fix` | `{"kind": "fixed_ref_replace" \| "range_expansion", "old_ref": "...", "new_ref": "..."}` | `{"new_job_id": "...", "diff": {...}}` | 固定参照置換/範囲拡張の適用+自己検証 (§4.7) |
 | GET | `/mutation-providers` | - | `{"providers": [...]}` | 変更プロバイダーの利用可否・版・対応範囲 |
 | GET | `/jobs/{job_id}/verification` | - | `{"verification_record": {...}}` | 変更計画と検証証拠の監査レコード |
+| POST | `/jobs/{job_id}/vba-change/package` | `{"plan": {...}}` | ZIPファイル | Windows Excel/VBIDE用VBA変更パッケージを取得 |
+| POST | `/jobs/{job_id}/vba-change/verify` | multipart: `file`, `plan_json` | 修正ジョブ・実差分・検証結果 | Windowsで生成した `.xlsm` を静的検証 |
 
 `named-range-fix` / `formula-fix` は任意の `provider` (`openpyxl` / `officecli`) を受け取り、
 レスポンスに従来の `new_job_id` / `diff` に加えて `plan` / `provider` / `verification` を返す。

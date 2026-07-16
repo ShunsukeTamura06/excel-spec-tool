@@ -35,6 +35,7 @@ from core.models import (
     WorkbookDiff,
 )
 from core.reference_index import find_overlapping
+from core.vba_change import normalize_vba_code
 
 # (sheet, coord) -> (value, formula, number_format)
 _CellKey = tuple[str, str]
@@ -341,7 +342,9 @@ def _diff_vba_modules(before_wb: Workbook, after_wb: Workbook) -> list[VbaModule
     for name in sorted(before_map.keys() | after_map.keys()):
         before_m = before_map.get(name)
         after_m = after_map.get(name)
-        if before_m and after_m and before_m.code == after_m.code and before_m.type == after_m.type:
+        before_code = normalize_vba_code(before_m.code) if before_m else None
+        after_code = normalize_vba_code(after_m.code) if after_m else None
+        if before_m and after_m and before_code == after_code and before_m.type == after_m.type:
             continue
         if before_m is None and after_m is None:
             continue
@@ -352,8 +355,8 @@ def _diff_vba_modules(before_wb: Workbook, after_wb: Workbook) -> list[VbaModule
             VbaModuleDiff(
                 name=name,
                 change_type=change_type,
-                before_code=before_m.code if before_m else None,
-                after_code=after_m.code if after_m else None,
+                before_code=before_code,
+                after_code=after_code,
             )
         )
     return diffs

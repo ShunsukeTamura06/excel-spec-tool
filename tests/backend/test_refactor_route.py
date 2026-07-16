@@ -477,6 +477,8 @@ def test_mutation_provider_capabilities(client: TestClient) -> None:
     assert providers["openpyxl"]["available"] is True
     assert "named_range_set" in providers["officecli"]["supported_operations"]
     assert "cell_text_batch" in providers["officecli"]["supported_operations"]
+    assert providers["windows_vbide"]["available"] is True
+    assert providers["windows_vbide"]["supported_operations"] == ["vba_procedure_replace"]
 
 
 class TestCellTextChangePlanRoute:

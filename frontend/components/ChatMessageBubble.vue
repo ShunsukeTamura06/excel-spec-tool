@@ -29,6 +29,7 @@ const hasActionableProposal = computed(() => evidenceItems.value.some(item =>
     'propose_fixed_ref_replace',
     'propose_range_expansion',
     'propose_cell_text_edits',
+    'propose_vba_procedure_replace',
   ].includes(item.name),
 ))
 const answerExpanded = ref(false)

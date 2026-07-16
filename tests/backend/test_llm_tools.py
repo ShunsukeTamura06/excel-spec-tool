@@ -84,6 +84,7 @@ class TestToolDefinitions:
             "propose_fixed_ref_replace",
             "propose_range_expansion",
             "propose_cell_text_edits",
+            "propose_vba_procedure_replace",
         }
 
     def test_build_returns_list(self) -> None:
@@ -373,6 +374,7 @@ def job_with_workbook(tmp_path: Path) -> tuple[Storage, str]:
         ],
     )
     storage.save_workbook(meta.job_id, wb)
+    storage.save_references(meta.job_id, ReferenceIndex())
     return storage, meta.job_id
 
 
@@ -449,6 +451,58 @@ class TestExecuteGetVbaProcedure:
     def test_missing_args(self, job_with_workbook: tuple[Storage, str]) -> None:
         storage, job_id = job_with_workbook
         result = json.loads(execute_tool_call(storage, job_id, "get_vba_procedure", {}))
+        assert "error" in result
+
+
+class TestExecuteProposeVbaProcedureReplace:
+    def test_returns_windows_package_plan(
+        self,
+        job_with_workbook: tuple[Storage, str],
+    ) -> None:
+        """既存Subの完全置換をwindows_vbide計画として返す."""
+
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_vba_procedure_replace",
+                {
+                    "module_name": "Module1",
+                    "procedure_name": "UpdateDaily",
+                    "new_code": (
+                        'Sub UpdateDaily()\n    Worksheets("Calc").Range("H2") = 2\nEnd Sub'
+                    ),
+                },
+            )
+        )
+
+        safe_plan = result["safe_plan"]
+        assert safe_plan["plan"]["requested_provider"] == "windows_vbide"
+        assert safe_plan["plan"]["operation"]["kind"] == "vba_procedure_replace"
+        assert safe_plan["automation"] == "needs_review"
+        assert "expected_diff" not in safe_plan
+
+    def test_rejects_partial_vba_code(
+        self,
+        job_with_workbook: tuple[Storage, str],
+    ) -> None:
+        """完全なプロシージャでないコード断片を拒否する."""
+
+        storage, job_id = job_with_workbook
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_vba_procedure_replace",
+                {
+                    "module_name": "Module1",
+                    "procedure_name": "UpdateDaily",
+                    "new_code": 'Worksheets("Calc").Range("H2") = 2',
+                },
+            )
+        )
+
         assert "error" in result
 
 

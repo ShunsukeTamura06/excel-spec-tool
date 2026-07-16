@@ -407,7 +407,7 @@ export interface WorkbookDiffData {
   existing_risks: AnalysisRiskItem[]
 }
 
-export type MutationProviderName = 'openpyxl' | 'officecli'
+export type MutationProviderName = 'openpyxl' | 'officecli' | 'windows_vbide'
 export type VerificationStatus = 'passed' | 'needs_review' | 'failed'
 
 export interface VerificationViolationData {
@@ -429,7 +429,12 @@ export interface VerificationReportData {
 export interface MutationProviderResultData {
   provider: MutationProviderName
   provider_version: string | null
-  operation: 'named_range_set' | 'fixed_ref_replace' | 'range_expansion' | 'cell_text_batch'
+  operation:
+    | 'named_range_set'
+    | 'fixed_ref_replace'
+    | 'range_expansion'
+    | 'cell_text_batch'
+    | 'vba_procedure_replace'
   changed_count: number
 }
 
@@ -462,11 +467,19 @@ export interface CellTextBatchOperationData {
   edits: CellTextEditData[]
 }
 
+export interface VbaProcedureReplaceOperationData {
+  kind: 'vba_procedure_replace'
+  module_name: string
+  procedure_name: string
+  new_code: string
+}
+
 export type MutationOperationData =
   | RangeExpansionOperationData
   | FixedRefReplaceOperationData
   | NamedRangeSetOperationData
   | CellTextBatchOperationData
+  | VbaProcedureReplaceOperationData
 
 export interface MutationPlanData {
   plan_id: string

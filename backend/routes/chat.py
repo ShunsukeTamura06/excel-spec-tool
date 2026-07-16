@@ -69,6 +69,7 @@ _TOOL_PROGRESS_MESSAGES = {
     "propose_fixed_ref_replace": "固定参照置換の影響範囲を試算中",
     "propose_range_expansion": "数式範囲拡張の影響範囲を試算中",
     "propose_cell_text_edits": "説明テキスト追加の変更内容を準備中",
+    "propose_vba_procedure_replace": "VBA変更パッケージを準備中",
 }
 
 
@@ -463,12 +464,16 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         '    例: propose_cell_text_edits([{"sheet":"Output","coord":"C3","value":"説明"}])',
         "    現在空欄のセルへ説明、注記、見出し等の固定テキストを追加する計画を作る"
         "読み取り専用ツール。既存値や数式の上書きは拒否される。",
+        "- `propose_vba_procedure_replace(module_name, procedure_name, new_code)`:",
+        "    既存のSub/Function全体を同名・同種の完全コードへ置換する計画を作る。"
+        "先にget_vba_procedureで現行コードを取得すること。Macでは変更せず、"
+        "Windows Excel/VBIDE用ZIPを作り、戻ってきた.xlsmを静的検証する。",
         "",
         "# 自動適用できる修正依頼を受けたとき",
         "",
         "- ユーザーから該当パターンの修正依頼を受けたら、まず対応する propose 系ツール"
         "(`propose_named_range_fix` / `propose_fixed_ref_replace` / `propose_range_expansion` / "
-        "`propose_cell_text_edits`)"
+        "`propose_cell_text_edits` / `propose_vba_procedure_replace`)"
         "を呼び、変更される箇所・波及範囲・既存リスクを試算してから提示すること",
         "- 実際の適用は必ずユーザーが画面上のボタンで明示的に行う。"
         "あなた自身がファイルを書き換えることはできないし、してはいけない",
@@ -478,7 +483,10 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "「修正版を作るボタンを押す」など、存在しないUIを絶対に案内しないこと",
         "- 提案した内容と実際の適用結果が食い違わないよう、propose 系ツールに渡す引数は"
         "ユーザーの意図を正確に反映した値にすること",
-        "- 上記パターンに当てはまらない修正 (VBA 変更・行列の挿入削除・複雑な数式の"
+        "- VBA変更は既存Sub/Functionの完全置換だけWindows実行パッケージを作れる。"
+        "新規モジュール、Property、UserForm、参照設定、署名、複数プロシージャ変更は"
+        "自動変更カードの対象外と明示すること",
+        "- 上記パターンに当てはまらない修正 (行列の挿入削除・複雑な数式の"
         "書き換え等) は自動適用できない。従来どおりコピペ完結の改修手順を提示すること",
         "",
         "確実性を優先して必要な範囲でツールを呼んでください。",
@@ -536,6 +544,24 @@ def _requests_cell_text_change(messages: list[dict[str, Any]]) -> bool:
     )
 
 
+def _requests_vba_change(messages: list[dict[str, Any]]) -> bool:
+    """最新の依頼がVBAまたはマクロの変更要求か判定する."""
+
+    user_message = next(
+        (
+            str(message.get("content", ""))
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        ),
+        "",
+    ).lower()
+    target_terms = ("vba", "マクロ", "sub", "function")
+    action_terms = ("修正", "変更", "直し", "追加", "置換", "fix", "change", "replace")
+    return any(term in user_message for term in target_terms) and any(
+        term in user_message for term in action_terms
+    )
+
+
 def _needs_cell_text_tool_retry(
     messages: list[dict[str, Any]],
     tool_trace: list[dict[str, Any]],
@@ -550,6 +576,20 @@ def _needs_cell_text_tool_retry(
     )
 
 
+def _needs_vba_tool_retry(
+    messages: list[dict[str, Any]],
+    tool_trace: list[dict[str, Any]],
+    retry_count: int,
+) -> bool:
+    """対応可能性のあるVBA変更で、パッケージカード未作成なら最大2回再誘導する."""
+
+    return (
+        retry_count < 2
+        and _requests_vba_change(messages)
+        and not any(item.get("name") == "propose_vba_procedure_replace" for item in tool_trace)
+    )
+
+
 def _final_reply_for_tool_trace(
     content: str,
     tool_trace: list[dict[str, Any]],
@@ -561,7 +601,18 @@ def _final_reply_for_tool_trace(
         "propose_fixed_ref_replace",
         "propose_range_expansion",
         "propose_cell_text_edits",
+        "propose_vba_procedure_replace",
     }
+    vba_item = next(
+        (item for item in tool_trace if item.get("name") == "propose_vba_procedure_replace"),
+        None,
+    )
+    if vba_item is not None:
+        return (
+            "VBAプロシージャの変更計画を作りました。\n\n"
+            "下のカードからWindows用ZIPをダウンロードしてください。"
+            "Windowsで適用後、生成されたrevised.xlsmを同じカードへ戻すと静的検証できます。"
+        )
     cell_text_item = next(
         (item for item in tool_trace if item.get("name") == "propose_cell_text_edits"),
         None,
@@ -620,6 +671,7 @@ def _run_tool_loop(
     tool_result_cache: dict[str, str] = {}
     repeat_counts: dict[str, int] = {}
     cell_text_retry_count = 0
+    vba_retry_count = 0
 
     for iteration in range(MAX_TOOL_ITERATIONS):
         _emit_progress(
@@ -673,6 +725,26 @@ def _run_tool_loop(
                             "確認済みなら既存値や数式を上書きしない edits を組み立てて、"
                             "必ず propose_cell_text_edits を呼んで変更カードを作成してください。"
                             "列の挿入や書式変更は提案せず、現在空欄のセルへの値追加だけに限定します。"
+                        ),
+                    }
+                )
+                continue
+            if _needs_vba_tool_retry(messages, tool_trace, vba_retry_count):
+                vba_retry_count += 1
+                logger.info("retrying supported VBA request with explicit tool guidance")
+                if resp.content:
+                    messages.append({"role": "assistant", "content": resp.content})
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "この依頼が既存Sub/Function 1件の完全置換で対応できる場合、"
+                            "手作業手順を最終回答にせず、まずget_vba_procedureで現行コードを"
+                            "取得し、完全な置換後コードを作って必ず"
+                            "propose_vba_procedure_replaceを呼んでください。"
+                            "対象モジュールまたはプロシージャを特定できない場合だけ、"
+                            "一度に1問でユーザーへ確認してください。"
+                            "Property、新規モジュール、複数プロシージャ変更は対応外です。"
                         ),
                     }
                 )

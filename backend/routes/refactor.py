@@ -43,6 +43,7 @@ from core.mutation import (
     MutationResult,
     NamedRangeSetOperation,
     OpenPyxlMutationProvider,
+    ProviderCapability,
     ProviderName,
     RangeExpansionOperation,
     SafeChangePlan,
@@ -94,7 +95,11 @@ def _provider_for(name: ProviderName) -> MutationProvider:
 
     if name == "officecli":
         return OfficeCliMutationProvider()
-    return OpenPyxlMutationProvider()
+    if name == "openpyxl":
+        return OpenPyxlMutationProvider()
+    raise UnsupportedMutationError(
+        "windows_vbide is available only through the VBA change package workflow"
+    )
 
 
 def _load_before(storage: Storage, job_id: str) -> tuple[Workbook, Path, ReferenceIndex, str]:
@@ -245,10 +250,18 @@ async def list_mutation_providers() -> dict[str, object]:
 
     openpyxl_capability = OpenPyxlMutationProvider().capability()
     officecli_capability = await asyncio.to_thread(OfficeCliMutationProvider().capability)
+    windows_vbide_capability = ProviderCapability(
+        name="windows_vbide",
+        available=True,
+        version="package-v1",
+        supported_extensions=[".xlsm"],
+        supported_operations=["vba_procedure_replace"],
+    )
     return {
         "providers": [
             openpyxl_capability.model_dump(mode="json"),
             officecli_capability.model_dump(mode="json"),
+            windows_vbide_capability.model_dump(mode="json"),
         ]
     }
 
