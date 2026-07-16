@@ -104,7 +104,10 @@ async function confirmDelete(job: JobMeta) {
 function openCurrentSpec() {
   if (jobStore.currentJobId) navigateTo(`/spec/${jobStore.currentJobId}`)
 }
-function openCurrentChat() {
+function openCurrentQuestion() {
+  if (jobStore.currentJobId) navigateTo(`/chat/${jobStore.currentJobId}`)
+}
+function openCurrentChange() {
   if (jobStore.currentJobId) navigateTo(`/change/${jobStore.currentJobId}`)
 }
 
@@ -166,11 +169,19 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
               </div>
             </div>
           </div>
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap">
             <UButton icon="i-lucide-file-text" color="primary" variant="solid" @click="openCurrentSpec">
               診断結果を見る
             </UButton>
-            <UButton icon="i-lucide-wrench" color="primary" variant="soft" @click="openCurrentChat">
+            <UButton
+              icon="i-lucide-message-circle-question"
+              color="primary"
+              variant="soft"
+              @click="openCurrentQuestion"
+            >
+              質問する
+            </UButton>
+            <UButton icon="i-lucide-wrench" color="primary" variant="soft" @click="openCurrentChange">
               このExcelを直したい
             </UButton>
           </div>

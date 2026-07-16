@@ -10,7 +10,7 @@
 import type { ChatMessage, ChatProgressEvent, ChatSessionMeta, WorkbookData } from '~/types/api'
 
 definePageMeta({ layout: 'default' })
-useHead({ title: 'チャット — xlblueprint' })
+useHead({ title: '質問・相談 — xlblueprint' })
 
 const route = useRoute()
 const backend = useBackend()
@@ -283,11 +283,9 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-const examples = [
-  'このExcelの使い方を、根拠を示しながら説明してください',
-  '入力項目を1つ追加したいです。影響する機能と確認事項を教えてください',
-  '集計結果の項目を変えた場合、どこを確認すべきですか？',
-]
+function selectQuestionTemplate(prompt: string) {
+  input.value = prompt
+}
 </script>
 
 <template>
@@ -301,7 +299,7 @@ const examples = [
         <UIcon name="i-lucide-chevron-right" class="size-4" />
         <NuxtLink :to="`/spec/${jobId}`" class="hover:text-(--ui-primary)">Excel診断</NuxtLink>
         <UIcon name="i-lucide-chevron-right" class="size-4" />
-        <span class="text-(--ui-text-highlighted)">チャット</span>
+        <span class="text-(--ui-text-highlighted)">質問・相談</span>
       </div>
       <UButton
         :to="`/spec/${jobId}`"
@@ -330,7 +328,7 @@ const examples = [
       >
         <div class="h-full flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
-            <h2 class="text-sm font-semibold text-(--ui-text-highlighted)">相談</h2>
+            <h2 class="text-sm font-semibold text-(--ui-text-highlighted)">質問・相談</h2>
             <UButton
               icon="i-lucide-plus"
               color="primary"
@@ -480,24 +478,11 @@ const examples = [
                 <UIcon name="i-lucide-sparkles" class="size-7" />
               </div>
               <div class="space-y-1">
-                <p class="font-semibold text-(--ui-text-highlighted)">改修について質問しましょう</p>
+                <p class="font-semibold text-(--ui-text-highlighted)">このExcelについて質問しましょう</p>
                 <p class="text-xs text-(--ui-text-muted) max-w-md">
-                  Excel診断の根拠を使い、改修手順と影響範囲を提案します。
-                  質問例から始めるか、自由に入力してください.
+                  Excel診断の根拠を使い、用途・使い方・数字の根拠・注意点などに回答します。
+                  下のテンプレートを選ぶか、自由に入力してください。
                 </p>
-              </div>
-              <div class="flex flex-wrap gap-2 justify-center max-w-xl">
-                <UButton
-                  v-for="ex in examples"
-                  :key="ex"
-                  size="sm"
-                  variant="soft"
-                  color="neutral"
-                  icon="i-lucide-corner-down-left"
-                  @click="input = ex"
-                >
-                  {{ ex }}
-                </UButton>
               </div>
               <!-- LLM 未設定の場合、ここで明示的にアナウンスする.
                    配置していないと「チャットが壊れている」と誤解されやすい. -->
@@ -544,9 +529,11 @@ const examples = [
         <!-- 入力欄 -->
         <UCard :ui="{ body: 'p-2 sm:p-3' }">
           <div class="space-y-2">
+            <ChatQuestionTemplates @select="selectQuestionTemplate" />
+            <USeparator />
             <UTextarea
               v-model="input"
-              placeholder="改修したい内容や質問を入力 (Cmd/Ctrl + Enter で送信)"
+              placeholder="このExcelについて知りたいことを入力 (Cmd/Ctrl + Enter で送信)"
               :rows="3"
               :disabled="sending || activeSession?.archived"
               autoresize

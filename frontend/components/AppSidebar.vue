@@ -39,10 +39,17 @@ const navItems = computed(() => {
       disabled: !id,
     },
     {
+      label: 'このExcelに質問する',
+      icon: 'i-lucide-message-circle-question',
+      to: id ? `/chat/${id}` : '#',
+      active: route.path.startsWith('/chat'),
+      disabled: !id,
+    },
+    {
       label: 'このExcelを直す',
       icon: 'i-lucide-wrench',
       to: id ? `/change/${id}` : '#',
-      active: route.path.startsWith('/change') || route.path.startsWith('/chat'),
+      active: route.path.startsWith('/change'),
       disabled: !id,
     },
     {
