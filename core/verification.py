@@ -70,6 +70,28 @@ def _evidence_key(section: DiffSection, change: dict[str, Any]) -> str:
     return str(change["name"])
 
 
+def _normalize_change(section: DiffSection, change: dict[str, Any]) -> dict[str, Any]:
+    """差分の意味を変えない観測上の補助情報を比較対象から除く.
+
+    Args:
+        section: 差分カテゴリ。
+        change: PydanticモデルからJSON化した差分。
+
+    Returns:
+        変更前後で同一のセル表示形式を除いた比較用の差分。
+    """
+
+    normalized = dict(change)
+    if (
+        section == "cells"
+        and "before_number_format" in normalized
+        and normalized.get("before_number_format") == normalized.get("after_number_format")
+    ):
+        normalized.pop("before_number_format", None)
+        normalized.pop("after_number_format", None)
+    return normalized
+
+
 def _collect_evidence(diff: WorkbookDiff) -> dict[tuple[DiffSection, str], DiffEvidence]:
     """WorkbookDiffの構造差分をカテゴリ・キーで逆引き可能にする."""
 
@@ -85,7 +107,10 @@ def _collect_evidence(diff: WorkbookDiff) -> dict[tuple[DiffSection, str], DiffE
     evidence: dict[tuple[DiffSection, str], DiffEvidence] = {}
     for section in sections:
         for item in getattr(diff, section):
-            change = item.model_dump(mode="json", exclude_none=True)
+            change = _normalize_change(
+                section,
+                item.model_dump(mode="json", exclude_none=True),
+            )
             key = _evidence_key(section, change)
             evidence[(section, key)] = DiffEvidence(section=section, key=key, change=change)
     return evidence

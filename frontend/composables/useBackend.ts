@@ -30,6 +30,8 @@ import {
   type JobMeta,
   type NamedRangeFixRequest,
   type NamedRangeFixResponse,
+  type MutationPlanData,
+  type SafeChangePlanData,
   type WorkbookDiagnosis,
   type ReferenceItem,
   type SpecResponse,
@@ -106,6 +108,16 @@ function toBackendError(err: unknown, context: string): BackendError {
       const loc = Array.isArray(first?.loc) ? first.loc.filter(x => x !== 'body').join('.') : ''
       if (msg) {
         detail = loc ? `${loc}: ${msg}` : msg
+      }
+    } else if (d && typeof d === 'object') {
+      const structured = d as {
+        message?: unknown
+        verification?: { status?: unknown }
+      }
+      if (structured.verification?.status === 'failed') {
+        detail = '構造検証で予定外の差分を検出したため、修正版の提供を停止しました。原本は変更されていません。'
+      } else if (typeof structured.message === 'string') {
+        detail = structured.message
       }
     }
   }
@@ -482,6 +494,44 @@ export function useBackend() {
         body,
         timeout: HEAVY_TIMEOUT_MS,
       })
+    },
+
+    /** POST /jobs/{jobId}/change-plan — 原本を書き換えず、範囲拡張の予定差分を作る */
+    async createSafeChangePlan(
+      jobId: string,
+      oldRef: string,
+      newRef: string,
+    ): Promise<SafeChangePlanData> {
+      return await call<SafeChangePlanData>('createSafeChangePlan', `/jobs/${jobId}/change-plan`, {
+        method: 'POST',
+        body: { kind: 'range_expansion', old_ref: oldRef, new_ref: newRef },
+        timeout: DEFAULT_TIMEOUT_MS,
+      })
+    },
+
+    /** POST /jobs/{jobId}/change-plan/execute — 画面で確認した同一計画を実行する */
+    async executeSafeChangePlan(
+      jobId: string,
+      plan: MutationPlanData,
+    ): Promise<FormulaFixResponse> {
+      return await call<FormulaFixResponse>(
+        'executeSafeChangePlan',
+        `/jobs/${jobId}/change-plan/execute`,
+        { method: 'POST', body: { plan }, timeout: HEAVY_TIMEOUT_MS },
+      )
+    },
+
+    /** GET /jobs/{jobId}/download — 修正版ExcelをBlobで取得する */
+    async downloadWorkbook(jobId: string): Promise<Blob> {
+      try {
+        const root = String(baseURL || '').replace(/\/$/, '')
+        const response = await fetch(`${root}/jobs/${jobId}/download`)
+        if (!response.ok) throw await backendErrorFromResponse(response)
+        return await response.blob()
+      } catch (e) {
+        if (e instanceof BackendError) throw e
+        throw toBackendError(e, 'downloadWorkbook')
+      }
     },
 
     /** POST /feedback — フィードバック 1 件を送信. */

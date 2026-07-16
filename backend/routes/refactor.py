@@ -40,6 +40,8 @@ from core.mutation import (
     OpenPyxlMutationProvider,
     ProviderName,
     RangeExpansionOperation,
+    SafeChangePlan,
+    build_safe_change_plan,
     propose_mutation,
 )
 from core.officecli_provider import OfficeCliMutationProvider
@@ -65,6 +67,20 @@ class FormulaFixRequest(BaseModel):
     old_ref: str
     new_ref: str
     provider: ProviderName = "openpyxl"
+
+
+class ChangePlanRequest(BaseModel):
+    """一般ユーザー向け変更計画のリクエストボディ."""
+
+    kind: Literal["range_expansion"]
+    old_ref: str
+    new_ref: str
+
+
+class ExecuteChangePlanRequest(BaseModel):
+    """確認済みの変更計画をそのまま実行するリクエストボディ."""
+
+    plan: MutationPlan
 
 
 def _provider_for(name: ProviderName) -> MutationProvider:
@@ -247,6 +263,89 @@ async def get_verification_record(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="verification record not found") from exc
     return {"verification_record": record.model_dump(mode="json")}
+
+
+@router.post("/jobs/{job_id}/change-plan", response_model=SafeChangePlan)
+async def create_change_plan(
+    job_id: str,
+    body: ChangePlanRequest,
+    storage: Storage = Depends(get_storage),
+) -> SafeChangePlan:
+    """原本を書き換えず、適用前に確認する範囲拡張計画を作る."""
+
+    before_wb, _, before_index, _ = _load_before(storage, job_id)
+    plan = MutationPlan(
+        source_job_id=job_id,
+        requested_provider="openpyxl",
+        operation=RangeExpansionOperation(old_ref=body.old_ref, new_ref=body.new_ref),
+    )
+    try:
+        return build_safe_change_plan(plan, before_wb, before_index)
+    except FormulaFixError as exc:
+        raise HTTPException(status_code=422, detail=f"change plan failed: {exc}") from exc
+
+
+@router.post("/jobs/{job_id}/change-plan/execute")
+async def execute_change_plan(
+    job_id: str,
+    body: ExecuteChangePlanRequest,
+    storage: Storage = Depends(get_storage),
+) -> dict[str, object]:
+    """画面で確認した同一計画を適用し、新規ファイルとして検証する."""
+
+    plan = body.plan
+    if plan.source_job_id != job_id:
+        raise HTTPException(status_code=400, detail="plan source_job_id does not match URL job_id")
+    if plan.requested_provider != "openpyxl":
+        raise HTTPException(
+            status_code=422,
+            detail="general-user change plans currently support only the openpyxl provider",
+        )
+    if not isinstance(plan.operation, RangeExpansionOperation):
+        raise HTTPException(
+            status_code=422,
+            detail="general-user change plans currently support only range expansion",
+        )
+
+    before_wb, before_path, before_index, filename = _load_before(storage, job_id)
+    try:
+        result = await _execute_plan(
+            storage,
+            before_wb,
+            before_path,
+            before_index,
+            filename,
+            plan,
+        )
+    except FormulaFixError as exc:
+        raise HTTPException(status_code=422, detail=f"change execution failed: {exc}") from exc
+    except ExtractionError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"extraction of new file failed: {exc}",
+        ) from exc
+    except ProviderUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"mutation provider unavailable: {exc}",
+        ) from exc
+    except UnsupportedMutationError as exc:
+        raise HTTPException(status_code=422, detail=f"unsupported mutation: {exc}") from exc
+    except MutationProviderError as exc:
+        raise HTTPException(status_code=422, detail=f"mutation provider failed: {exc}") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"internal error: {exc}") from exc
+
+    logger.info(
+        "confirmed change plan executed: source=%s new_job=%s plan=%s verification=%s",
+        job_id,
+        result["new_job_id"],
+        plan.plan_id,
+        result["verification"],
+    )
+    return result
 
 
 @router.post("/jobs/{job_id}/named-range-fix")

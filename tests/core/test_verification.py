@@ -81,6 +81,46 @@ def test_mismatched_change_fails() -> None:
     assert report.violations[0].code == "mismatched_change"
 
 
+def test_unchanged_number_format_is_context_not_a_mismatch() -> None:
+    """実差分だけが同一表示形式を補足しても、変更内容は一致と判定する."""
+
+    expected = CellDiff(
+        sheet="Data",
+        coord="C1",
+        change_type="modified",
+        before_formula="=A1",
+        after_formula="=A2",
+    )
+    actual = expected.model_copy(
+        update={"before_number_format": "0.0", "after_number_format": "0.0"}
+    )
+
+    report = verify_expected_diff(_diff(cells=[expected]), _diff(cells=[actual]))
+
+    assert report.status == "passed"
+    assert report.violations == []
+
+
+def test_changed_number_format_still_fails() -> None:
+    """数式変更に表示形式変更が混入した場合は予定外差分として拒否する."""
+
+    expected = CellDiff(
+        sheet="Data",
+        coord="C1",
+        change_type="modified",
+        before_formula="=A1",
+        after_formula="=A2",
+    )
+    actual = expected.model_copy(
+        update={"before_number_format": "0.0", "after_number_format": "0.00"}
+    )
+
+    report = verify_expected_diff(_diff(cells=[expected]), _diff(cells=[actual]))
+
+    assert report.status == "failed"
+    assert report.violations[0].code == "mismatched_change"
+
+
 def test_blast_radius_requires_review() -> None:
     """差分が一致しても既存参照先があれば人間確認へ回す."""
 

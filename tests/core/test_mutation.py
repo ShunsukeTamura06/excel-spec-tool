@@ -10,10 +10,14 @@ from openpyxl.workbook.defined_name import DefinedName
 
 from core.exceptions import UnsupportedMutationError
 from core.extractors.workbook import extract_workbook
+from core.models import CellFormula, ReferenceIndex, SheetInfo, Workbook
 from core.mutation import (
+    FixedRefReplaceOperation,
     MutationPlan,
     NamedRangeSetOperation,
     OpenPyxlMutationProvider,
+    RangeExpansionOperation,
+    build_safe_change_plan,
     propose_mutation,
 )
 from core.reference_index import build_reference_index
@@ -86,3 +90,84 @@ def test_openpyxl_rejects_unsupported_extension(tmp_path: Path) -> None:
 
     with pytest.raises(UnsupportedMutationError, match="does not support"):
         OpenPyxlMutationProvider().apply(plan, source, tmp_path / "output.xls")
+
+
+def test_safe_change_plan_describes_range_expansion_without_writing() -> None:
+    """範囲拡張を期待差分・確認事項付きの一般ユーザー向け計画にする."""
+    workbook = Workbook(
+        filename="tool.xlsx",
+        sheets=[
+            SheetInfo(
+                name="集計",
+                rows=1,
+                cols=1,
+                formulas=[
+                    CellFormula(
+                        coord="集計!A1",
+                        formula="=SUM(入力!A1:A10)",
+                        refs=["入力!A1:A10"],
+                    )
+                ],
+            ),
+            SheetInfo(name="入力", rows=10, cols=1),
+        ],
+    )
+    plan = MutationPlan(
+        source_job_id="00000000-0000-4000-8000-000000000000",
+        operation=RangeExpansionOperation(
+            old_ref="入力!A1:A10",
+            new_ref="入力!A1:A20",
+        ),
+    )
+
+    safe_plan = build_safe_change_plan(plan, workbook, ReferenceIndex())
+
+    assert safe_plan.automation == "supported"
+    assert safe_plan.can_apply
+    assert safe_plan.expected_change_count == 1
+    assert safe_plan.affected_locations == ["集計!A1"]
+    assert safe_plan.expected_diff.cells[0].after_formula == "=SUM('入力'!A1:A20)"
+    assert "再計算値" in safe_plan.verification_scope
+
+
+def test_safe_change_plan_requires_review_when_existing_risks_exist() -> None:
+    """既存リスクを持つ変更は自動対応可能でも追加確認扱いにする."""
+    from core.models import AnalysisRisk
+
+    workbook = Workbook(
+        filename="tool.xlsx",
+        sheets=[
+            SheetInfo(
+                name="集計",
+                rows=1,
+                cols=1,
+                formulas=[
+                    CellFormula(
+                        coord="集計!A1",
+                        formula="=入力!A1",
+                        refs=["入力!A1"],
+                    )
+                ],
+            ),
+            SheetInfo(name="入力", rows=1, cols=2),
+        ],
+        analysis_risks=[
+            AnalysisRisk(
+                category="runtime_state",
+                severity="medium",
+                location="Module1",
+                evidence="ActiveSheet",
+                description="実行時の選択シートに依存します。",
+                recommendation="Excelで確認してください。",
+            )
+        ],
+    )
+    plan = MutationPlan(
+        source_job_id="00000000-0000-4000-8000-000000000000",
+        operation=FixedRefReplaceOperation(old_ref="入力!A1", new_ref="入力!B1"),
+    )
+
+    safe_plan = build_safe_change_plan(plan, workbook, ReferenceIndex())
+
+    assert safe_plan.automation == "needs_review"
+    assert safe_plan.warnings == ["実行時の選択シートに依存します。"]

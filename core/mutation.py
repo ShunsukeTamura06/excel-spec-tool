@@ -73,6 +73,23 @@ class MutationPlan(BaseModel):
     operation: MutationOperation
 
 
+class SafeChangePlan(BaseModel):
+    """一般ユーザーが適用前に確認する、期待差分付きの安全変更計画."""
+
+    plan: MutationPlan
+    automation: Literal["supported", "needs_review"]
+    can_apply: bool = True
+    title: str
+    summary: str
+    expected_diff: WorkbookDiff
+    expected_change_count: int
+    affected_locations: list[str] = Field(default_factory=list)
+    preconditions: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    verification_scope: str
+
+
 class ProviderCapability(BaseModel):
     """変更プロバイダーが現在提供できる機能."""
 
@@ -139,6 +156,91 @@ def propose_mutation(
         before_index,
         operation.old_ref,
         operation.new_ref,
+    )
+
+
+def build_safe_change_plan(
+    plan: MutationPlan,
+    before_wb: Workbook,
+    before_index: ReferenceIndex,
+) -> SafeChangePlan:
+    """変更を書き込まず、一般ユーザー向けの変更計画と期待差分を作る.
+
+    Args:
+        plan: 実行時にも同じIDで使用する変更計画。
+        before_wb: 変更前の抽出済みワークブック。
+        before_index: 変更前の参照索引。
+
+    Returns:
+        期待差分、確認事項、静的検証境界を含む変更計画。
+    """
+    expected_diff = propose_mutation(plan, before_wb, before_index)
+    operation = plan.operation
+    changed_locations = [f"{item.sheet}!{item.coord}" for item in expected_diff.cells]
+    changed_locations.extend(item.name for item in expected_diff.named_ranges)
+    expected_change_count = (
+        len(expected_diff.cells)
+        + len(expected_diff.named_ranges)
+        + len(expected_diff.conditional_formats)
+        + len(expected_diff.data_validations)
+        + len(expected_diff.charts)
+        + len(expected_diff.pivot_tables)
+        + len(expected_diff.vba_modules)
+    )
+
+    if isinstance(operation, RangeExpansionOperation):
+        title = "数式が参照するデータ範囲を広げる"
+        summary = (
+            f"{operation.old_ref} を {operation.new_ref} へ広げ、"
+            f"{len(expected_diff.cells)}件の数式参照を更新します。"
+        )
+        preconditions = [
+            "新しい範囲が現在の範囲を完全に含んでいる",
+            "追加する行の列構成が現在のデータと同じである",
+            "変更対象として表示された数式が業務上の想定と一致している",
+        ]
+    elif isinstance(operation, NamedRangeSetOperation):
+        title = "名前付き範囲の参照先を変更する"
+        summary = f"{operation.name} の参照先を {operation.new_refers_to} へ変更します。"
+        preconditions = ["新しい参照先が存在する", "名前の用途が変更後の範囲と一致する"]
+    else:
+        title = "数式の固定参照を置き換える"
+        summary = (
+            f"{operation.old_ref} を {operation.new_ref} へ置き換え、"
+            f"{len(expected_diff.cells)}件の数式を更新します。"
+        )
+        preconditions = [
+            "新しい参照先が存在する",
+            "変更対象として表示された数式が業務上の想定と一致している",
+        ]
+
+    warnings = list(dict.fromkeys(item.description for item in expected_diff.existing_risks))
+    if expected_diff.blast_radius:
+        warnings.insert(
+            0,
+            f"変更対象を参照する箇所が{len(expected_diff.blast_radius)}件あります。",
+        )
+    automation: Literal["supported", "needs_review"] = "needs_review" if warnings else "supported"
+
+    return SafeChangePlan(
+        plan=plan,
+        automation=automation,
+        title=title,
+        summary=summary,
+        expected_diff=expected_diff,
+        expected_change_count=expected_change_count,
+        affected_locations=changed_locations,
+        preconditions=preconditions,
+        acceptance_criteria=[
+            "表示された予定変更と、適用後に再抽出した実差分が一致する",
+            "予定外のセル・名前定義・書式・入力規則・グラフ・ピボット・VBA変更がない",
+            "原本が保持され、修正版と監査記録を取得できる",
+        ],
+        warnings=warnings,
+        verification_scope=(
+            "Macではファイル構造の一致を検証します。Excelでの再計算値とマクロ実行は"
+            "Windows + Microsoft Excelでの追加確認が必要です。"
+        ),
     )
 
 

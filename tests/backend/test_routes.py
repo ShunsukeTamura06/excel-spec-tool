@@ -473,6 +473,27 @@ class TestJobs:
         names = {j["filename"] for j in body["jobs"]}
         assert names == {"a.xlsx", "b.xlsx"}
 
+    def test_download_returns_workbook_with_distinct_name(
+        self,
+        client: TestClient,
+        sample_xlsx_bytes: bytes,
+        backend_storage: Storage,
+    ) -> None:
+        """ジョブ成果物を原本と区別できる名前で取得できる."""
+
+        meta = backend_storage.create_job("tool.xlsx", sample_xlsx_bytes)
+
+        response = client.get(f"/jobs/{meta.job_id}/download")
+
+        assert response.status_code == 200
+        assert response.content == sample_xlsx_bytes
+        assert "tool_xlblueprint.xlsx" in response.headers["content-disposition"]
+
+    def test_download_missing(self, client: TestClient) -> None:
+        """存在しないジョブのダウンロードは404にする."""
+
+        assert client.get(f"/jobs/{uuid.uuid4()}/download").status_code == 404
+
     def test_delete_existing(
         self, client: TestClient, sample_xlsx_bytes: bytes, backend_storage: Storage
     ) -> None:

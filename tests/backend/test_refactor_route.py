@@ -352,6 +352,114 @@ class TestFormulaFixRoute:
         assert r.status_code == 409
 
 
+class TestSafeChangePlanRoute:
+    """一般ユーザー向けの計画確認から実行までを検証する."""
+
+    def test_preview_does_not_create_job_and_returns_expected_diff(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+    ) -> None:
+        """計画確認だけではファイルを作らず、変更予定を返す."""
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
+        jobs_before = {meta.job_id for meta in backend_storage.list_jobs()}
+
+        response = client.post(
+            f"/jobs/{job_id}/change-plan",
+            json={
+                "kind": "range_expansion",
+                "old_ref": "Data!A1:A100",
+                "new_ref": "Data!A1:A200",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["automation"] == "supported"
+        assert body["can_apply"] is True
+        assert body["expected_change_count"] == 1
+        assert body["plan"]["source_job_id"] == job_id
+        assert body["expected_diff"]["cells"][0]["after_formula"] == "=SUM(A1:A200)"
+        assert {meta.job_id for meta in backend_storage.list_jobs()} == jobs_before
+
+    def test_executes_the_same_confirmed_plan_and_saves_audit(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+    ) -> None:
+        """確認したplan_idを保持したまま適用し、監査証跡へ保存する."""
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
+        preview = client.post(
+            f"/jobs/{job_id}/change-plan",
+            json={
+                "kind": "range_expansion",
+                "old_ref": "Data!A1:A100",
+                "new_ref": "Data!A1:A200",
+            },
+        )
+        plan = preview.json()["plan"]
+
+        response = client.post(
+            f"/jobs/{job_id}/change-plan/execute",
+            json={"plan": plan},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["plan"]["plan_id"] == plan["plan_id"]
+        assert body["verification"]["status"] == "passed"
+        audit = client.get(f"/jobs/{body['new_job_id']}/verification")
+        assert audit.status_code == 200
+        assert audit.json()["verification_record"]["plan"]["plan_id"] == plan["plan_id"]
+
+    def test_rejects_plan_for_a_different_source_job(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+    ) -> None:
+        """別ジョブ向けに確認した計画の取り違えを拒否する."""
+
+        source_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
+        other_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
+        preview = client.post(
+            f"/jobs/{source_id}/change-plan",
+            json={
+                "kind": "range_expansion",
+                "old_ref": "Data!A1:A100",
+                "new_ref": "Data!A1:A200",
+            },
+        )
+
+        response = client.post(
+            f"/jobs/{other_id}/change-plan/execute",
+            json={"plan": preview.json()["plan"]},
+        )
+
+        assert response.status_code == 400
+
+    def test_rejects_shrinking_range_during_preview(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+    ) -> None:
+        """範囲縮小は計画として提示せず、適用前に拒否する."""
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
+
+        response = client.post(
+            f"/jobs/{job_id}/change-plan",
+            json={
+                "kind": "range_expansion",
+                "old_ref": "Data!A1:A100",
+                "new_ref": "Data!A1:A50",
+            },
+        )
+
+        assert response.status_code == 422
+
+
 def test_mutation_provider_capabilities(client: TestClient) -> None:
     """利用可能な変更エンジンと対応範囲をAPIから取得できる."""
 

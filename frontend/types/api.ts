@@ -433,6 +433,52 @@ export interface MutationProviderResultData {
   changed_count: number
 }
 
+export interface RangeExpansionOperationData {
+  kind: 'range_expansion'
+  old_ref: string
+  new_ref: string
+}
+
+export interface FixedRefReplaceOperationData {
+  kind: 'fixed_ref_replace'
+  old_ref: string
+  new_ref: string
+}
+
+export interface NamedRangeSetOperationData {
+  kind: 'named_range_set'
+  name: string
+  new_refers_to: string
+}
+
+export type MutationOperationData =
+  | RangeExpansionOperationData
+  | FixedRefReplaceOperationData
+  | NamedRangeSetOperationData
+
+export interface MutationPlanData {
+  plan_id: string
+  created_at: string
+  source_job_id: string
+  requested_provider: MutationProviderName
+  operation: MutationOperationData
+}
+
+export interface SafeChangePlanData {
+  plan: MutationPlanData
+  automation: 'supported' | 'needs_review'
+  can_apply: boolean
+  title: string
+  summary: string
+  expected_diff: WorkbookDiffData
+  expected_change_count: number
+  affected_locations: string[]
+  preconditions: string[]
+  acceptance_criteria: string[]
+  warnings: string[]
+  verification_scope: string
+}
+
 export interface NamedRangeFixRequest {
   name: string
   new_refers_to: string
@@ -443,7 +489,7 @@ export interface NamedRangeFixResponse {
   new_job_id: string
   diff: WorkbookDiffData
   verification: VerificationReportData
-  plan: Record<string, unknown>
+  plan: MutationPlanData
   provider: MutationProviderResultData
 }
 
@@ -460,7 +506,7 @@ export interface FormulaFixResponse {
   new_job_id: string
   diff: WorkbookDiffData
   verification: VerificationReportData
-  plan: Record<string, unknown>
+  plan: MutationPlanData
   provider: MutationProviderResultData
 }
 

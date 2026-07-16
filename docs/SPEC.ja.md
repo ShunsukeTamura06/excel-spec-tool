@@ -407,6 +407,21 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 - この判定が保証するのは観測対象の構造一致であり、Excel再計算値・マクロ副作用などの
   動的挙動は保証しない。COM検証が追加されるまでUIにもこの境界を残す
 
+### 4.9 一般ユーザー向け安全変更フロー
+
+- 改修依頼書の作成後、現在自動対応できる限定変更を一般ユーザー向けに提示する
+- 最初の完成経路は「数式が参照するデータ範囲の拡張」とする
+  - 抽出済み数式から、シート修飾された有界範囲と利用数を候補として表示する
+  - ユーザーは対象範囲と新しい最終行を選ぶ。数式文字列を直接編集させない
+  - 新範囲が旧範囲を包含しない場合は変更計画を作らない
+- 適用前に `MutationPlan`、期待差分、変更される数式数、影響候補、既存リスク、
+  静的検証の限界を表示し、ユーザーの明示承認を要求する
+- 承認後は、表示したものと同じ `MutationPlan.plan_id` を実行・監査記録へ保存する
+- 原本は変更せず、修正版を新ジョブとして作成する
+- 適用後は期待差分と実差分のpolicy判定を一般ユーザー向けに表示し、修正版を
+  ダウンロードできるようにする
+- 対応外の改修依頼は自動適用可能と見せず、根拠付き相談へ案内する
+
 ## 5. Backend層の仕様 (FastAPI)
 
 ### 5.1 エンドポイント
@@ -417,6 +432,9 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 | POST | `/analyze/{job_id}` | - | `{"status": "ok"}` | LLM注釈を付与し設計書生成 |
 | GET | `/diagnosis/{job_id}` | - | `WorkbookDiagnosis` | 根拠付きExcel診断を取得 |
 | POST | `/change-request/{job_id}` | `{"requested_outcome": "...", "feature_id": "F001"}` | `ChangeBrief` | 業務要望を改修依頼書へ整理 |
+| POST | `/jobs/{job_id}/change-plan` | `{"kind": "range_expansion", "old_ref": "...", "new_ref": "..."}` | `SafeChangePlan` | 適用前の期待差分と検証条件を作成 |
+| POST | `/jobs/{job_id}/change-plan/execute` | `{"plan": {...}}` | 修正ジョブ・実差分・検証結果 | 表示済み変更計画を明示承認後に適用 |
+| GET | `/jobs/{job_id}/download` | - | Excelファイル | 原本または検証済み修正版を取得 |
 | GET | `/spec/{job_id}` | - | `{"spec_md": "...", "meta": {...}}` | 設計書取得 |
 | GET | `/references/{job_id}` | query: `target` | `{"refs": [...]}` | 特定セルへの参照検索 |
 | POST | `/chat/{job_id}` | `{"message": "..."}` | `{"reply": "...", "history": [...]}` | 改修対話 |
@@ -514,6 +532,8 @@ def annotate_text(prompt: str, content: str) -> str
   - 参照検索 (逆引き)
 - `pages/chat/[jobId].vue`: 改修対話チャット
 - `pages/change/[jobId].vue`: 対象機能と業務要望から改修依頼書を作成
+  - 対応可能な範囲拡張では、候補選択、変更計画、明示承認、適用、検証結果、
+    修正版ダウンロードまでを同一画面で行う
 - 共通レイアウトに選択中Excel + 一般ユーザー向けナビゲーション
 
 ### 6.3 状態管理
