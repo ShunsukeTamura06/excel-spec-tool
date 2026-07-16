@@ -8,6 +8,7 @@
  */
 
 import type { ChatMessage, FeedbackKind, ToolTraceItem, WorkbookData } from '~/types/api'
+import { formatJstTime } from '~/utils/dateTime'
 
 const props = defineProps<{
   message: ChatMessage
@@ -24,8 +25,7 @@ const evidenceItems = computed<ToolTraceItem[]>(() => {
 })
 
 const timeLabel = computed(() => {
-  const t = props.message.timestamp
-  return t ? t.slice(11, 16) : ''
+  return formatJstTime(props.message.timestamp)
 })
 
 // ---- フィードバック (assistant 応答のみ) ----

@@ -6,6 +6,8 @@
  * - タブ (概要 / シート / VBA / 参照検索 / ダイアグラム[次コミット])
  */
 
+import { formatJstDateTime } from '~/utils/dateTime'
+
 definePageMeta({ layout: 'default' })
 useHead({ title: 'Excel診断 — xlblueprint' })
 
@@ -127,7 +129,7 @@ const errorMsg = computed(() => {
         <div class="flex items-center gap-2 mt-1.5">
           <JobStatusBadge :status="spec.meta.status" size="sm" />
           <span class="text-xs text-(--ui-text-muted)">
-            作成: {{ spec.meta.created_at.slice(0, 16).replace('T', ' ') }}
+            作成: {{ formatJstDateTime(spec.meta.created_at) }}
           </span>
           <span class="text-[10px] font-mono text-(--ui-text-muted) opacity-60">{{ spec.meta.job_id }}</span>
         </div>

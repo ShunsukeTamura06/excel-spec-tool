@@ -9,6 +9,7 @@
 
 import type { JobMeta } from '~/types/api'
 import type { AnalyzePhase } from '~/components/AnalyzeProgress.vue'
+import { formatJstDateTime } from '~/utils/dateTime'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: 'xlblueprint' })
@@ -164,7 +165,7 @@ const currentFileHash = computed(() => jobStore.currentJob?.file_sha256?.slice(0
               <p class="font-semibold text-(--ui-text-highlighted)">{{ jobStore.currentJob.filename }}</p>
               <div class="flex items-center gap-2 mt-1">
                 <JobStatusBadge :status="jobStore.currentJob.status" size="sm" />
-                <span class="text-xs text-(--ui-text-muted)">{{ jobStore.currentJob.created_at.slice(0, 16).replace('T', ' ') }}</span>
+                <span class="text-xs text-(--ui-text-muted)">{{ formatJstDateTime(jobStore.currentJob.created_at) }}</span>
                 <span v-if="currentFileHash" class="text-xs font-mono text-(--ui-text-muted)">sha256:{{ currentFileHash }}</span>
               </div>
             </div>

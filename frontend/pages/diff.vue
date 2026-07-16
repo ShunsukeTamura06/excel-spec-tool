@@ -8,6 +8,7 @@
  */
 
 import type { WorkbookDiffData } from '~/types/api'
+import { formatJstDateTime } from '~/utils/dateTime'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: '差分比較 — xlblueprint' })
@@ -23,7 +24,7 @@ onMounted(() => {
 const jobOptions = computed(() =>
   jobStore.jobs
     .filter(j => j.status === 'extracted' || j.status === 'analyzed')
-    .map(j => ({ label: `${j.filename} (${j.created_at.slice(0, 16).replace('T', ' ')})`, value: j.job_id })),
+    .map(j => ({ label: `${j.filename} (${formatJstDateTime(j.created_at)})`, value: j.job_id })),
 )
 
 const beforeJobId = ref<string | undefined>(undefined)

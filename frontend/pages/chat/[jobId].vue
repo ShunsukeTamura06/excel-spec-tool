@@ -8,6 +8,7 @@
  */
 
 import type { ChatMessage, ChatProgressEvent, ChatSessionMeta, WorkbookData } from '~/types/api'
+import { formatJstDateTime } from '~/utils/dateTime'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: '質問・相談 — xlblueprint' })
@@ -36,7 +37,7 @@ const visibleSessions = computed(() => {
 })
 
 function sessionTime(session: ChatSessionMeta) {
-  return session.updated_at ? session.updated_at.slice(0, 16).replace('T', ' ') : ''
+  return formatJstDateTime(session.updated_at)
 }
 
 function sessionPreview(session: ChatSessionMeta) {
