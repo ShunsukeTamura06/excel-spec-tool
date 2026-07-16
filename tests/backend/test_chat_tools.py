@@ -78,6 +78,68 @@ class TestToolLoop:
         assert body["reply"] == "ok"
         assert body["tool_trace"] == []
 
+    def test_cell_text_request_retries_until_change_card_is_created(
+        self,
+        app_client: TestClient,
+        xlsx_bytes: bytes,
+        scripted_llm: MockLLMClient,
+    ) -> None:
+        """安価モデルが手順だけ返しても、対応可能な依頼は変更カードへ再誘導する."""
+
+        scripted_llm.queue_response(LLMResponse(content="G列へ手で説明を入力してください"))
+        scripted_llm.queue_response(
+            LLMResponse(
+                tool_calls=[
+                    LLMToolCall(
+                        id="range",
+                        name="get_cells_range",
+                        arguments={"sheet": "Portfolio", "range": "G1:G2"},
+                    )
+                ]
+            )
+        )
+        scripted_llm.queue_response(LLMResponse(content="確認できました"))
+        scripted_llm.queue_response(
+            LLMResponse(
+                tool_calls=[
+                    LLMToolCall(
+                        id="proposal",
+                        name="propose_cell_text_edits",
+                        arguments={
+                            "edits": [
+                                {
+                                    "sheet": "Portfolio",
+                                    "coord": "G1",
+                                    "value": "各列の説明",
+                                }
+                            ]
+                        },
+                    )
+                ]
+            )
+        )
+        scripted_llm.queue_response(LLMResponse(content="変更内容を確認してください"))
+
+        job_id = _setup_job(app_client, xlsx_bytes)
+        response = app_client.post(
+            f"/chat/{job_id}",
+            json={"message": "Portfolioシートに説明を追加したい"},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["reply"] == (
+            "1個の空セルへ説明テキストを追加します。\n\n"
+            "下の「変更内容を確認」で内容を見て、「修正版を作る」を押してください。"
+            "原本は変更されません。"
+        )
+        assert [item["name"] for item in body["tool_trace"]] == [
+            "get_cells_range",
+            "propose_cell_text_edits",
+        ]
+        proposal = body["tool_trace"][1]["result"]["safe_plan"]
+        assert proposal["plan"]["requested_provider"] == "officecli"
+
     def test_single_tool_call_then_final_reply(
         self, app_client: TestClient, xlsx_bytes: bytes, scripted_llm: MockLLMClient
     ) -> None:

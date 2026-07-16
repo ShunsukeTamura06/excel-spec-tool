@@ -20,10 +20,15 @@ from core.formula_fix import (
     propose_fixed_ref_replace,
     propose_range_expansion,
 )
-from core.models import ReferenceIndex, Workbook, WorkbookDiff
+from core.models import CellDiff, ReferenceIndex, Workbook, WorkbookDiff
 from core.named_range_fix import apply_named_range_fix, propose_named_range_fix
 
-MutationKind = Literal["named_range_set", "fixed_ref_replace", "range_expansion"]
+MutationKind = Literal[
+    "named_range_set",
+    "fixed_ref_replace",
+    "range_expansion",
+    "cell_text_batch",
+]
 ProviderName = Literal["openpyxl", "officecli"]
 
 
@@ -57,8 +62,26 @@ class RangeExpansionOperation(BaseModel):
     new_ref: str
 
 
+class CellTextEdit(BaseModel):
+    """空セルへ追加する固定テキスト1件."""
+
+    sheet: str = Field(min_length=1, max_length=31)
+    coord: str = Field(pattern=r"^[A-Z]{1,3}[1-9][0-9]*$")
+    value: str = Field(min_length=1, max_length=2000)
+
+
+class CellTextBatchOperation(BaseModel):
+    """既存セルを上書きせず、複数の空セルへ固定テキストを追加する操作."""
+
+    kind: Literal["cell_text_batch"] = "cell_text_batch"
+    edits: list[CellTextEdit] = Field(min_length=1, max_length=50)
+
+
 MutationOperation = Annotated[
-    NamedRangeSetOperation | FixedRefReplaceOperation | RangeExpansionOperation,
+    NamedRangeSetOperation
+    | FixedRefReplaceOperation
+    | RangeExpansionOperation
+    | CellTextBatchOperation,
     Field(discriminator="kind"),
 ]
 
@@ -137,6 +160,30 @@ def propose_mutation(
     """
 
     operation = plan.operation
+    if isinstance(operation, CellTextBatchOperation):
+        seen: set[tuple[str, str]] = set()
+        cells: list[CellDiff] = []
+        for edit in operation.edits:
+            identity = (edit.sheet, edit.coord)
+            if identity in seen:
+                raise UnsupportedMutationError(
+                    f"duplicate cell text edit: {edit.sheet}!{edit.coord}"
+                )
+            seen.add(identity)
+            cells.append(
+                CellDiff(
+                    sheet=edit.sheet,
+                    coord=edit.coord,
+                    change_type="added",
+                    after_value=edit.value,
+                )
+            )
+        return WorkbookDiff(
+            before_filename=before_wb.filename,
+            after_filename=before_wb.filename,
+            cells=cells,
+            existing_risks=list(before_wb.analysis_risks),
+        )
     if isinstance(operation, NamedRangeSetOperation):
         return propose_named_range_fix(
             before_wb,
@@ -188,7 +235,14 @@ def build_safe_change_plan(
         + len(expected_diff.vba_modules)
     )
 
-    if isinstance(operation, RangeExpansionOperation):
+    if isinstance(operation, CellTextBatchOperation):
+        title = "説明テキストを追加する"
+        summary = f"{len(operation.edits)}個の空セルへ説明テキストを追加します。"
+        preconditions = [
+            "変更対象として表示されたセルが現在空欄である",
+            "追加する説明文が業務上の意味と一致している",
+        ]
+    elif isinstance(operation, RangeExpansionOperation):
         title = "数式が参照するデータ範囲を広げる"
         summary = (
             f"{operation.old_ref} を {operation.new_ref} へ広げ、"

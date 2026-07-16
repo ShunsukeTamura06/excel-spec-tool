@@ -429,7 +429,7 @@ export interface VerificationReportData {
 export interface MutationProviderResultData {
   provider: MutationProviderName
   provider_version: string | null
-  operation: 'named_range_set' | 'fixed_ref_replace' | 'range_expansion'
+  operation: 'named_range_set' | 'fixed_ref_replace' | 'range_expansion' | 'cell_text_batch'
   changed_count: number
 }
 
@@ -451,10 +451,22 @@ export interface NamedRangeSetOperationData {
   new_refers_to: string
 }
 
+export interface CellTextEditData {
+  sheet: string
+  coord: string
+  value: string
+}
+
+export interface CellTextBatchOperationData {
+  kind: 'cell_text_batch'
+  edits: CellTextEditData[]
+}
+
 export type MutationOperationData =
   | RangeExpansionOperationData
   | FixedRefReplaceOperationData
   | NamedRangeSetOperationData
+  | CellTextBatchOperationData
 
 export interface MutationPlanData {
   plan_id: string

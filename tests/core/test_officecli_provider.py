@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from core.exceptions import MutationProviderError, UnsupportedMutationError
-from core.mutation import FixedRefReplaceOperation, MutationPlan, NamedRangeSetOperation
+from core.mutation import (
+    CellTextBatchOperation,
+    CellTextEdit,
+    FixedRefReplaceOperation,
+    MutationPlan,
+    NamedRangeSetOperation,
+)
 from core.officecli_provider import OfficeCliMutationProvider
 
 
@@ -30,7 +37,7 @@ def test_capability_reports_missing_binary(monkeypatch: pytest.MonkeyPatch) -> N
     capability = OfficeCliMutationProvider().capability()
 
     assert not capability.available
-    assert capability.supported_operations == ["named_range_set"]
+    assert capability.supported_operations == ["named_range_set", "cell_text_batch"]
     assert capability.unavailable_reason
 
 
@@ -85,6 +92,75 @@ def test_apply_rejects_unsupported_operation(tmp_path: Path) -> None:
         OfficeCliMutationProvider(executable="/opt/officecli").apply(
             plan, source, tmp_path / "output.xlsx"
         )
+
+
+def test_apply_cell_text_batch_uses_officecli_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """固定テキスト一括追加を1回のOfficeCLI batchで適用する."""
+
+    source = tmp_path / "source.xlsx"
+    output = tmp_path / "output.xlsx"
+    source.write_bytes(b"xlsx-placeholder")
+    calls: list[list[str]] = []
+    child_envs: list[dict[str, str]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        env = kwargs.get("env")
+        if isinstance(env, dict):
+            child_envs.append(env)
+        if args[-1] == "--version":
+            return subprocess.CompletedProcess(args, 0, stdout="1.0.136\n", stderr="")
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=(
+                '{"success":true,"data":{"summary":'
+                '{"total":2,"executed":2,"succeeded":2,"failed":0,"skipped":0}}}'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("core.officecli_provider.shutil.which", lambda _: "/opt/officecli")
+    monkeypatch.setattr("core.officecli_provider.subprocess.run", fake_run)
+    monkeypatch.setenv("LLM_API_KEY", "must-not-leak")
+    plan = MutationPlan(
+        source_job_id="00000000-0000-4000-8000-000000000000",
+        requested_provider="officecli",
+        operation=CellTextBatchOperation(
+            edits=[
+                CellTextEdit(sheet="Output", coord="C3", value="説明"),
+                CellTextEdit(sheet="Output", coord="C4", value="商品数を示します"),
+            ]
+        ),
+    )
+
+    result = OfficeCliMutationProvider().apply(plan, source, output)
+
+    assert source.read_bytes() == b"xlsx-placeholder"
+    assert output.read_bytes() == b"xlsx-placeholder"
+    assert calls[1][:4] == ["/opt/officecli", "batch", str(output), "--commands"]
+    commands = json.loads(calls[1][4])
+    assert commands == [
+        {
+            "command": "set",
+            "path": "/Output/C3",
+            "props": {"value": "説明"},
+        },
+        {
+            "command": "set",
+            "path": "/Output/C4",
+            "props": {"value": "商品数を示します"},
+        },
+    ]
+    assert "--stop-on-error" in calls[1]
+    assert child_envs
+    assert all("LLM_API_KEY" not in env for env in child_envs)
+    assert all(env["OFFICECLI_SKIP_UPDATE"] == "1" for env in child_envs)
+    assert result.changed_count == 2
+    assert result.operation == "cell_text_batch"
 
 
 def test_apply_rejects_invalid_json(

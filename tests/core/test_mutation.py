@@ -12,6 +12,8 @@ from core.exceptions import UnsupportedMutationError
 from core.extractors.workbook import extract_workbook
 from core.models import CellFormula, ReferenceIndex, SheetInfo, Workbook
 from core.mutation import (
+    CellTextBatchOperation,
+    CellTextEdit,
     FixedRefReplaceOperation,
     MutationPlan,
     NamedRangeSetOperation,
@@ -76,6 +78,32 @@ def test_openpyxl_capability_is_explicit() -> None:
         "fixed_ref_replace",
         "range_expansion",
     }
+
+
+def test_cell_text_batch_proposes_added_cells() -> None:
+    """空セルへの固定テキスト追加をプロバイダー非依存の期待差分にする."""
+
+    workbook = Workbook(filename="tool.xlsx", sheets=[SheetInfo(name="Output", rows=2, cols=2)])
+    plan = MutationPlan(
+        source_job_id="00000000-0000-4000-8000-000000000000",
+        requested_provider="officecli",
+        operation=CellTextBatchOperation(
+            edits=[
+                CellTextEdit(sheet="Output", coord="C3", value="説明"),
+                CellTextEdit(sheet="Output", coord="C4", value="商品数を示します"),
+            ]
+        ),
+    )
+
+    expected = propose_mutation(plan, workbook, ReferenceIndex())
+
+    assert [(cell.coord, cell.after_value) for cell in expected.cells] == [
+        ("C3", "説明"),
+        ("C4", "商品数を示します"),
+    ]
+    safe_plan = build_safe_change_plan(plan, workbook, ReferenceIndex())
+    assert safe_plan.title == "説明テキストを追加する"
+    assert safe_plan.expected_change_count == 2
 
 
 def test_openpyxl_rejects_unsupported_extension(tmp_path: Path) -> None:

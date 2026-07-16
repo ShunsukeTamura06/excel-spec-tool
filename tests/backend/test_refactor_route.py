@@ -12,8 +12,14 @@ from fastapi.testclient import TestClient
 from openpyxl.workbook.defined_name import DefinedName
 
 from backend.storage import Storage
+from core.extractors.cells import extract_cells_to_sqlite
 from core.extractors.workbook import extract_workbook
-from core.mutation import MutationPlan, MutationResult, NamedRangeSetOperation
+from core.mutation import (
+    CellTextBatchOperation,
+    MutationPlan,
+    MutationResult,
+    NamedRangeSetOperation,
+)
 from core.reference_index import build_reference_index
 
 
@@ -51,6 +57,7 @@ def _seed_extracted_job(storage: Storage, data: bytes, filename: str = "x.xlsx")
     idx = build_reference_index(wb)
     storage.save_workbook(meta.job_id, wb)
     storage.save_references(meta.job_id, idx)
+    extract_cells_to_sqlite(path, storage.cells_db_path(meta.job_id))
     storage.update_status(meta.job_id, "extracted")
     return meta.job_id
 
@@ -469,3 +476,118 @@ def test_mutation_provider_capabilities(client: TestClient) -> None:
     providers = {item["name"]: item for item in response.json()["providers"]}
     assert providers["openpyxl"]["available"] is True
     assert "named_range_set" in providers["officecli"]["supported_operations"]
+    assert "cell_text_batch" in providers["officecli"]["supported_operations"]
+
+
+class TestCellTextChangePlanRoute:
+    def test_previews_empty_cell_text_changes(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+    ) -> None:
+        """空セルへの説明追加を原本未変更の計画として返す."""
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_named_range())
+
+        response = client.post(
+            f"/jobs/{job_id}/change-plan",
+            json={
+                "kind": "cell_text_batch",
+                "edits": [
+                    {"sheet": "Data", "coord": "C1", "value": "税率の入力値です"},
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["plan"]["requested_provider"] == "officecli"
+        assert body["plan"]["operation"]["kind"] == "cell_text_batch"
+        assert body["expected_diff"]["cells"][0]["after_value"] == "税率の入力値です"
+
+    def test_executes_and_verifies_cell_text_plan(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """確認済み計画を別ファイルへ適用し、実差分一致まで検証する."""
+
+        class FakeOfficeCliProvider:
+            """テスト用にOfficeCLIと同じ出力契約だけを再現する."""
+
+            def apply(
+                self,
+                plan: MutationPlan,
+                source_path: Path,
+                out_path: Path,
+            ) -> MutationResult:
+                operation = plan.operation
+                assert isinstance(operation, CellTextBatchOperation)
+                wb = openpyxl.load_workbook(source_path)
+                try:
+                    for edit in operation.edits:
+                        wb[edit.sheet][edit.coord] = edit.value
+                    wb.save(out_path)
+                finally:
+                    wb.close()
+                return MutationResult(
+                    provider="officecli",
+                    provider_version="test",
+                    operation="cell_text_batch",
+                    changed_count=len(operation.edits),
+                )
+
+        monkeypatch.setattr(
+            "backend.routes.refactor._provider_for",
+            lambda _: FakeOfficeCliProvider(),
+        )
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_named_range())
+        preview = client.post(
+            f"/jobs/{job_id}/change-plan",
+            json={
+                "kind": "cell_text_batch",
+                "edits": [
+                    {"sheet": "Data", "coord": "C1", "value": "税率の入力値です"},
+                ],
+            },
+        )
+        assert preview.status_code == 200
+
+        response = client.post(
+            f"/jobs/{job_id}/change-plan/execute",
+            json={"plan": preview.json()["plan"]},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["verification"]["status"] == "passed"
+        assert body["provider"]["provider"] == "officecli"
+        assert body["diff"]["cells"][0]["coord"] == "C1"
+        revised_path = backend_storage.get_original_path(body["new_job_id"])
+        revised = openpyxl.load_workbook(revised_path, data_only=False)
+        try:
+            assert revised["Data"]["C1"].value == "税率の入力値です"
+        finally:
+            revised.close()
+
+    def test_rejects_existing_cell_overwrite(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+    ) -> None:
+        """既存値を対象にした計画を作らない."""
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_named_range())
+
+        response = client.post(
+            f"/jobs/{job_id}/change-plan",
+            json={
+                "kind": "cell_text_batch",
+                "edits": [
+                    {"sheet": "Data", "coord": "A1", "value": "上書き"},
+                ],
+            },
+        )
+
+        assert response.status_code == 422

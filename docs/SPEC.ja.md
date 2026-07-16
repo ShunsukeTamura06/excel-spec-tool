@@ -377,7 +377,7 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 - セル差分は生XMLではなく正規化抽出 (`extract_cells_to_sqlite`) を比較基盤にして
   保存ノイズを無視する (VISION §6.2/§6.3 のスパイクで実証済みの手法)
 
-### 4.7 `core/named_range_fix.py` / `core/formula_fix.py` (S2 安全パターン自動修正)
+### 4.7 安全パターン自動修正
 
 §1.1 の 6 (自動適用) のうち、実装済みの安全パターン:
 
@@ -386,6 +386,7 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 | 名前定義修正 | `propose_named_range_fix(wb, idx, name, new_refers_to)` | `apply_named_range_fix(path, name, new_refers_to, out)` |
 | 固定参照置換 | `propose_fixed_ref_replace(wb, idx, old_ref, new_ref)` | `apply_fixed_ref_replace(path, old_ref, new_ref, out)` |
 | 数式範囲拡張 | `propose_range_expansion(wb, idx, old_range, new_range)` | `apply_range_expansion(path, old_range, new_range, out)` |
+| 空セルへの固定テキスト追加 | `propose_cell_text_edits(edits)` | `OfficeCliMutationProvider.apply(plan, path, out)` |
 
 - propose はチャットの tool loop から LLM が呼んでよい (ファイル未変更の試算)。
   apply は人間が画面のボタンを押した時だけ backend 経由で呼ばれる
@@ -395,6 +396,8 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
   影響を受けない
 - 範囲拡張は「同一シートで旧範囲を包含する新範囲」だけを受け付ける
   (縮小・移動は対象外)
+- 固定テキスト追加は `.xlsx` の既存シートにある空セルだけを対象とする。説明、注記、
+  見出し等を複数セルへ追加できるが、既存値・数式の上書きと書式変更は対象外
 - apply 後は新ジョブを作り、`diff_workbooks` で before/after を比較して
   意図した変更だけが起きたかを自己検証する
 
@@ -403,8 +406,11 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 - 変更意図はプロバイダー非依存の `MutationPlan` として記録する
 - `MutationProvider` は元ファイルを変更せず、隔離された出力先へ成果物を作る。
   組み込み `openpyxl` と任意の OfficeCLI アダプターを同じ契約で扱う
-- OfficeCLI 対応は現時点で `.xlsx` の名前定義変更のみ。`.xlsm`、数式変更、VBA変更は
-  未対応として明示的に拒否し、対応範囲を能力APIで返す
+- OfficeCLI 対応は現時点で `.xlsx` の名前定義変更と、空セルへの固定テキスト一括追加。
+  `.xlsm`、数式変更、VBA変更、書式変更は未対応として明示的に拒否し、対応範囲を
+  能力APIで返す
+- OfficeCLI保存時に数式の式・表示形式を維持したまま計算キャッシュだけが更新された
+  場合は、構造変更ではなく保存ノイズとしてセル差分から除外する
 - propose段階の期待構造差分と、成果物をフル再抽出して得た実構造差分を
   `exact-structural-diff-v1` で照合する。予定変更の欠落・予定外変更・内容不一致は
   `failed`、完全一致でも波及先または高リスク項目があれば `needs_review`、それ以外を
@@ -424,10 +430,14 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 - 自動対応外の依頼は、依頼入力後に根拠付き改修相談を自動で開始する。ユーザーに
   「対応内／対応外」を判断させたり、同じ依頼を再入力させたりしない
 - 追加確認が不可欠な場合は一度に一問だけ尋ね、可能なら推奨案を先頭にした選択肢を示す
-- 最初の完成経路は「数式が参照するデータ範囲の拡張」とする
+- 完成済みの限定変更経路:
   - 抽出済み数式から、シート修飾された有界範囲と利用数を候補として表示する
   - ユーザーは対象範囲と新しい最終行を選ぶ。数式文字列を直接編集させない
   - 新範囲が旧範囲を包含しない場合は変更計画を作らない
+  - チャットで説明・注記・見出しの追加を依頼すると、対象セルが空欄であることを
+    backendが検証し、空セルだけを対象にした変更カードを提示する
+  - ユーザーが「修正版を作る」を押すとOfficeCLIが別ファイルへ固定テキストを追加し、
+    xlblueprintが再抽出・差分照合した後に修正版をダウンロードできる
 - 適用前に `MutationPlan`、期待差分、変更される数式数、影響候補、既存リスク、
   静的検証の限界を表示し、ユーザーの明示承認を要求する
 - 承認後は、表示したものと同じ `MutationPlan.plan_id` を実行・監査記録へ保存する
@@ -446,7 +456,7 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 | POST | `/analyze/{job_id}` | - | `{"status": "ok"}` | LLM注釈を付与し設計書生成 |
 | GET | `/diagnosis/{job_id}` | - | `WorkbookDiagnosis` | 根拠付きExcel診断を取得 |
 | POST | `/change-request/{job_id}` | `{"requested_outcome": "...", "feature_id": "F001"}` | `ChangeBrief` | 業務要望を改修依頼書へ整理 |
-| POST | `/jobs/{job_id}/change-plan` | `{"kind": "range_expansion", "old_ref": "...", "new_ref": "..."}` | `SafeChangePlan` | 適用前の期待差分と検証条件を作成 |
+| POST | `/jobs/{job_id}/change-plan` | `{"kind": "range_expansion", ...}` または `{"kind": "cell_text_batch", "edits": [...]}` | `SafeChangePlan` | 適用前の期待差分と検証条件を作成 |
 | POST | `/jobs/{job_id}/change-plan/execute` | `{"plan": {...}}` | 修正ジョブ・実差分・検証結果 | 表示済み変更計画を明示承認後に適用 |
 | GET | `/jobs/{job_id}/download` | - | Excelファイル | 原本または検証済み修正版を取得 |
 | GET | `/spec/{job_id}` | - | `{"spec_md": "...", "meta": {...}}` | 設計書取得 |

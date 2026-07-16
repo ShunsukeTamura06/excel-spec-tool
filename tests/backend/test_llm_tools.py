@@ -13,6 +13,7 @@ from backend.llm_tools import (
 )
 from backend.storage import Storage
 from core.extractors.cells import extract_cells_to_sqlite
+from core.extractors.workbook import extract_workbook
 from core.models import (
     AnalysisRisk,
     CellFormula,
@@ -55,6 +56,10 @@ def job_with_cells(tmp_path: Path) -> tuple[Storage, str]:
         storage.get_original_path(meta.job_id),
         storage.cells_db_path(meta.job_id),
     )
+    extracted = extract_workbook(storage.get_original_path(meta.job_id))
+    extracted.filename = "p.xlsx"
+    storage.save_workbook(meta.job_id, extracted)
+    storage.save_references(meta.job_id, ReferenceIndex())
     return storage, meta.job_id
 
 
@@ -78,6 +83,7 @@ class TestToolDefinitions:
             "propose_named_range_fix",
             "propose_fixed_ref_replace",
             "propose_range_expansion",
+            "propose_cell_text_edits",
         }
 
     def test_build_returns_list(self) -> None:
@@ -121,6 +127,62 @@ class TestExecuteGetCellsRange:
             )
         )
         assert "error" in result
+
+
+class TestExecuteProposeCellTextEdits:
+    def test_returns_officecli_safe_plan(self, job_with_cells: tuple[Storage, str]) -> None:
+        """空セルへの説明追加をOfficeCLI向け未適用計画として返す."""
+
+        storage, job_id = job_with_cells
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_cell_text_edits",
+                {
+                    "edits": [
+                        {
+                            "sheet": "Portfolio",
+                            "coord": "F1",
+                            "value": "評価損益の見方",
+                        }
+                    ]
+                },
+            )
+        )
+
+        safe_plan = result["safe_plan"]
+        assert safe_plan["plan"]["requested_provider"] == "officecli"
+        assert safe_plan["plan"]["operation"]["kind"] == "cell_text_batch"
+        assert safe_plan["expected_diff"]["cells"][0]["coord"] == "F1"
+        assert safe_plan["expected_diff"]["cells"][0]["after_value"] == "評価損益の見方"
+
+    def test_rejects_overwriting_existing_cell(
+        self,
+        job_with_cells: tuple[Storage, str],
+    ) -> None:
+        """既存値の上書きは提案段階で拒否する."""
+
+        storage, job_id = job_with_cells
+        result = json.loads(
+            execute_tool_call(
+                storage,
+                job_id,
+                "propose_cell_text_edits",
+                {
+                    "edits": [
+                        {
+                            "sheet": "Portfolio",
+                            "coord": "A1",
+                            "value": "上書き",
+                        }
+                    ]
+                },
+            )
+        )
+
+        assert "error" in result
+        assert "not empty" in result["error"]
 
 
 class TestExecuteFindCells:

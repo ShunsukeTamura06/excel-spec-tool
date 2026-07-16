@@ -17,6 +17,7 @@ LLM に渡す `tools` 配列を取得、`execute_tool_call()` で実行する。
 - propose_named_range_fix: 名前定義修正の影響を試算する (read-only)
 - propose_fixed_ref_replace: 数式内の固定参照置換の影響を試算する (read-only)
 - propose_range_expansion: 数式の参照範囲拡張の影響を試算する (read-only)
+- propose_cell_text_edits: 空セルへの固定テキスト追加を試算する (read-only)
 """
 
 from __future__ import annotations
@@ -27,10 +28,12 @@ import os
 from collections import Counter
 from typing import Any
 
+from backend.cell_text_plan import build_cell_text_safe_plan
 from backend.storage import JobNotFoundError, Storage
 from core.exceptions import FormulaFixError, NamedRangeFixError
 from core.external_functions import get_function, list_functions
 from core.formula_fix import propose_fixed_ref_replace, propose_range_expansion
+from core.mutation import CellTextEdit
 from core.named_range_fix import propose_named_range_fix
 from core.reference_index import find_overlapping
 
@@ -421,6 +424,50 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_cell_text_edits",
+            "description": (
+                "現在空欄のセルへ固定テキストを追加する変更計画を試算する。"
+                "説明列、注記、見出し等を追加したい依頼で使う。"
+                "呼び出す前に get_cells_range で対象セルが空欄であることと、"
+                "周辺の項目名・数式を確認すること。既存値や数式の上書きは拒否される。"
+                "このtoolはファイルを変更しない。結果に含まれる変更カードのボタンを"
+                "ユーザーが押した時だけ、OfficeCLIで修正版コピーを生成する。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "description": "空セルへ追加する固定テキスト一覧。",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "sheet": {
+                                    "type": "string",
+                                    "description": "対象シート名。",
+                                },
+                                "coord": {
+                                    "type": "string",
+                                    "description": "対象セル番地。例: C3",
+                                },
+                                "value": {
+                                    "type": "string",
+                                    "description": "追加する固定テキスト。",
+                                },
+                            },
+                            "required": ["sheet", "coord", "value"],
+                        },
+                    }
+                },
+                "required": ["edits"],
+            },
+        },
+    },
 ]
 
 
@@ -472,6 +519,8 @@ def execute_tool_call(
             result = _exec_propose_fixed_ref_replace(storage, job_id, arguments)
         elif name == "propose_range_expansion":
             result = _exec_propose_range_expansion(storage, job_id, arguments)
+        elif name == "propose_cell_text_edits":
+            result = _exec_propose_cell_text_edits(storage, job_id, arguments)
         else:
             return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001 - tool ループは壊さない
@@ -903,4 +952,31 @@ def _exec_propose_range_expansion(storage: Storage, job_id: str, args: dict[str,
         raise ToolExecutionError("old_range and new_range are required")
     return _exec_propose_formula_fix(
         storage, job_id, str(old_range), str(new_range), "range_expansion"
+    )
+
+
+def _exec_propose_cell_text_edits(
+    storage: Storage,
+    job_id: str,
+    args: dict[str, Any],
+) -> str:
+    """空セルへの固定テキスト追加を検証し、未適用の変更計画を返す."""
+
+    raw_edits = args.get("edits")
+    if not isinstance(raw_edits, list) or not raw_edits:
+        raise ToolExecutionError("edits must be a non-empty array")
+    try:
+        edits = [CellTextEdit.model_validate(item) for item in raw_edits]
+        safe_plan = build_cell_text_safe_plan(storage, job_id, edits)
+    except (ValueError, FileNotFoundError, JobNotFoundError) as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    return json.dumps(
+        {
+            "safe_plan": safe_plan.model_dump(mode="json", by_alias=True),
+            "note": (
+                "これは試算結果であり、ファイルはまだ変更されていない。"
+                "ユーザーが画面のボタンで確定した場合だけOfficeCLIが修正版コピーを作る。"
+            ),
+        },
+        ensure_ascii=False,
     )

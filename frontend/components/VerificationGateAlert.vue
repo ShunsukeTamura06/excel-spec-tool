@@ -16,7 +16,7 @@ const presentation = computed(() => {
       title: '構造検証に合格',
       description:
         `${props.report.expected_change_count}件の予定変更と実差分が一致しました。` +
-        `新しいジョブ (${props.newJobId}) を作成しました。`,
+        '原本を残して修正版を作成しました。',
     }
   }
   if (props.report.status === 'needs_review') {
@@ -26,7 +26,7 @@ const presentation = computed(() => {
       title: '適用済み・確認が必要',
       description:
         `${props.report.warnings.join(' ')} ` +
-        `新しいジョブ (${props.newJobId}) の差分を確認してください。`,
+        '修正版の差分を確認してください。',
     }
   }
   return {

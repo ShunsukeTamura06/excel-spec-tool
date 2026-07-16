@@ -31,6 +31,7 @@ from core.workbook_diff import (
     _diff_data_validations,
     _diff_pivot_tables,
     _diff_vba_modules,
+    _same_formula_with_cache_only_change,
     build_blast_radius,
     diff_named_ranges,
     diff_workbooks,
@@ -130,6 +131,18 @@ class TestCellDiff:
         _write_xlsx(after, {"A1": 1, "B1": "hello"})
 
         assert _diff_cells(before, after) == []
+
+    def test_same_formula_cache_update_is_not_reported(self) -> None:
+        """OfficeCLIが再計算キャッシュだけを保存しても構造変更に数えない."""
+
+        assert _same_formula_with_cache_only_change(
+            (None, "=SUM(A1:A3)", "#,##0"),
+            ("6", "=SUM(A1:A3)", "#,##0"),
+        )
+        assert not _same_formula_with_cache_only_change(
+            (None, "=SUM(A1:A3)", "#,##0"),
+            ("6", "=SUM(A1:A4)", "#,##0"),
+        )
 
 
 class TestNamedRangeDiff:

@@ -23,6 +23,14 @@ const isAssistant = computed(() => props.message.role === 'assistant')
 const evidenceItems = computed<ToolTraceItem[]>(() => {
   return isAssistant.value ? props.message.tool_trace ?? [] : []
 })
+const hasActionableProposal = computed(() => evidenceItems.value.some(item =>
+  [
+    'propose_named_range_fix',
+    'propose_fixed_ref_replace',
+    'propose_range_expansion',
+    'propose_cell_text_edits',
+  ].includes(item.name),
+))
 const answerExpanded = ref(false)
 const isLongAnswer = computed(() => {
   if (!isAssistant.value) return false
@@ -189,7 +197,7 @@ async function sendVote(kind: 'thumbs_up' | 'thumbs_down') {
       <ToolTraceList
         v-if="evidenceItems.length > 0"
         :items="evidenceItems"
-        title="この回答の根拠カード"
+        :title="hasActionableProposal ? '変更内容を確認' : 'この回答の根拠カード'"
         :job-id="props.jobId"
         class="mt-2"
       />

@@ -53,7 +53,7 @@ fresh extraction and verification:
 | `diagrams.py` | Build sheet-dependency and VBA call-graph models for the frontend (Vue Flow) |
 | `workbook_diff.py` | Compare normalized workbook structures and compute blast radius |
 | `mutation.py` | Provider-independent mutation plans and the `MutationProvider` contract; includes the existing openpyxl adapter |
-| `officecli_provider.py` | Optional subprocess adapter for OfficeCLI (`.xlsx` named-range updates in the current contract) |
+| `officecli_provider.py` | Optional subprocess adapter for OfficeCLI (`.xlsx` named-range updates and fixed-text additions to empty cells in the current contract) |
 | `verification.py` | Exact expected-vs-observed structural-diff policy (`passed` / `needs_review` / `failed`) |
 | `change_record.py` | Auditable execution record containing the plan, provider result, both diffs, and policy verdict |
 | `exceptions.py` | `CoreError`, `ExtractionError`, `UnsupportedFormatError` |
@@ -98,6 +98,9 @@ guessing.
 | GET | `/mutation-providers` | Provider availability, version, extensions, and supported operations |
 | POST | `/jobs/{id}/named-range-fix` | Execute a provider-independent named-range plan and verify its output |
 | POST | `/jobs/{id}/formula-fix` | Execute a deterministic formula-reference plan and verify its output |
+| POST | `/jobs/{id}/change-plan` | Preview a general-user safe change, including empty-cell text additions |
+| POST | `/jobs/{id}/change-plan/execute` | Execute the exact displayed plan, re-extract it, and enforce the diff policy |
+| GET | `/jobs/{id}/download` | Download an original or verified revised workbook |
 | GET | `/jobs/{id}/verification` | Read the persisted mutation and verification audit record |
 
 ## Verified mutation flow

@@ -68,6 +68,7 @@ _TOOL_PROGRESS_MESSAGES = {
     "propose_named_range_fix": "名前定義修正の影響範囲を試算中",
     "propose_fixed_ref_replace": "固定参照置換の影響範囲を試算中",
     "propose_range_expansion": "数式範囲拡張の影響範囲を試算中",
+    "propose_cell_text_edits": "説明テキスト追加の変更内容を準備中",
 }
 
 
@@ -458,17 +459,24 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "    数式が参照している範囲を広げたらどの数式がどう変わるかを試算する"
         "読み取り専用ツール。データ行が増えて集計範囲が足りない、という依頼で使う。"
         "new_range は old_range と同一シートで old_range を包含すること。",
+        "- `propose_cell_text_edits(edits)`:",
+        '    例: propose_cell_text_edits([{"sheet":"Output","coord":"C3","value":"説明"}])',
+        "    現在空欄のセルへ説明、注記、見出し等の固定テキストを追加する計画を作る"
+        "読み取り専用ツール。既存値や数式の上書きは拒否される。",
         "",
-        "# 修正依頼 (名前定義・固定参照・範囲拡張) を受けたとき",
+        "# 自動適用できる修正依頼を受けたとき",
         "",
         "- ユーザーから該当パターンの修正依頼を受けたら、まず対応する propose 系ツール"
-        "(`propose_named_range_fix` / `propose_fixed_ref_replace` / `propose_range_expansion`)"
+        "(`propose_named_range_fix` / `propose_fixed_ref_replace` / `propose_range_expansion` / "
+        "`propose_cell_text_edits`)"
         "を呼び、変更される箇所・波及範囲・既存リスクを試算してから提示すること",
         "- 実際の適用は必ずユーザーが画面上のボタンで明示的に行う。"
         "あなた自身がファイルを書き換えることはできないし、してはいけない",
+        "- propose 系ツールで対応できる依頼に対して、Excelを手作業で編集する手順を"
+        "長々と案内しない。変更カードの「修正版を作る」ボタンを案内すること",
         "- 提案した内容と実際の適用結果が食い違わないよう、propose 系ツールに渡す引数は"
         "ユーザーの意図を正確に反映した値にすること",
-        "- 上記3パターンに当てはまらない修正 (VBA 変更・行列の挿入削除・複雑な数式の"
+        "- 上記パターンに当てはまらない修正 (VBA 変更・行列の挿入削除・複雑な数式の"
         "書き換え等) は自動適用できない。従来どおりコピペ完結の改修手順を提示すること",
         "",
         "確実性を優先して必要な範囲でツールを呼んでください。",
@@ -508,6 +516,61 @@ def _tool_call_to_assistant_message(resp: LLMResponse) -> dict[str, Any]:
     }
 
 
+def _requests_cell_text_change(messages: list[dict[str, Any]]) -> bool:
+    """最新の依頼が空セルへの説明追加として扱える可能性が高いか判定する."""
+
+    user_message = next(
+        (
+            str(message.get("content", ""))
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        ),
+        "",
+    ).lower()
+    text_terms = ("説明", "注記", "見出し", "description", "note", "header")
+    action_terms = ("追加", "入れ", "加え", "書き", "作り", "設け", "add", "insert")
+    return any(term in user_message for term in text_terms) and any(
+        term in user_message for term in action_terms
+    )
+
+
+def _needs_cell_text_tool_retry(
+    messages: list[dict[str, Any]],
+    tool_trace: list[dict[str, Any]],
+    retry_count: int,
+) -> bool:
+    """対応可能な説明追加依頼で、変更カード未作成なら最大2回再誘導する."""
+
+    return (
+        retry_count < 2
+        and _requests_cell_text_change(messages)
+        and not any(item.get("name") == "propose_cell_text_edits" for item in tool_trace)
+    )
+
+
+def _final_reply_for_tool_trace(
+    content: str,
+    tool_trace: list[dict[str, Any]],
+) -> str:
+    """操作カードが主役の応答は、LLMの長文を短い操作案内へ置き換える."""
+
+    cell_text_item = next(
+        (item for item in tool_trace if item.get("name") == "propose_cell_text_edits"),
+        None,
+    )
+    if cell_text_item is None:
+        return content
+    result = cell_text_item.get("result")
+    safe_plan = result.get("safe_plan") if isinstance(result, dict) else None
+    summary = safe_plan.get("summary") if isinstance(safe_plan, dict) else None
+    lead = str(summary) if summary else "説明テキストの追加案を作りました。"
+    return (
+        f"{lead}\n\n"
+        "下の「変更内容を確認」で内容を見て、「修正版を作る」を押してください。"
+        "原本は変更されません。"
+    )
+
+
 def _run_tool_loop(
     llm: LLMClient,
     storage: Storage,
@@ -534,6 +597,7 @@ def _run_tool_loop(
     total_usage = Usage()
     tool_result_cache: dict[str, str] = {}
     repeat_counts: dict[str, int] = {}
+    cell_text_retry_count = 0
 
     for iteration in range(MAX_TOOL_ITERATIONS):
         _emit_progress(
@@ -572,18 +636,38 @@ def _run_tool_loop(
             )
 
         if not resp.tool_calls:
+            if _needs_cell_text_tool_retry(messages, tool_trace, cell_text_retry_count):
+                cell_text_retry_count += 1
+                logger.info("retrying supported cell text request with explicit tool guidance")
+                if resp.content:
+                    messages.append({"role": "assistant", "content": resp.content})
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "この依頼は空セルへの説明テキスト追加として自動対応できます。"
+                            "手作業のExcel操作手順を最終回答にしないでください。"
+                            "対象セルをまだ確認していなければ get_cells_range を呼び、"
+                            "確認済みなら既存値や数式を上書きしない edits を組み立てて、"
+                            "必ず propose_cell_text_edits を呼んで変更カードを作成してください。"
+                            "列の挿入や書式変更は提案せず、現在空欄のセルへの値追加だけに限定します。"
+                        ),
+                    }
+                )
+                continue
+            reply = _final_reply_for_tool_trace(resp.content or "", tool_trace)
             logger.info(
                 "llm final response: iterations=%d tool_calls_total=%d reply_chars=%d "
                 "cumulative_prompt=%d completion=%d total=%d cached=%d",
                 iteration + 1,
                 len(tool_trace),
-                len(resp.content or ""),
+                len(reply),
                 total_usage.prompt_tokens,
                 total_usage.completion_tokens,
                 total_usage.total_tokens,
                 total_usage.cached_tokens,
             )
-            return (resp.content or "", tool_trace)
+            return (reply, tool_trace)
 
         # tool 呼び出しを実行し、結果を tool role メッセージで追加
         messages.append(_tool_call_to_assistant_message(resp))

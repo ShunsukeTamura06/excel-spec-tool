@@ -1,7 +1,9 @@
-"""安全パターンの自動修正を実ファイルに適用し、新ジョブを作って自己検証する (S2 増分1)。
+"""安全パターンの自動修正を実ファイルに適用し、新ジョブを作って自己検証する。
 
 - POST /jobs/{job_id}/named-range-fix — 名前定義修正
 - POST /jobs/{job_id}/formula-fix — 固定参照置換 / 数式範囲拡張
+- POST /jobs/{job_id}/change-plan — 一般ユーザー向けの適用前計画
+- POST /jobs/{job_id}/change-plan/execute — 確認済み計画の適用
 
 いずれも人間が画面のボタンを押した時だけ呼ばれる。LLM の tool loop からは呼ばれない
 (黙って変更しない、docs/VISION.ja.md §4.2)。
@@ -15,8 +17,9 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from backend.cell_text_plan import build_cell_text_safe_plan
 from backend.dependencies import get_storage
 from backend.routes.extract import _run_extraction
 from backend.storage import JobNotFoundError, Storage
@@ -32,6 +35,8 @@ from core.exceptions import (
 )
 from core.models import ReferenceIndex, Workbook, WorkbookDiff
 from core.mutation import (
+    CellTextBatchOperation,
+    CellTextEdit,
     FixedRefReplaceOperation,
     MutationPlan,
     MutationProvider,
@@ -72,9 +77,10 @@ class FormulaFixRequest(BaseModel):
 class ChangePlanRequest(BaseModel):
     """一般ユーザー向け変更計画のリクエストボディ."""
 
-    kind: Literal["range_expansion"]
-    old_ref: str
-    new_ref: str
+    kind: Literal["range_expansion", "cell_text_batch"]
+    old_ref: str | None = None
+    new_ref: str | None = None
+    edits: list[CellTextEdit] = Field(default_factory=list, max_length=50)
 
 
 class ExecuteChangePlanRequest(BaseModel):
@@ -271,17 +277,30 @@ async def create_change_plan(
     body: ChangePlanRequest,
     storage: Storage = Depends(get_storage),
 ) -> SafeChangePlan:
-    """原本を書き換えず、適用前に確認する範囲拡張計画を作る."""
+    """原本を書き換えず、適用前に確認する変更計画を作る."""
 
-    before_wb, _, before_index, _ = _load_before(storage, job_id)
-    plan = MutationPlan(
-        source_job_id=job_id,
-        requested_provider="openpyxl",
-        operation=RangeExpansionOperation(old_ref=body.old_ref, new_ref=body.new_ref),
-    )
     try:
+        if body.kind == "cell_text_batch":
+            if not body.edits:
+                raise ValueError("cell text edits must not be empty")
+            return build_cell_text_safe_plan(storage, job_id, body.edits)
+        if not body.old_ref or not body.new_ref:
+            raise ValueError("old_ref and new_ref are required for range expansion")
+        before_wb, _, before_index, _ = _load_before(storage, job_id)
+        plan = MutationPlan(
+            source_job_id=job_id,
+            requested_provider="openpyxl",
+            operation=RangeExpansionOperation(old_ref=body.old_ref, new_ref=body.new_ref),
+        )
         return build_safe_change_plan(plan, before_wb, before_index)
-    except FormulaFixError as exc:
+    except JobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"job not found: {exc}") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"workbook not extracted yet; call /extract first: {exc}",
+        ) from exc
+    except (FormulaFixError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"change plan failed: {exc}") from exc
 
 
@@ -296,15 +315,33 @@ async def execute_change_plan(
     plan = body.plan
     if plan.source_job_id != job_id:
         raise HTTPException(status_code=400, detail="plan source_job_id does not match URL job_id")
-    if plan.requested_provider != "openpyxl":
+    if isinstance(plan.operation, RangeExpansionOperation):
+        if plan.requested_provider != "openpyxl":
+            raise HTTPException(
+                status_code=422,
+                detail="range expansion requires the openpyxl provider",
+            )
+    elif isinstance(plan.operation, CellTextBatchOperation):
+        if plan.requested_provider != "officecli":
+            raise HTTPException(
+                status_code=422,
+                detail="cell text changes require the OfficeCLI provider",
+            )
+        try:
+            build_cell_text_safe_plan(storage, job_id, plan.operation.edits)
+        except JobNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"job not found: {exc}") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"workbook not extracted yet; call /extract first: {exc}",
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"change execution failed: {exc}") from exc
+    else:
         raise HTTPException(
             status_code=422,
-            detail="general-user change plans currently support only the openpyxl provider",
-        )
-    if not isinstance(plan.operation, RangeExpansionOperation):
-        raise HTTPException(
-            status_code=422,
-            detail="general-user change plans currently support only range expansion",
+            detail="general-user change plan operation is not supported",
         )
 
     before_wb, before_path, before_index, filename = _load_before(storage, job_id)

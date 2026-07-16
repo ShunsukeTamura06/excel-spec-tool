@@ -128,7 +128,7 @@ def _diff_cells(before_path: Path, after_path: Path) -> list[CellDiff]:
     for key in before_cells.keys() | after_cells.keys():
         before_v = before_cells.get(key)
         after_v = after_cells.get(key)
-        if before_v == after_v:
+        if before_v == after_v or _same_formula_with_cache_only_change(before_v, after_v):
             continue
 
         change_type: ChangeType
@@ -156,6 +156,23 @@ def _diff_cells(before_path: Path, after_path: Path) -> list[CellDiff]:
             )
         )
     return sorted(diffs, key=lambda d: (d.sheet, d.coord))
+
+
+def _same_formula_with_cache_only_change(
+    before: _CellValue | None,
+    after: _CellValue | None,
+) -> bool:
+    """同一数式の再計算キャッシュだけが変わった場合は保存ノイズとして扱う."""
+
+    if before is None or after is None:
+        return False
+    _, before_formula, before_number_format = before
+    _, after_formula, after_number_format = after
+    return (
+        before_formula is not None
+        and before_formula == after_formula
+        and before_number_format == after_number_format
+    )
 
 
 def diff_named_ranges(before_wb: Workbook, after_wb: Workbook) -> list[NamedRangeDiff]:
