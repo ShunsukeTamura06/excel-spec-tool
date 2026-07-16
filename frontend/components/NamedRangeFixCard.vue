@@ -7,7 +7,12 @@
  * (docs/VISION.ja.md §4.2「黙って変更しない」— LLM 自身はここを呼べない)。
  */
 
-import type { NamedRangeDiffItem, ToolTraceItem, WorkbookDiffData } from '~/types/api'
+import type {
+  NamedRangeDiffItem,
+  ToolTraceItem,
+  VerificationReportData,
+  WorkbookDiffData,
+} from '~/types/api'
 
 const props = defineProps<{
   item: ToolTraceItem
@@ -31,7 +36,11 @@ const namedRangeChange = computed<NamedRangeDiffItem | undefined>(
 
 const pending = ref(false)
 const errorMsg = ref<string | null>(null)
-const applyResult = ref<{ newJobId: string; diff: WorkbookDiffData } | null>(null)
+const applyResult = ref<{
+  newJobId: string
+  diff: WorkbookDiffData
+  verification: VerificationReportData
+} | null>(null)
 
 async function apply() {
   const name = args.value.name
@@ -45,7 +54,11 @@ async function apply() {
       name,
       new_refers_to: newRefersTo,
     })
-    applyResult.value = { newJobId: res.new_job_id, diff: res.diff }
+    applyResult.value = {
+      newJobId: res.new_job_id,
+      diff: res.diff,
+      verification: res.verification,
+    }
     await jobStore.refreshJobs()
   } catch (e) {
     errorMsg.value = friendlyMessage(e)
@@ -97,12 +110,9 @@ async function apply() {
     />
 
     <div v-if="applyResult" class="space-y-2">
-      <UAlert
-        color="success"
-        variant="subtle"
-        icon="i-lucide-check-circle-2"
-        title="適用完了"
-        :description="`新しいジョブ (${applyResult.newJobId}) を作成しました。以下が自己検証の結果です。`"
+      <VerificationGateAlert
+        :report="applyResult.verification"
+        :new-job-id="applyResult.newJobId"
       />
       <WorkbookDiffView :diff="applyResult.diff" />
     </div>

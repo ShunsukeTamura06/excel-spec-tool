@@ -1,0 +1,212 @@
+"""変更計画と変更プロバイダーの共通境界.
+
+変更を作る実装と、変更後を検証する xlblueprint の責務を分離する。変更計画は
+プロバイダー非依存で表現し、既存の openpyxl 実装や外部 CLI を同じ契約で扱う。
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Annotated, Literal, Protocol
+
+from pydantic import BaseModel, Field
+
+from core.exceptions import UnsupportedMutationError
+from core.formula_fix import (
+    apply_fixed_ref_replace,
+    apply_range_expansion,
+    propose_fixed_ref_replace,
+    propose_range_expansion,
+)
+from core.models import ReferenceIndex, Workbook, WorkbookDiff
+from core.named_range_fix import apply_named_range_fix, propose_named_range_fix
+
+MutationKind = Literal["named_range_set", "fixed_ref_replace", "range_expansion"]
+ProviderName = Literal["openpyxl", "officecli"]
+
+
+def _utc_now_iso() -> str:
+    """現在時刻をUTCのISO 8601文字列で返す."""
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+class NamedRangeSetOperation(BaseModel):
+    """ワークブックスコープの名前定義を変更する操作."""
+
+    kind: Literal["named_range_set"] = "named_range_set"
+    name: str
+    new_refers_to: str
+
+
+class FixedRefReplaceOperation(BaseModel):
+    """数式内の固定参照を別の参照へ置換する操作."""
+
+    kind: Literal["fixed_ref_replace"] = "fixed_ref_replace"
+    old_ref: str
+    new_ref: str
+
+
+class RangeExpansionOperation(BaseModel):
+    """数式内の参照範囲を包含関係を保って拡張する操作."""
+
+    kind: Literal["range_expansion"] = "range_expansion"
+    old_ref: str
+    new_ref: str
+
+
+MutationOperation = Annotated[
+    NamedRangeSetOperation | FixedRefReplaceOperation | RangeExpansionOperation,
+    Field(discriminator="kind"),
+]
+
+
+class MutationPlan(BaseModel):
+    """監査可能な、プロバイダー非依存の変更計画."""
+
+    plan_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: str = Field(default_factory=_utc_now_iso)
+    source_job_id: str
+    requested_provider: ProviderName = "openpyxl"
+    operation: MutationOperation
+
+
+class ProviderCapability(BaseModel):
+    """変更プロバイダーが現在提供できる機能."""
+
+    name: ProviderName
+    available: bool
+    version: str | None = None
+    supported_extensions: list[str] = Field(default_factory=list)
+    supported_operations: list[MutationKind] = Field(default_factory=list)
+    unavailable_reason: str | None = None
+
+
+class MutationResult(BaseModel):
+    """変更プロバイダーによる適用結果の監査用メタデータ."""
+
+    provider: ProviderName
+    provider_version: str | None = None
+    operation: MutationKind
+    changed_count: int
+
+
+class MutationProvider(Protocol):
+    """元ファイルを変更せず、別ファイルへ変更結果を書き出す契約."""
+
+    def capability(self) -> ProviderCapability:
+        """現在の利用可否と対応範囲を返す."""
+
+    def apply(self, plan: MutationPlan, source_path: Path, out_path: Path) -> MutationResult:
+        """planをsourceへ適用し、結果をout_pathへ書き出す."""
+
+
+def propose_mutation(
+    plan: MutationPlan,
+    before_wb: Workbook,
+    before_index: ReferenceIndex,
+) -> WorkbookDiff:
+    """変更計画をファイルへ書き込まず、期待される構造差分を計算する.
+
+    Args:
+        plan: 実行予定の変更計画。
+        before_wb: 変更前の抽出済みワークブック。
+        before_index: 変更前の逆参照インデックス。
+
+    Returns:
+        policy gateで実差分と照合する期待差分。
+    """
+
+    operation = plan.operation
+    if isinstance(operation, NamedRangeSetOperation):
+        return propose_named_range_fix(
+            before_wb,
+            before_index,
+            operation.name,
+            operation.new_refers_to,
+        )
+    if isinstance(operation, FixedRefReplaceOperation):
+        return propose_fixed_ref_replace(
+            before_wb,
+            before_index,
+            operation.old_ref,
+            operation.new_ref,
+        )
+    return propose_range_expansion(
+        before_wb,
+        before_index,
+        operation.old_ref,
+        operation.new_ref,
+    )
+
+
+class OpenPyxlMutationProvider:
+    """既存の限定安全修正を共通契約へ接続するプロバイダー."""
+
+    _VERSION = "openpyxl-adapter-v1"
+
+    def capability(self) -> ProviderCapability:
+        """openpyxlプロバイダーの対応範囲を返す."""
+
+        return ProviderCapability(
+            name="openpyxl",
+            available=True,
+            version=self._VERSION,
+            supported_extensions=[".xlsx", ".xlsm"],
+            supported_operations=["named_range_set", "fixed_ref_replace", "range_expansion"],
+        )
+
+    def apply(self, plan: MutationPlan, source_path: Path, out_path: Path) -> MutationResult:
+        """既存の決定的な修正関数で変更計画を適用する.
+
+        Args:
+            plan: 適用する変更計画。
+            source_path: 変更しない元ファイル。
+            out_path: 変更後ファイルの出力先。
+
+        Returns:
+            適用件数を含む結果。
+
+        Raises:
+            UnsupportedMutationError: 対応外の拡張子が指定された場合。
+        """
+
+        suffix = source_path.suffix.lower()
+        if suffix not in {".xlsx", ".xlsm"}:
+            raise UnsupportedMutationError(f"openpyxl provider does not support {suffix}")
+
+        operation = plan.operation
+        changed_count: int
+        if isinstance(operation, NamedRangeSetOperation):
+            apply_named_range_fix(
+                source_path,
+                operation.name,
+                operation.new_refers_to,
+                out_path,
+            )
+            changed_count = 1
+        elif isinstance(operation, FixedRefReplaceOperation):
+            changed_count = apply_fixed_ref_replace(
+                source_path,
+                operation.old_ref,
+                operation.new_ref,
+                out_path,
+            )
+        elif isinstance(operation, RangeExpansionOperation):
+            changed_count = apply_range_expansion(
+                source_path,
+                operation.old_ref,
+                operation.new_ref,
+                out_path,
+            )
+        else:  # pragma: no cover - Pydanticのdiscriminated unionが防ぐ防御分岐
+            raise UnsupportedMutationError(f"unsupported operation: {operation!r}")
+
+        return MutationResult(
+            provider="openpyxl",
+            provider_version=self._VERSION,
+            operation=operation.kind,
+            changed_count=changed_count,
+        )

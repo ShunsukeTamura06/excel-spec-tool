@@ -346,14 +346,44 @@ export interface WorkbookDiffData {
   existing_risks: AnalysisRiskItem[]
 }
 
+export type MutationProviderName = 'openpyxl' | 'officecli'
+export type VerificationStatus = 'passed' | 'needs_review' | 'failed'
+
+export interface VerificationViolationData {
+  code: 'missing_expected_change' | 'unexpected_change' | 'mismatched_change'
+  section: string
+  key: string
+  message: string
+}
+
+export interface VerificationReportData {
+  status: VerificationStatus
+  policy_id: string
+  expected_change_count: number
+  actual_change_count: number
+  violations: VerificationViolationData[]
+  warnings: string[]
+}
+
+export interface MutationProviderResultData {
+  provider: MutationProviderName
+  provider_version: string | null
+  operation: 'named_range_set' | 'fixed_ref_replace' | 'range_expansion'
+  changed_count: number
+}
+
 export interface NamedRangeFixRequest {
   name: string
   new_refers_to: string
+  provider?: MutationProviderName
 }
 
 export interface NamedRangeFixResponse {
   new_job_id: string
   diff: WorkbookDiffData
+  verification: VerificationReportData
+  plan: Record<string, unknown>
+  provider: MutationProviderResultData
 }
 
 export type FormulaFixKind = 'fixed_ref_replace' | 'range_expansion'
@@ -362,11 +392,15 @@ export interface FormulaFixRequest {
   kind: FormulaFixKind
   old_ref: string
   new_ref: string
+  provider?: MutationProviderName
 }
 
 export interface FormulaFixResponse {
   new_job_id: string
   diff: WorkbookDiffData
+  verification: VerificationReportData
+  plan: Record<string, unknown>
+  provider: MutationProviderResultData
 }
 
 // ---------- external functions ----------

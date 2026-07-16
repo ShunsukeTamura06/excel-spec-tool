@@ -89,8 +89,15 @@ for legacy `.xlsm` modernization.**
   redefinition, fixed-reference replacement, formula range expansion.
   The LLM can only *propose* (read-only impact estimate); applying
   requires an explicit button click, writes to a **new job** (the
-  original file is never modified), and self-verifies with the
-  structural diff
+  original file is never modified), and passes the result through an
+  **exact structural-diff policy gate**. Every execution stores the
+  provider, mutation plan, expected diff, observed diff, and verdict
+  (`passed` / `needs_review` / `failed`) as an audit record
+- **Pluggable mutation providers** separate the component that edits a
+  workbook from xlblueprint's understanding and verification. The built-in
+  openpyxl provider supports all three patterns. An optional OfficeCLI
+  process adapter currently supports `.xlsx` named-range updates; OfficeCLI
+  is not a required dependency and is never treated as the proof of safety
 
 ### Frontend (Nuxt 3 SPA, dark theme)
 - **Insight dashboard**: TL;DR + input/output sheet candidates +
@@ -106,7 +113,7 @@ for legacy `.xlsm` modernization.**
 - **No data leaves your network**: LLM goes through whatever
   OpenAI-compatible endpoint you configure (Ollama, vLLM,
   self-hosted gateway, OpenAI, etc.)
-- **617 tests** (pytest), `mypy --strict` on `core/`, `ruff` clean
+- **637 tests** (pytest), `mypy --strict` on `core/`, `ruff` clean
 
 ## Quick start
 
@@ -161,6 +168,8 @@ Frontend (Nuxt 3 SPA, TypeScript)        Backend (FastAPI)
                                          ├── reference_index
                                          ├── risk_analyzer
                                          ├── external_functions registry
+                                         ├── mutation plan / provider boundary
+                                         ├── exact structural-diff verification
                                          ├── spec_generator (Markdown + Mermaid)
                                          └── diagrams (sheet / VBA graph)
 ```
@@ -199,6 +208,7 @@ and [docs/SPEC.ja.md](./docs/SPEC.ja.md) (full Japanese spec).
 | `CORS_ALLOW_ORIGINS` | localhost:3001,3000 | Comma-separated origin list |
 | `CHAT_HISTORY_LIMIT_PAIRS` | `10` | How many recent user/assistant pairs to keep in LLM context |
 | `MAX_UPLOAD_BYTES` | `52428800` (50 MB) | Upload size cap |
+| `OFFICECLI_BIN` | PATH lookup | Optional OfficeCLI executable used by the mutation-provider adapter |
 | `NUXT_PUBLIC_BACKEND_URL` | `http://localhost:8001` | Backend URL the SPA hits |
 | `NUXT_PORT` | `3001` | Frontend dev server port |
 
@@ -230,7 +240,7 @@ uv run uvicorn backend.main:app --port 8001
 ## Project status
 
 - **0.1.x — Beta.** Core extraction is stable and well tested
-  (617 tests, `mypy --strict` on `core/`). LLM-side prompts and UI
+  (637 tests, `mypy --strict` on `core/`). LLM-side prompts and UI
   layout are still iterating.
 - **Maintained by**: Shunsuke Tamura ([@ShunsukeTamura06](https://github.com/ShunsukeTamura06)),
   solo, in open development. Issues and PRs are welcome (Japanese or English).

@@ -20,6 +20,7 @@ from openpyxl.workbook.defined_name import DefinedName
 
 from core.exceptions import NamedRangeFixError
 from core.models import ReferenceIndex, Workbook, WorkbookDiff
+from core.openpyxl_utils import close_workbook
 from core.workbook_diff import build_blast_radius, diff_named_ranges
 
 
@@ -94,12 +95,15 @@ def apply_named_range_fix(
     except Exception as exc:  # noqa: BLE001 - 失敗内容こそ診断材料
         raise NamedRangeFixError(f"failed to open workbook: {file_path}: {exc}") from exc
 
-    if name not in wb.defined_names:
-        raise NamedRangeFixError(f"named range not found in {file_path}: {name}")
-
-    wb.defined_names[name] = DefinedName(name=name, attr_text=new_refers_to)
-
     try:
+        if name not in wb.defined_names:
+            raise NamedRangeFixError(f"named range not found in {file_path}: {name}")
+
+        wb.defined_names[name] = DefinedName(name=name, attr_text=new_refers_to)
         wb.save(out_path)
+    except NamedRangeFixError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise NamedRangeFixError(f"failed to save workbook: {out_path}: {exc}") from exc
+    finally:
+        close_workbook(wb)

@@ -28,6 +28,7 @@ from openpyxl.utils.cell import range_boundaries
 
 from core.exceptions import FormulaFixError
 from core.models import CellDiff, ReferenceIndex, Workbook, WorkbookDiff
+from core.openpyxl_utils import close_workbook
 from core.workbook_diff import build_blast_radius
 
 logger = logging.getLogger(__name__)
@@ -275,30 +276,34 @@ def _apply(
     except Exception as exc:  # noqa: BLE001 - 失敗内容こそ診断材料
         raise FormulaFixError(f"failed to open workbook: {file_path}: {exc}") from exc
 
-    replaced = 0
-    for ws in wb.worksheets:
-        for row in ws.iter_rows():
-            for cell in row:
-                value = cell.value
-                # ArrayFormula 等の非文字列数式は対象外 (propose 側も同様にスキップされる)
-                if not isinstance(value, str) or not value.startswith("="):
-                    continue
-                new_formula = _replace_refs_in_formula(
-                    value, ws.title, old_key, new_sheet, new_cell
-                )
-                if new_formula is None:
-                    continue
-                cell.value = new_formula
-                replaced += 1
-
-    if replaced == 0:
-        raise FormulaFixError(f"no formulas reference {old_ref} in {file_path}")
-
     try:
+        replaced = 0
+        for ws in wb.worksheets:
+            for row in ws.iter_rows():
+                for cell in row:
+                    value = cell.value
+                    # ArrayFormula 等の非文字列数式は対象外 (propose 側も同様にスキップされる)
+                    if not isinstance(value, str) or not value.startswith("="):
+                        continue
+                    new_formula = _replace_refs_in_formula(
+                        value, ws.title, old_key, new_sheet, new_cell
+                    )
+                    if new_formula is None:
+                        continue
+                    cell.value = new_formula
+                    replaced += 1
+
+        if replaced == 0:
+            raise FormulaFixError(f"no formulas reference {old_ref} in {file_path}")
+
         wb.save(out_path)
+        return replaced
+    except FormulaFixError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise FormulaFixError(f"failed to save workbook: {out_path}: {exc}") from exc
-    return replaced
+    finally:
+        close_workbook(wb)
 
 
 def apply_fixed_ref_replace(

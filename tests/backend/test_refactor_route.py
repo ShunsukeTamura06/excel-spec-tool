@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import io
 import uuid
+from pathlib import Path
 
 import openpyxl
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl.workbook.defined_name import DefinedName
 
 from backend.storage import Storage
 from core.extractors.workbook import extract_workbook
+from core.mutation import MutationPlan, MutationResult, NamedRangeSetOperation
 from core.reference_index import build_reference_index
 
 
@@ -34,7 +37,9 @@ def _xlsx_bytes_with_named_range(
     wb.defined_names[name] = DefinedName(name=name, attr_text=refers_to)
     buf = io.BytesIO()
     wb.save(buf)
-    return buf.getvalue()
+    data = buf.getvalue()
+    wb.close()
+    return data
 
 
 def _seed_extracted_job(storage: Storage, data: bytes, filename: str = "x.xlsx") -> str:
@@ -66,12 +71,82 @@ class TestNamedRangeFixRoute:
         assert new_job_id != job_id
 
         diff = body["diff"]
+        assert body["verification"]["status"] == "passed"
+        assert body["provider"]["provider"] == "openpyxl"
         assert len(diff["named_ranges"]) == 1
         nr = diff["named_ranges"][0]
         assert nr["name"] == "TaxRate"
         assert nr["change_type"] == "modified"
         assert nr["before_refers_to"] == "Data!$A$1"
         assert nr["after_refers_to"] == "Data!$B$1"
+
+        audit = client.get(f"/jobs/{new_job_id}/verification")
+        assert audit.status_code == 200
+        record = audit.json()["verification_record"]
+        assert record["source_job_id"] == job_id
+        assert record["result_job_id"] == new_job_id
+        assert record["source_file_sha256"] == backend_storage.get_meta(job_id).file_sha256
+        assert record["result_file_sha256"] == backend_storage.get_meta(new_job_id).file_sha256
+        assert record["source_file_sha256"] != record["result_file_sha256"]
+        assert record["verification"]["status"] == "passed"
+
+    def test_policy_rejects_unplanned_provider_change(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """プロバイダーが予定外セルも変更した場合は監査保存して409にする."""
+
+        class UnexpectedChangeProvider:
+            """名前定義に加えて予定外セルを変更する故障プロバイダー."""
+
+            def apply(
+                self,
+                plan: MutationPlan,
+                source_path: Path,
+                out_path: Path,
+            ) -> MutationResult:
+                """計画した変更と予定外変更を同時に書き込む."""
+
+                operation = plan.operation
+                assert isinstance(operation, NamedRangeSetOperation)
+                wb = openpyxl.load_workbook(source_path)
+                try:
+                    wb.defined_names[operation.name].attr_text = operation.new_refers_to
+                    wb["Data"]["Z99"] = "unexpected"
+                    wb.save(out_path)
+                finally:
+                    wb.close()
+                return MutationResult(
+                    provider="openpyxl",
+                    provider_version="fault-injection",
+                    operation="named_range_set",
+                    changed_count=2,
+                )
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_named_range())
+        monkeypatch.setattr(
+            "backend.routes.refactor._provider_for",
+            lambda _: UnexpectedChangeProvider(),
+        )
+
+        response = client.post(
+            f"/jobs/{job_id}/named-range-fix",
+            json={"name": "TaxRate", "new_refers_to": "Data!$B$1"},
+        )
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["verification"]["status"] == "failed"
+        assert any(
+            item["code"] == "unexpected_change" for item in detail["verification"]["violations"]
+        )
+        rejected_job_id = detail["new_job_id"]
+        assert backend_storage.get_meta(rejected_job_id).status == "failed"
+        audit = client.get(f"/jobs/{rejected_job_id}/verification")
+        assert audit.status_code == 200
+        assert audit.json()["verification_record"]["verification"]["status"] == "failed"
 
     def test_new_job_diff_matches_get_diff_endpoint(
         self, client: TestClient, backend_storage: Storage
@@ -105,6 +180,7 @@ class TestNamedRangeFixRoute:
         # 参照有無はビルドされた ReferenceIndex の正規化に依存するため、
         # ここでは応答が正しく構造化されていることだけを確認する。
         assert isinstance(r.json()["diff"]["blast_radius"], list)
+        assert r.json()["verification"]["status"] == "needs_review"
 
     def test_422_unknown_name(self, client: TestClient, backend_storage: Storage) -> None:
         job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_named_range())
@@ -143,7 +219,9 @@ def _xlsx_bytes_with_formulas() -> bytes:
     ws["C2"] = "=SUM(A1:A100)"
     buf = io.BytesIO()
     wb.save(buf)
-    return buf.getvalue()
+    data = buf.getvalue()
+    wb.close()
+    return data
 
 
 class TestFormulaFixRoute:
@@ -165,11 +243,13 @@ class TestFormulaFixRoute:
         changed = [c for c in body["diff"]["cells"] if c["coord"] == "C1"]
         assert len(changed) == 1
         assert changed[0]["after_formula"] == "=$B$6*2"
+        assert body["verification"]["status"] == "passed"
 
         # 新ジョブの実ファイルにも書き込まれている
         new_path = backend_storage.get_original_path(new_job_id)
         wb = openpyxl.load_workbook(new_path)
         assert wb["Data"]["C1"].value == "=$B$6*2"
+        wb.close()
 
     def test_range_expansion_applies(self, client: TestClient, backend_storage: Storage) -> None:
         job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
@@ -187,6 +267,7 @@ class TestFormulaFixRoute:
         new_path = backend_storage.get_original_path(new_job_id)
         wb = openpyxl.load_workbook(new_path)
         assert wb["Data"]["C2"].value == "=SUM(A1:A200)"
+        wb.close()
 
     def test_422_no_matching_formula(self, client: TestClient, backend_storage: Storage) -> None:
         job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
@@ -235,6 +316,26 @@ class TestFormulaFixRoute:
         )
         assert r.status_code == 422
 
+    def test_422_officecli_rejects_unsupported_formula_operation(
+        self, client: TestClient, backend_storage: Storage
+    ) -> None:
+        """OfficeCLI adapterのcapability外操作は実行前に拒否する."""
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
+
+        r = client.post(
+            f"/jobs/{job_id}/formula-fix",
+            json={
+                "kind": "fixed_ref_replace",
+                "old_ref": "Data!$B$5",
+                "new_ref": "Data!$B$6",
+                "provider": "officecli",
+            },
+        )
+
+        assert r.status_code == 422
+        assert "does not support operation" in r.json()["detail"]
+
     def test_404_job_not_found(self, client: TestClient, backend_storage: Storage) -> None:
         r = client.post(
             f"/jobs/{uuid.uuid4()}/formula-fix",
@@ -249,3 +350,14 @@ class TestFormulaFixRoute:
             json={"kind": "fixed_ref_replace", "old_ref": "Data!$B$5", "new_ref": "Data!$B$6"},
         )
         assert r.status_code == 409
+
+
+def test_mutation_provider_capabilities(client: TestClient) -> None:
+    """利用可能な変更エンジンと対応範囲をAPIから取得できる."""
+
+    response = client.get("/mutation-providers")
+
+    assert response.status_code == 200
+    providers = {item["name"]: item for item in response.json()["providers"]}
+    assert providers["openpyxl"]["available"] is True
+    assert "named_range_set" in providers["officecli"]["supported_operations"]

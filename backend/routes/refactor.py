@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -21,17 +20,34 @@ from pydantic import BaseModel
 from backend.dependencies import get_storage
 from backend.routes.extract import _run_extraction
 from backend.storage import JobNotFoundError, Storage
-from core.exceptions import DiffError, ExtractionError, FormulaFixError, NamedRangeFixError
-from core.formula_fix import apply_fixed_ref_replace, apply_range_expansion
+from core.change_record import ChangeExecutionRecord
+from core.exceptions import (
+    DiffError,
+    ExtractionError,
+    FormulaFixError,
+    MutationProviderError,
+    NamedRangeFixError,
+    ProviderUnavailableError,
+    UnsupportedMutationError,
+)
 from core.models import ReferenceIndex, Workbook, WorkbookDiff
-from core.named_range_fix import apply_named_range_fix
+from core.mutation import (
+    FixedRefReplaceOperation,
+    MutationPlan,
+    MutationProvider,
+    MutationResult,
+    NamedRangeSetOperation,
+    OpenPyxlMutationProvider,
+    ProviderName,
+    RangeExpansionOperation,
+    propose_mutation,
+)
+from core.officecli_provider import OfficeCliMutationProvider
+from core.verification import verify_expected_diff
 from core.workbook_diff import diff_workbooks
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# 実ファイルへの書き込み関数: (元ファイル, 出力先) を受け取り修正を適用する
-_ApplyFn = Callable[[Path, Path], None]
 
 
 class NamedRangeFixRequest(BaseModel):
@@ -39,6 +55,7 @@ class NamedRangeFixRequest(BaseModel):
 
     name: str
     new_refers_to: str
+    provider: ProviderName = "openpyxl"
 
 
 class FormulaFixRequest(BaseModel):
@@ -47,6 +64,15 @@ class FormulaFixRequest(BaseModel):
     kind: Literal["fixed_ref_replace", "range_expansion"]
     old_ref: str
     new_ref: str
+    provider: ProviderName = "openpyxl"
+
+
+def _provider_for(name: ProviderName) -> MutationProvider:
+    """APIで選択された変更プロバイダーを返す."""
+
+    if name == "officecli":
+        return OfficeCliMutationProvider()
+    return OpenPyxlMutationProvider()
 
 
 def _load_before(storage: Storage, job_id: str) -> tuple[Workbook, Path, ReferenceIndex, str]:
@@ -71,12 +97,13 @@ def _apply_and_extract(
     storage: Storage,
     source_job_id: str,
     filename: str,
-    apply_fn: _ApplyFn,
-) -> str:
+    provider: MutationProvider,
+    plan: MutationPlan,
+) -> tuple[str, MutationResult]:
     """実ファイルへの書き込み + 新ジョブ作成 + 抽出を1関数にまとめる (threadpool 前提).
 
     Returns:
-        新しく作られたジョブの job_id.
+        新しく作られたジョブの job_id とプロバイダー実行結果.
     """
     source_path = storage.get_original_path(source_job_id)
     data = source_path.read_bytes()
@@ -85,14 +112,16 @@ def _apply_and_extract(
     new_meta = storage.create_job(filename, data)
     new_path = storage.get_original_path(new_meta.job_id)
     try:
-        apply_fn(source_path, new_path)
+        provider_result = provider.apply(plan, source_path, new_path)
+        # create_job時点の指紋は元ファイルのコピーを指すため、変更後成果物へ更新する。
+        storage.refresh_original_fingerprint(new_meta.job_id)
         _run_extraction(storage, new_meta.job_id, filename)
     except Exception:
         # 適用/抽出に失敗した場合、作りかけの新ジョブを残すとジョブ一覧に
         # 「uploaded のまま進まない」孤児が溜まるため後始末する。
         storage.delete_job(new_meta.job_id)
         raise
-    return new_meta.job_id
+    return new_meta.job_id, provider_result
 
 
 async def _self_verify(
@@ -116,6 +145,110 @@ async def _self_verify(
     return diff
 
 
+async def _execute_plan(
+    storage: Storage,
+    before_wb: Workbook,
+    before_path: Path,
+    before_index: ReferenceIndex,
+    filename: str,
+    plan: MutationPlan,
+) -> dict[str, object]:
+    """変更計画を適用し、期待差分とのpolicy照合と監査保存まで実行する."""
+
+    expected_diff = propose_mutation(plan, before_wb, before_index)
+    provider = _provider_for(plan.requested_provider)
+    new_job_id, provider_result = await asyncio.to_thread(
+        _apply_and_extract,
+        storage,
+        plan.source_job_id,
+        filename,
+        provider,
+        plan,
+    )
+    try:
+        actual_diff = await _self_verify(storage, before_wb, before_path, before_index, new_job_id)
+    except HTTPException:
+        await asyncio.to_thread(storage.update_status, new_job_id, "failed")
+        raise
+    verification = verify_expected_diff(expected_diff, actual_diff)
+    try:
+        source_meta = await asyncio.to_thread(
+            storage.refresh_original_fingerprint, plan.source_job_id
+        )
+        result_meta = storage.get_meta(new_job_id)
+        if source_meta.file_sha256 is None or result_meta.file_sha256 is None:
+            raise OSError("artifact fingerprint is missing")
+        record = ChangeExecutionRecord(
+            source_job_id=plan.source_job_id,
+            result_job_id=new_job_id,
+            source_file_sha256=source_meta.file_sha256,
+            result_file_sha256=result_meta.file_sha256,
+            plan=plan,
+            provider_result=provider_result,
+            expected_diff=expected_diff,
+            actual_diff=actual_diff,
+            verification=verification,
+        )
+        await asyncio.to_thread(storage.save_verification, new_job_id, record)
+    except OSError as exc:
+        await asyncio.to_thread(storage.update_status, new_job_id, "failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"failed to persist verification evidence: {exc}",
+        ) from exc
+
+    if verification.status == "failed":
+        await asyncio.to_thread(storage.update_status, new_job_id, "failed")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "verification policy rejected the mutated workbook",
+                "new_job_id": new_job_id,
+                "verification": verification.model_dump(mode="json"),
+            },
+        )
+
+    return {
+        "new_job_id": new_job_id,
+        "diff": actual_diff.model_dump(by_alias=True),
+        "verification": verification.model_dump(mode="json"),
+        "plan": plan.model_dump(mode="json"),
+        "provider": provider_result.model_dump(mode="json"),
+    }
+
+
+@router.get("/mutation-providers")
+async def list_mutation_providers() -> dict[str, object]:
+    """変更プロバイダーの利用可否と対応範囲を返す."""
+
+    openpyxl_capability = OpenPyxlMutationProvider().capability()
+    officecli_capability = await asyncio.to_thread(OfficeCliMutationProvider().capability)
+    return {
+        "providers": [
+            openpyxl_capability.model_dump(mode="json"),
+            officecli_capability.model_dump(mode="json"),
+        ]
+    }
+
+
+@router.get("/jobs/{job_id}/verification")
+async def get_verification_record(
+    job_id: str,
+    storage: Storage = Depends(get_storage),
+) -> dict[str, object]:
+    """変更後ジョブに保存された検証監査レコードを返す."""
+
+    try:
+        record = await asyncio.to_thread(storage.load_verification, job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid job_id: {exc}") from exc
+    except JobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"job not found: {exc}") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="verification record not found") from exc
+    return {"verification_record": record.model_dump(mode="json")}
+
+
 @router.post("/jobs/{job_id}/named-range-fix")
 async def apply_named_range_fix_route(
     job_id: str,
@@ -131,31 +264,37 @@ async def apply_named_range_fix_route(
          意図した変更 (name の refers_to) だけが起きているかを自己検証する。
     """
     before_wb, before_path, before_index, filename = _load_before(storage, job_id)
-
-    def apply_fn(source: Path, out: Path) -> None:
-        apply_named_range_fix(source, body.name, body.new_refers_to, out)
+    plan = MutationPlan(
+        source_job_id=job_id,
+        requested_provider=body.provider,
+        operation=NamedRangeSetOperation(name=body.name, new_refers_to=body.new_refers_to),
+    )
 
     try:
-        new_job_id = await asyncio.to_thread(
-            _apply_and_extract, storage, job_id, filename, apply_fn
-        )
+        result = await _execute_plan(storage, before_wb, before_path, before_index, filename, plan)
     except NamedRangeFixError as e:
         raise HTTPException(status_code=422, detail=f"named range fix failed: {e}") from e
     except ExtractionError as e:
         raise HTTPException(status_code=422, detail=f"extraction of new file failed: {e}") from e
+    except ProviderUnavailableError as e:
+        raise HTTPException(status_code=503, detail=f"mutation provider unavailable: {e}") from e
+    except UnsupportedMutationError as e:
+        raise HTTPException(status_code=422, detail=f"unsupported mutation: {e}") from e
+    except MutationProviderError as e:
+        raise HTTPException(status_code=422, detail=f"mutation provider failed: {e}") from e
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"internal error: {e}") from e
 
-    diff = await _self_verify(storage, before_wb, before_path, before_index, new_job_id)
-
     logger.info(
-        "named range fix applied: source=%s new_job=%s name=%s is_empty=%s",
+        "named range fix applied: source=%s new_job=%s name=%s verification=%s",
         job_id,
-        new_job_id,
+        result["new_job_id"],
         body.name,
-        diff.is_empty(),
+        result["verification"],
     )
-    return {"new_job_id": new_job_id, "diff": diff.model_dump(by_alias=True)}
+    return result
 
 
 @router.post("/jobs/{job_id}/formula-fix")
@@ -171,33 +310,41 @@ async def apply_formula_fix_route(
     起きているかを自己検証する。
     """
     before_wb, before_path, before_index, filename = _load_before(storage, job_id)
-
-    def apply_fn(source: Path, out: Path) -> None:
-        if body.kind == "range_expansion":
-            apply_range_expansion(source, body.old_ref, body.new_ref, out)
-        else:
-            apply_fixed_ref_replace(source, body.old_ref, body.new_ref, out)
+    operation = (
+        RangeExpansionOperation(old_ref=body.old_ref, new_ref=body.new_ref)
+        if body.kind == "range_expansion"
+        else FixedRefReplaceOperation(old_ref=body.old_ref, new_ref=body.new_ref)
+    )
+    plan = MutationPlan(
+        source_job_id=job_id,
+        requested_provider=body.provider,
+        operation=operation,
+    )
 
     try:
-        new_job_id = await asyncio.to_thread(
-            _apply_and_extract, storage, job_id, filename, apply_fn
-        )
+        result = await _execute_plan(storage, before_wb, before_path, before_index, filename, plan)
     except FormulaFixError as e:
         raise HTTPException(status_code=422, detail=f"formula fix failed: {e}") from e
     except ExtractionError as e:
         raise HTTPException(status_code=422, detail=f"extraction of new file failed: {e}") from e
+    except ProviderUnavailableError as e:
+        raise HTTPException(status_code=503, detail=f"mutation provider unavailable: {e}") from e
+    except UnsupportedMutationError as e:
+        raise HTTPException(status_code=422, detail=f"unsupported mutation: {e}") from e
+    except MutationProviderError as e:
+        raise HTTPException(status_code=422, detail=f"mutation provider failed: {e}") from e
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"internal error: {e}") from e
 
-    diff = await _self_verify(storage, before_wb, before_path, before_index, new_job_id)
-
     logger.info(
-        "formula fix applied: source=%s new_job=%s kind=%s old=%s new=%s is_empty=%s",
+        "formula fix applied: source=%s new_job=%s kind=%s old=%s new=%s verification=%s",
         job_id,
-        new_job_id,
+        result["new_job_id"],
         body.kind,
         body.old_ref,
         body.new_ref,
-        diff.is_empty(),
+        result["verification"],
     )
-    return {"new_job_id": new_job_id, "diff": diff.model_dump(by_alias=True)}
+    return result
