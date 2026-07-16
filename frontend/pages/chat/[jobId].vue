@@ -246,6 +246,7 @@ async function send() {
   // optimistic: ユーザー発話を先に表示
   history.value = [...history.value, { role: 'user', content: msg, timestamp: now }]
   input.value = ''
+  pendingTemplate.value = ''
   scrollToBottom()
 
   try {
@@ -283,8 +284,27 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+const pendingTemplate = ref('')
+
 function selectQuestionTemplate(prompt: string) {
-  input.value = prompt
+  if (!input.value.trim()) {
+    input.value = prompt
+    pendingTemplate.value = ''
+    return
+  }
+  pendingTemplate.value = prompt
+}
+
+function appendPendingTemplate() {
+  if (!pendingTemplate.value) return
+  input.value = `${input.value.trimEnd()}\n\n${pendingTemplate.value}`
+  pendingTemplate.value = ''
+}
+
+function replaceWithPendingTemplate() {
+  if (!pendingTemplate.value) return
+  input.value = pendingTemplate.value
+  pendingTemplate.value = ''
 }
 </script>
 
@@ -530,6 +550,36 @@ function selectQuestionTemplate(prompt: string) {
         <UCard :ui="{ body: 'p-2 sm:p-3' }">
           <div class="space-y-2">
             <ChatQuestionTemplates @select="selectQuestionTemplate" />
+            <div
+              v-if="pendingTemplate"
+              class="rounded-lg border border-amber-300/70 dark:border-amber-700/60 bg-amber-50/70 dark:bg-amber-950/30 p-3 space-y-2"
+            >
+              <div class="flex items-start gap-2">
+                <UIcon name="i-lucide-triangle-alert" class="size-4 mt-0.5 text-amber-600 shrink-0" />
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-(--ui-text-highlighted)">
+                    入力中の質問があります
+                  </p>
+                  <p class="text-xs text-(--ui-text-muted) mt-1">
+                    テンプレートはまだ反映していません。現在の質問をどうするか選んでください。
+                  </p>
+                  <p class="text-xs mt-2 rounded bg-(--ui-bg-elevated) p-2">
+                    {{ pendingTemplate }}
+                  </p>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2 pl-6">
+                <UButton size="xs" color="primary" variant="soft" @click="appendPendingTemplate">
+                  現在の質問の後ろに追加
+                </UButton>
+                <UButton size="xs" color="warning" variant="soft" @click="replaceWithPendingTemplate">
+                  テンプレートに置き換える
+                </UButton>
+                <UButton size="xs" color="neutral" variant="ghost" @click="pendingTemplate = ''">
+                  キャンセル
+                </UButton>
+              </div>
+            </div>
             <USeparator />
             <UTextarea
               v-model="input"
