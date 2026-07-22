@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { JobMeta } from '~/types/api'
+import { formatJstDateTime } from '~/utils/dateTime'
 
 const props = defineProps<{
   job: JobMeta
@@ -11,9 +12,7 @@ const emit = defineEmits<{
 }>()
 
 const created = computed(() => {
-  // ISO 文字列 → 「YYYY-MM-DD HH:MM」表記
-  const s = props.job.created_at
-  return s ? s.slice(0, 16).replace('T', ' ') : ''
+  return formatJstDateTime(props.job.created_at)
 })
 
 const shortHash = computed(() => props.job.file_sha256?.slice(0, 10) ?? '')

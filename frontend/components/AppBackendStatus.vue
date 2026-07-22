@@ -26,7 +26,7 @@ const cfg = computed(() => {
 </script>
 
 <template>
-  <div class="flex items-center gap-1.5 text-[10px] text-(--ui-text-muted)" :title="`Backend: ${cfg.label}`">
+  <div class="flex items-center gap-1.5 text-[10px] text-(--ui-text-muted)" :title="`サービス: ${cfg.label}`">
     <span class="inline-block size-2 rounded-full" :class="cfg.dot" />
     <span>{{ cfg.label }}</span>
   </div>

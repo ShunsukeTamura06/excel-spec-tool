@@ -8,6 +8,7 @@
  */
 
 import type { ChatMessage, FeedbackKind, ToolTraceItem, WorkbookData } from '~/types/api'
+import { formatJstTime } from '~/utils/dateTime'
 
 const props = defineProps<{
   message: ChatMessage
@@ -22,10 +23,24 @@ const isAssistant = computed(() => props.message.role === 'assistant')
 const evidenceItems = computed<ToolTraceItem[]>(() => {
   return isAssistant.value ? props.message.tool_trace ?? [] : []
 })
+const hasActionableProposal = computed(() => evidenceItems.value.some(item =>
+  [
+    'propose_named_range_fix',
+    'propose_fixed_ref_replace',
+    'propose_range_expansion',
+    'propose_cell_text_edits',
+    'propose_vba_procedure_replace',
+  ].includes(item.name),
+))
+const answerExpanded = ref(false)
+const isLongAnswer = computed(() => {
+  if (!isAssistant.value) return false
+  const content = props.message.content ?? ''
+  return content.length > 700 || content.split('\n').length > 14
+})
 
 const timeLabel = computed(() => {
-  const t = props.message.timestamp
-  return t ? t.slice(11, 16) : ''
+  return formatJstTime(props.message.timestamp)
 })
 
 // ---- フィードバック (assistant 応答のみ) ----
@@ -101,12 +116,34 @@ async function sendVote(kind: 'thumbs_up' | 'thumbs_down') {
           !isUser && !isAssistant && 'bg-amber-50 dark:bg-amber-950 text-amber-900 dark:text-amber-200',
         ]"
       >
-        <ChatMarkdown
-          v-if="isAssistant"
-          :markdown="message.content"
-          :evidence-items="evidenceItems"
-          :workbook="workbook ?? null"
-        />
+        <template v-if="isAssistant">
+          <div class="relative">
+            <div
+              :class="isLongAnswer && !answerExpanded ? 'max-h-48 overflow-hidden' : ''"
+            >
+              <ChatMarkdown
+                :markdown="message.content"
+                :evidence-items="evidenceItems"
+                :workbook="workbook ?? null"
+              />
+            </div>
+            <div
+              v-if="isLongAnswer && !answerExpanded"
+              class="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-(--ui-bg-elevated) to-transparent"
+            />
+          </div>
+          <UButton
+            v-if="isLongAnswer"
+            color="neutral"
+            variant="soft"
+            size="xs"
+            class="mt-3"
+            :icon="answerExpanded ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+            @click="answerExpanded = !answerExpanded"
+          >
+            {{ answerExpanded ? '折りたたむ' : '全文を表示' }}
+          </UButton>
+        </template>
         <p v-else class="whitespace-pre-wrap text-sm leading-relaxed">{{ message.content }}</p>
       </div>
       <div
@@ -161,7 +198,7 @@ async function sendVote(kind: 'thumbs_up' | 'thumbs_down') {
       <ToolTraceList
         v-if="evidenceItems.length > 0"
         :items="evidenceItems"
-        title="この回答の根拠カード"
+        :title="hasActionableProposal ? '変更内容を確認' : 'この回答の根拠カード'"
         :job-id="props.jobId"
         class="mt-2"
       />

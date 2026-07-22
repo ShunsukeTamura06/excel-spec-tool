@@ -8,26 +8,28 @@
  */
 
 import type { WorkbookDiffData } from '~/types/api'
+import { formatJstDateTime } from '~/utils/dateTime'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: '差分比較 — xlblueprint' })
 
 const backend = useBackend()
 const jobStore = useJobStore()
-
-onMounted(() => {
-  void jobStore.refreshJobs()
-})
+const route = useRoute()
 
 // /diff は extracted.json / references.json が要るため、抽出済み以降のジョブだけを選べるようにする
 const jobOptions = computed(() =>
   jobStore.jobs
     .filter(j => j.status === 'extracted' || j.status === 'analyzed')
-    .map(j => ({ label: `${j.filename} (${j.created_at.slice(0, 16).replace('T', ' ')})`, value: j.job_id })),
+    .map(j => ({ label: `${j.filename} (${formatJstDateTime(j.created_at)})`, value: j.job_id })),
 )
 
-const beforeJobId = ref<string | undefined>(undefined)
-const afterJobId = ref<string | undefined>(undefined)
+const beforeJobId = ref<string | undefined>(
+  typeof route.query.before_job_id === 'string' ? route.query.before_job_id : undefined,
+)
+const afterJobId = ref<string | undefined>(
+  typeof route.query.after_job_id === 'string' ? route.query.after_job_id : undefined,
+)
 
 const canCompare = computed(
   () => !!beforeJobId.value && !!afterJobId.value && beforeJobId.value !== afterJobId.value,
@@ -50,6 +52,11 @@ async function runDiff() {
     pending.value = false
   }
 }
+
+onMounted(async () => {
+  await jobStore.refreshJobs()
+  if (canCompare.value) await runDiff()
+})
 </script>
 
 <template>

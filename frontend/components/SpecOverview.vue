@@ -7,9 +7,14 @@
  *
  * Markdown 先頭の `# 設計書: ...` H1 はページヘッダと重複するため描画時のみ除去.
  * ダウンロード用ファイルには残るので問題ない. */
-import type { WorkbookData } from '~/types/api'
+import type { WorkbookData, WorkbookDiagnosis } from '~/types/api'
 
-const props = defineProps<{ markdown: string; workbook: WorkbookData }>()
+const props = defineProps<{
+  markdown: string
+  workbook: WorkbookData
+  diagnosis: WorkbookDiagnosis
+  jobId: string
+}>()
 
 const displayMarkdown = computed(() => {
   return props.markdown.replace(/^#\s.*\n+/, '')
@@ -21,7 +26,7 @@ const detailsOpen = ref(false)
 
 <template>
   <div class="space-y-4">
-    <SpecInsightDashboard :workbook="props.workbook" />
+    <WorkbookDiagnosisView :diagnosis="props.diagnosis" :job-id="props.jobId" />
 
     <UCard>
       <button
@@ -32,7 +37,7 @@ const detailsOpen = ref(false)
       >
         <span class="flex items-center gap-2 text-sm font-medium">
           <UIcon name="i-lucide-file-text" class="size-4 text-(--ui-text-muted)" />
-          詳細設計書 (Markdown)
+          技術的な解析結果 (Markdown)
         </span>
         <span class="flex items-center gap-2 text-xs text-(--ui-text-muted)">
           <span>{{ detailsOpen ? '閉じる' : '開く' }}</span>

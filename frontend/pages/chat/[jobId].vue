@@ -8,9 +8,10 @@
  */
 
 import type { ChatMessage, ChatProgressEvent, ChatSessionMeta, WorkbookData } from '~/types/api'
+import { formatJstDateTime } from '~/utils/dateTime'
 
 definePageMeta({ layout: 'default' })
-useHead({ title: 'チャット — xlblueprint' })
+useHead({ title: '質問・相談 — xlblueprint' })
 
 const route = useRoute()
 const backend = useBackend()
@@ -36,7 +37,7 @@ const visibleSessions = computed(() => {
 })
 
 function sessionTime(session: ChatSessionMeta) {
-  return session.updated_at ? session.updated_at.slice(0, 16).replace('T', ' ') : ''
+  return formatJstDateTime(session.updated_at)
 }
 
 function sessionPreview(session: ChatSessionMeta) {
@@ -57,6 +58,7 @@ async function refreshSessionsOnly() {
 
 async function loadHistory() {
   history.value = await backend.getChatHistory(jobId.value, activeSessionId.value)
+  scrollToConversationFocus()
 }
 
 async function loadWorkbook() {
@@ -70,6 +72,7 @@ async function loadWorkbook() {
 async function loadChatState() {
   loading.value = true
   loadError.value = ''
+  let shouldAutoSend = false
   try {
     await refreshSessionsOnly()
     const querySession = typeof route.query.session === 'string' ? route.query.session : ''
@@ -85,10 +88,21 @@ async function loadChatState() {
       loadHistory(),
       loadWorkbook(),
     ])
+    const requestedPrefill = typeof route.query.request === 'string' ? route.query.request : ''
+    if (requestedPrefill && !input.value) input.value = requestedPrefill
+    shouldAutoSend = Boolean(requestedPrefill && route.query.autosend === '1')
   } catch (e) {
     loadError.value = friendlyMessage(e)
   } finally {
     loading.value = false
+  }
+  if (shouldAutoSend && !autoRequestSent.value) {
+    autoRequestSent.value = true
+    await navigateTo(
+      { path: route.path, query: { session: activeSessionId.value } },
+      { replace: true },
+    )
+    void send()
   }
 }
 
@@ -201,6 +215,7 @@ async function saveTitle() {
 const input = ref('')
 const sending = ref(false)
 const sendError = ref('')
+const autoRequestSent = ref(false)
 const scrollContainer = ref<HTMLElement | null>(null)
 type ProgressItem = {
   id: string
@@ -230,7 +245,27 @@ function scrollToBottom() {
   })
 }
 
-watch(history, () => scrollToBottom(), { flush: 'post' })
+function scrollToLatestAnswer() {
+  nextTick(() => {
+    const container = scrollContainer.value
+    if (!container) return
+    const answers = container.querySelectorAll<HTMLElement>('[data-chat-role="assistant"]')
+    const latest = answers.item(answers.length - 1)
+    if (!latest) return
+    const containerTop = container.getBoundingClientRect().top
+    const answerTop = latest.getBoundingClientRect().top
+    container.scrollTop += answerTop - containerTop - 12
+  })
+}
+
+function scrollToConversationFocus() {
+  if (history.value.at(-1)?.role === 'assistant') {
+    scrollToLatestAnswer()
+  } else {
+    scrollToBottom()
+  }
+}
+
 onMounted(() => scrollToBottom())
 
 async function send() {
@@ -244,6 +279,7 @@ async function send() {
   // optimistic: ユーザー発話を先に表示
   history.value = [...history.value, { role: 'user', content: msg, timestamp: now }]
   input.value = ''
+  pendingTemplate.value = ''
   scrollToBottom()
 
   try {
@@ -256,7 +292,7 @@ async function send() {
     })
     history.value = r.history
     await refreshSessionsOnly()
-    scrollToBottom()
+    scrollToLatestAnswer()
   } catch (e) {
     sendError.value = friendlyMessage(e)
     toast.add({
@@ -281,11 +317,28 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-const examples = [
-  'このブックの目的を要約してください',
-  'Calc シートの H2 セルを変更したら、どこに波及しますか？',
-  '商品マスタの単価を変えた時の影響範囲を教えてください',
-]
+const pendingTemplate = ref('')
+
+function selectQuestionTemplate(prompt: string) {
+  if (!input.value.trim()) {
+    input.value = prompt
+    pendingTemplate.value = ''
+    return
+  }
+  pendingTemplate.value = prompt
+}
+
+function appendPendingTemplate() {
+  if (!pendingTemplate.value) return
+  input.value = `${input.value.trimEnd()}\n\n${pendingTemplate.value}`
+  pendingTemplate.value = ''
+}
+
+function replaceWithPendingTemplate() {
+  if (!pendingTemplate.value) return
+  input.value = pendingTemplate.value
+  pendingTemplate.value = ''
+}
 </script>
 
 <template>
@@ -297,9 +350,9 @@ const examples = [
           <UIcon name="i-lucide-home" class="size-3.5" /> ホーム
         </NuxtLink>
         <UIcon name="i-lucide-chevron-right" class="size-4" />
-        <NuxtLink :to="`/spec/${jobId}`" class="hover:text-(--ui-primary)">設計書</NuxtLink>
+        <NuxtLink :to="`/spec/${jobId}`" class="hover:text-(--ui-primary)">Excel診断</NuxtLink>
         <UIcon name="i-lucide-chevron-right" class="size-4" />
-        <span class="text-(--ui-text-highlighted)">チャット</span>
+        <span class="text-(--ui-text-highlighted)">質問・相談</span>
       </div>
       <UButton
         :to="`/spec/${jobId}`"
@@ -308,7 +361,7 @@ const examples = [
         variant="soft"
         size="sm"
       >
-        設計書に戻る
+        Excel診断に戻る
       </UButton>
     </div>
 
@@ -328,7 +381,7 @@ const examples = [
       >
         <div class="h-full flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
-            <h2 class="text-sm font-semibold text-(--ui-text-highlighted)">相談</h2>
+            <h2 class="text-sm font-semibold text-(--ui-text-highlighted)">質問・相談</h2>
             <UButton
               icon="i-lucide-plus"
               color="primary"
@@ -478,24 +531,11 @@ const examples = [
                 <UIcon name="i-lucide-sparkles" class="size-7" />
               </div>
               <div class="space-y-1">
-                <p class="font-semibold text-(--ui-text-highlighted)">改修について質問しましょう</p>
+                <p class="font-semibold text-(--ui-text-highlighted)">このExcelについて質問しましょう</p>
                 <p class="text-xs text-(--ui-text-muted) max-w-md">
-                  設計書とツールを根拠に、改修手順と波及範囲を提案します。
-                  質問例から始めるか、自由に入力してください.
+                  Excel診断の根拠を使い、用途・使い方・数字の根拠・注意点などに回答します。
+                  下のテンプレートを選ぶか、自由に入力してください。
                 </p>
-              </div>
-              <div class="flex flex-wrap gap-2 justify-center max-w-xl">
-                <UButton
-                  v-for="ex in examples"
-                  :key="ex"
-                  size="sm"
-                  variant="soft"
-                  color="neutral"
-                  icon="i-lucide-corner-down-left"
-                  @click="input = ex"
-                >
-                  {{ ex }}
-                </UButton>
               </div>
               <!-- LLM 未設定の場合、ここで明示的にアナウンスする.
                    配置していないと「チャットが壊れている」と誤解されやすい. -->
@@ -503,13 +543,17 @@ const examples = [
             </div>
 
             <!-- メッセージ -->
-            <ChatMessageBubble
+            <div
               v-for="(m, i) in history"
               :key="i"
-              :message="m"
-              :job-id="jobId"
-              :workbook="workbook"
-            />
+              :data-chat-role="m.role"
+            >
+              <ChatMessageBubble
+                :message="m"
+                :job-id="jobId"
+                :workbook="workbook"
+              />
+            </div>
 
             <!-- アシスタント応答中インジケータ -->
             <div v-if="sending" class="flex gap-3">
@@ -542,9 +586,41 @@ const examples = [
         <!-- 入力欄 -->
         <UCard :ui="{ body: 'p-2 sm:p-3' }">
           <div class="space-y-2">
+            <ChatQuestionTemplates @select="selectQuestionTemplate" />
+            <div
+              v-if="pendingTemplate"
+              class="rounded-lg border border-amber-300/70 dark:border-amber-700/60 bg-amber-50/70 dark:bg-amber-950/30 p-3 space-y-2"
+            >
+              <div class="flex items-start gap-2">
+                <UIcon name="i-lucide-triangle-alert" class="size-4 mt-0.5 text-amber-600 shrink-0" />
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-(--ui-text-highlighted)">
+                    入力中の質問があります
+                  </p>
+                  <p class="text-xs text-(--ui-text-muted) mt-1">
+                    テンプレートはまだ反映していません。現在の質問をどうするか選んでください。
+                  </p>
+                  <p class="text-xs mt-2 rounded bg-(--ui-bg-elevated) p-2">
+                    {{ pendingTemplate }}
+                  </p>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2 pl-6">
+                <UButton size="xs" color="primary" variant="soft" @click="appendPendingTemplate">
+                  現在の質問の後ろに追加
+                </UButton>
+                <UButton size="xs" color="warning" variant="soft" @click="replaceWithPendingTemplate">
+                  テンプレートに置き換える
+                </UButton>
+                <UButton size="xs" color="neutral" variant="ghost" @click="pendingTemplate = ''">
+                  キャンセル
+                </UButton>
+              </div>
+            </div>
+            <USeparator />
             <UTextarea
               v-model="input"
-              placeholder="改修したい内容や質問を入力 (Cmd/Ctrl + Enter で送信)"
+              placeholder="このExcelについて知りたいことを入力 (Cmd/Ctrl + Enter で送信)"
               :rows="3"
               :disabled="sending || activeSession?.archived"
               autoresize
@@ -555,7 +631,7 @@ const examples = [
             <div class="flex items-center justify-between gap-2">
               <p class="text-[10px] text-(--ui-text-muted) flex items-center gap-1">
                 <UIcon name="i-lucide-info" class="size-3" />
-                応答には数十秒かかる場合があります (LLM 呼び出し + ツール反復)。
+                回答の作成には数十秒かかる場合があります。
               </p>
               <UButton
                 :loading="sending"

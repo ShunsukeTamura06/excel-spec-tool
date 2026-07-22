@@ -21,6 +21,7 @@ from pathlib import Path
 from core.exceptions import DiffError, ExtractionError
 from core.extractors.cells import extract_cells_to_sqlite
 from core.models import (
+    AnalysisRisk,
     BlastRadiusEntry,
     CellDiff,
     ChangeType,
@@ -35,6 +36,7 @@ from core.models import (
     WorkbookDiff,
 )
 from core.reference_index import find_overlapping
+from core.vba_change import normalize_vba_code
 
 # (sheet, coord) -> (value, formula, number_format)
 _CellKey = tuple[str, str]
@@ -60,7 +62,8 @@ def diff_workbooks(
 
     Returns:
         WorkbookDiff。追加/削除/変更の一覧と、変更箇所ごとの波及範囲、
-        before_wb.analysis_risks の再掲。
+        before/after 双方の analysis_risks を統合したもの
+        (変更によって新しく生じたリスクも含める。§ _merge_risks 参照)。
 
     Raises:
         DiffError: before/after いずれかのセル抽出に失敗した場合.
@@ -85,8 +88,26 @@ def diff_workbooks(
         pivot_tables=pivot_tables,
         vba_modules=vba_modules,
         blast_radius=blast_radius,
-        existing_risks=list(before_wb.analysis_risks),
+        existing_risks=_merge_risks(before_wb.analysis_risks, after_wb.analysis_risks),
     )
+
+
+def _merge_risks(
+    before_risks: list[AnalysisRisk],
+    after_risks: list[AnalysisRisk],
+) -> list[AnalysisRisk]:
+    """before/after のリスク一覧を統合し、変更で新しく生じたリスクも残す.
+
+    before 側だけを再掲すると、変更 (VBA置換等) によって新たに増えた
+    動的参照・イベントマクロ等のリスクが検証時に見えなくなる
+    (verify_expected_diff の needs_review 判定にも影響する)。
+    (category, location, description) が一致するものは重複として1件にまとめる。
+    """
+    merged: dict[tuple[str, str, str], AnalysisRisk] = {}
+    for risk in (*before_risks, *after_risks):
+        key = (risk.category, risk.location, risk.description)
+        merged.setdefault(key, risk)
+    return list(merged.values())
 
 
 def _dump_cells_by_key(file_path: Path, db_path: Path) -> dict[_CellKey, _CellValue]:
@@ -128,7 +149,7 @@ def _diff_cells(before_path: Path, after_path: Path) -> list[CellDiff]:
     for key in before_cells.keys() | after_cells.keys():
         before_v = before_cells.get(key)
         after_v = after_cells.get(key)
-        if before_v == after_v:
+        if before_v == after_v or _same_formula_with_cache_only_change(before_v, after_v):
             continue
 
         change_type: ChangeType
@@ -156,6 +177,23 @@ def _diff_cells(before_path: Path, after_path: Path) -> list[CellDiff]:
             )
         )
     return sorted(diffs, key=lambda d: (d.sheet, d.coord))
+
+
+def _same_formula_with_cache_only_change(
+    before: _CellValue | None,
+    after: _CellValue | None,
+) -> bool:
+    """同一数式の再計算キャッシュだけが変わった場合は保存ノイズとして扱う."""
+
+    if before is None or after is None:
+        return False
+    _, before_formula, before_number_format = before
+    _, after_formula, after_number_format = after
+    return (
+        before_formula is not None
+        and before_formula == after_formula
+        and before_number_format == after_number_format
+    )
 
 
 def diff_named_ranges(before_wb: Workbook, after_wb: Workbook) -> list[NamedRangeDiff]:
@@ -324,7 +362,9 @@ def _diff_vba_modules(before_wb: Workbook, after_wb: Workbook) -> list[VbaModule
     for name in sorted(before_map.keys() | after_map.keys()):
         before_m = before_map.get(name)
         after_m = after_map.get(name)
-        if before_m and after_m and before_m.code == after_m.code and before_m.type == after_m.type:
+        before_code = normalize_vba_code(before_m.code) if before_m else None
+        after_code = normalize_vba_code(after_m.code) if after_m else None
+        if before_m and after_m and before_code == after_code and before_m.type == after_m.type:
             continue
         if before_m is None and after_m is None:
             continue
@@ -335,8 +375,8 @@ def _diff_vba_modules(before_wb: Workbook, after_wb: Workbook) -> list[VbaModule
             VbaModuleDiff(
                 name=name,
                 change_type=change_type,
-                before_code=before_m.code if before_m else None,
-                after_code=after_m.code if after_m else None,
+                before_code=before_code,
+                after_code=after_code,
             )
         )
     return diffs

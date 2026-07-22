@@ -21,6 +21,67 @@ export interface SpecResponse {
   meta: JobMeta
 }
 
+export type DiagnosisConfidence = 'explicit' | 'inferred' | 'unknown'
+
+export interface DiagnosisEvidence {
+  id: string
+  kind: 'sheet' | 'control' | 'vba' | 'reference' | 'external' | 'risk'
+  location: string
+  detail: string
+}
+
+export interface GroundedClaim {
+  text: string
+  confidence: DiagnosisConfidence
+  evidence_ids: string[]
+}
+
+export interface WorkbookFeature {
+  id: string
+  name: string
+  summary: string
+  confidence: DiagnosisConfidence
+  entry_points: string[]
+  related_sheets: string[]
+  inputs: string[]
+  outputs: string[]
+  evidence_ids: string[]
+}
+
+export interface WorkbookDiagnosis {
+  filename: string
+  headline: GroundedClaim
+  overview: GroundedClaim
+  features: WorkbookFeature[]
+  inputs: GroundedClaim[]
+  outputs: GroundedClaim[]
+  external_dependencies: GroundedClaim[]
+  warnings: GroundedClaim[]
+  evidence: DiagnosisEvidence[]
+  coverage: {
+    sheets: number
+    formulas: number
+    vba_procedures: number
+    controls: number
+    external_dependencies: number
+  }
+  limitations: string[]
+}
+
+export interface ChangeBrief {
+  title: string
+  feature_id: string | null
+  current_behavior: string
+  requested_outcome: string
+  affected_areas: string[]
+  evidence_ids: string[]
+  clarification_questions: string[]
+  acceptance_criteria: string[]
+  automation: 'supported' | 'needs_review' | 'unsupported'
+  automation_reason: string
+  next_step: string
+}
+
 export interface ReferenceItem {
   kind: 'formula' | 'vba' | 'chart' | 'pivot' | 'power_query'
   /** Pydantic 側で `from_` を alias `from` で吐く. JSON では `from`. */
@@ -346,14 +407,115 @@ export interface WorkbookDiffData {
   existing_risks: AnalysisRiskItem[]
 }
 
+export type MutationProviderName = 'openpyxl' | 'officecli' | 'windows_vbide'
+export type VerificationStatus = 'passed' | 'needs_review' | 'failed'
+
+export interface VerificationViolationData {
+  code: 'missing_expected_change' | 'unexpected_change' | 'mismatched_change'
+  section: string
+  key: string
+  message: string
+}
+
+export interface VerificationReportData {
+  status: VerificationStatus
+  policy_id: string
+  expected_change_count: number
+  actual_change_count: number
+  violations: VerificationViolationData[]
+  warnings: string[]
+}
+
+export interface MutationProviderResultData {
+  provider: MutationProviderName
+  provider_version: string | null
+  operation:
+    | 'named_range_set'
+    | 'fixed_ref_replace'
+    | 'range_expansion'
+    | 'cell_text_batch'
+    | 'vba_procedure_replace'
+  changed_count: number
+}
+
+export interface RangeExpansionOperationData {
+  kind: 'range_expansion'
+  old_ref: string
+  new_ref: string
+}
+
+export interface FixedRefReplaceOperationData {
+  kind: 'fixed_ref_replace'
+  old_ref: string
+  new_ref: string
+}
+
+export interface NamedRangeSetOperationData {
+  kind: 'named_range_set'
+  name: string
+  new_refers_to: string
+}
+
+export interface CellTextEditData {
+  sheet: string
+  coord: string
+  value: string
+}
+
+export interface CellTextBatchOperationData {
+  kind: 'cell_text_batch'
+  edits: CellTextEditData[]
+}
+
+export interface VbaProcedureReplaceOperationData {
+  kind: 'vba_procedure_replace'
+  module_name: string
+  procedure_name: string
+  new_code: string
+}
+
+export type MutationOperationData =
+  | RangeExpansionOperationData
+  | FixedRefReplaceOperationData
+  | NamedRangeSetOperationData
+  | CellTextBatchOperationData
+  | VbaProcedureReplaceOperationData
+
+export interface MutationPlanData {
+  plan_id: string
+  created_at: string
+  source_job_id: string
+  requested_provider: MutationProviderName
+  operation: MutationOperationData
+}
+
+export interface SafeChangePlanData {
+  plan: MutationPlanData
+  automation: 'supported' | 'needs_review'
+  can_apply: boolean
+  title: string
+  summary: string
+  expected_diff: WorkbookDiffData
+  expected_change_count: number
+  affected_locations: string[]
+  preconditions: string[]
+  acceptance_criteria: string[]
+  warnings: string[]
+  verification_scope: string
+}
+
 export interface NamedRangeFixRequest {
   name: string
   new_refers_to: string
+  provider?: MutationProviderName
 }
 
 export interface NamedRangeFixResponse {
   new_job_id: string
   diff: WorkbookDiffData
+  verification: VerificationReportData
+  plan: MutationPlanData
+  provider: MutationProviderResultData
 }
 
 export type FormulaFixKind = 'fixed_ref_replace' | 'range_expansion'
@@ -362,11 +524,15 @@ export interface FormulaFixRequest {
   kind: FormulaFixKind
   old_ref: string
   new_ref: string
+  provider?: MutationProviderName
 }
 
 export interface FormulaFixResponse {
   new_job_id: string
   diff: WorkbookDiffData
+  verification: VerificationReportData
+  plan: MutationPlanData
+  provider: MutationProviderResultData
 }
 
 // ---------- external functions ----------

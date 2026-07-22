@@ -16,6 +16,7 @@ import {
   type ChatReply,
   type ChatSessionMeta,
   type ChatSessionResponse,
+  type ChangeBrief,
   type ChatStreamEventName,
   type DeleteResponse,
   type DiagramSet,
@@ -29,6 +30,8 @@ import {
   type JobMeta,
   type NamedRangeFixRequest,
   type NamedRangeFixResponse,
+  type SafeChangePlanData,
+  type WorkbookDiagnosis,
   type ReferenceItem,
   type SpecResponse,
   type WorkbookData,
@@ -104,6 +107,16 @@ function toBackendError(err: unknown, context: string): BackendError {
       const loc = Array.isArray(first?.loc) ? first.loc.filter(x => x !== 'body').join('.') : ''
       if (msg) {
         detail = loc ? `${loc}: ${msg}` : msg
+      }
+    } else if (d && typeof d === 'object') {
+      const structured = d as {
+        message?: unknown
+        verification?: { status?: unknown }
+      }
+      if (structured.verification?.status === 'failed') {
+        detail = '構造検証で予定外の差分を検出したため、修正版の提供を停止しました。原本は変更されていません。'
+      } else if (typeof structured.message === 'string') {
+        detail = structured.message
       }
     }
   }
@@ -248,6 +261,29 @@ export function useBackend() {
     /** GET /spec/{job_id} */
     async getSpec(jobId: string): Promise<SpecResponse> {
       return await call<SpecResponse>('getSpec', `/spec/${jobId}`, {
+        timeout: DEFAULT_TIMEOUT_MS,
+      })
+    },
+
+    /** GET /diagnosis/{job_id} — 根拠付きの一般ユーザー向け Excel 診断 */
+    async getDiagnosis(jobId: string): Promise<WorkbookDiagnosis> {
+      return await call<WorkbookDiagnosis>('getDiagnosis', `/diagnosis/${jobId}`, {
+        timeout: DEFAULT_TIMEOUT_MS,
+      })
+    },
+
+    /** POST /change-request/{job_id} — 業務要望を改修依頼書へ整理 */
+    async createChangeBrief(
+      jobId: string,
+      requestedOutcome: string,
+      featureId?: string,
+    ): Promise<ChangeBrief> {
+      return await call<ChangeBrief>('createChangeBrief', `/change-request/${jobId}`, {
+        method: 'POST',
+        body: {
+          requested_outcome: requestedOutcome,
+          feature_id: featureId || null,
+        },
         timeout: DEFAULT_TIMEOUT_MS,
       })
     },
@@ -457,6 +493,89 @@ export function useBackend() {
         body,
         timeout: HEAVY_TIMEOUT_MS,
       })
+    },
+
+    /** POST /jobs/{jobId}/change-plan — 原本を書き換えず、範囲拡張の予定差分を作る */
+    async createSafeChangePlan(
+      jobId: string,
+      oldRef: string,
+      newRef: string,
+    ): Promise<SafeChangePlanData> {
+      return await call<SafeChangePlanData>('createSafeChangePlan', `/jobs/${jobId}/change-plan`, {
+        method: 'POST',
+        body: { kind: 'range_expansion', old_ref: oldRef, new_ref: newRef },
+        timeout: DEFAULT_TIMEOUT_MS,
+      })
+    },
+
+    /**
+     * POST /jobs/{jobId}/change-plan/execute — 画面で確認した計画を plan_id で実行する.
+     * 計画本体はサーバー側に保存済みのものを使う (改ざん防止のため計画内容は送らない)。
+     */
+    async executeSafeChangePlan(
+      jobId: string,
+      planId: string,
+    ): Promise<FormulaFixResponse> {
+      return await call<FormulaFixResponse>(
+        'executeSafeChangePlan',
+        `/jobs/${jobId}/change-plan/execute`,
+        { method: 'POST', body: { plan_id: planId }, timeout: HEAVY_TIMEOUT_MS },
+      )
+    },
+
+    /** GET /jobs/{jobId}/download — 修正版ExcelをBlobで取得する */
+    async downloadWorkbook(jobId: string): Promise<Blob> {
+      try {
+        const root = String(baseURL || '').replace(/\/$/, '')
+        const response = await fetch(`${root}/jobs/${jobId}/download`)
+        if (!response.ok) throw await backendErrorFromResponse(response)
+        return await response.blob()
+      } catch (e) {
+        if (e instanceof BackendError) throw e
+        throw toBackendError(e, 'downloadWorkbook')
+      }
+    },
+
+    /**
+     * POST /jobs/{jobId}/vba-change/package — Windows Excel/VBIDE用ZIPを取得する.
+     * 計画本体はサーバー側に保存済みのものを plan_id で引き当てる。
+     */
+    async downloadVbaChangePackage(
+      jobId: string,
+      planId: string,
+    ): Promise<Blob> {
+      try {
+        const root = String(baseURL || '').replace(/\/$/, '')
+        const response = await fetch(`${root}/jobs/${jobId}/vba-change/package`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan_id: planId }),
+        })
+        if (!response.ok) throw await backendErrorFromResponse(response)
+        return await response.blob()
+      } catch (e) {
+        if (e instanceof BackendError) throw e
+        throw toBackendError(e, 'downloadVbaChangePackage')
+      }
+    },
+
+    /**
+     * POST /jobs/{jobId}/vba-change/verify — Windows適用後.xlsmを静的検証する.
+     * plan_id は保存済みの計画を引き当てるためだけに使い、この呼び出しで消費される。
+     */
+    async verifyVbaChangedWorkbook(
+      jobId: string,
+      planId: string,
+      file: File,
+    ): Promise<FormulaFixResponse> {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('plan_id', planId)
+      return await call<FormulaFixResponse>(
+        'verifyVbaChangedWorkbook',
+        `/jobs/${jobId}/vba-change/verify`,
+        { method: 'POST', body: form, timeout: HEAVY_TIMEOUT_MS },
+      )
     },
 
     /** POST /feedback — フィードバック 1 件を送信. */

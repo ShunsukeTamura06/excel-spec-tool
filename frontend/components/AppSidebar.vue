@@ -21,36 +21,56 @@ onMounted(() => {
 })
 const isDark = computed(() => mounted.value && colorMode.value === 'dark')
 
-const navItems = computed(() => {
+const navGroups = computed(() => {
   const id = jobStore.currentJobId
   return [
     {
-      label: 'ホーム',
-      icon: 'i-lucide-home',
-      to: '/',
-      active: route.path === '/',
-      disabled: false,
+      label: '',
+      items: [{
+        label: 'ホーム',
+        icon: 'i-lucide-home',
+        to: '/',
+        active: route.path === '/',
+        disabled: false,
+      }],
     },
     {
-      label: '設計書',
-      icon: 'i-lucide-file-text',
-      to: id ? `/spec/${id}` : '#',
-      active: route.path.startsWith('/spec'),
-      disabled: !id,
+      label: 'このExcelを知る',
+      items: [
+        {
+          label: '概要・構造を見る',
+          icon: 'i-lucide-clipboard-check',
+          to: id ? `/spec/${id}` : '#',
+          active: route.path.startsWith('/spec'),
+          disabled: !id,
+        },
+        {
+          label: '質問して調べる',
+          icon: 'i-lucide-message-circle-question',
+          to: id ? `/chat/${id}` : '#',
+          active: route.path.startsWith('/chat'),
+          disabled: !id,
+        },
+      ],
     },
     {
-      label: 'チャット',
-      icon: 'i-lucide-message-circle',
-      to: id ? `/chat/${id}` : '#',
-      active: route.path.startsWith('/chat'),
-      disabled: !id,
-    },
-    {
-      label: '差分比較',
-      icon: 'i-lucide-git-compare',
-      to: '/diff',
-      active: route.path.startsWith('/diff'),
-      disabled: false,
+      label: 'このExcelを変更する',
+      items: [
+        {
+          label: '改修を依頼する',
+          icon: 'i-lucide-wrench',
+          to: id ? `/change/${id}` : '#',
+          active: route.path.startsWith('/change'),
+          disabled: !id,
+        },
+        {
+          label: '変更結果を比べる',
+          icon: 'i-lucide-git-compare',
+          to: '/diff',
+          active: route.path.startsWith('/diff'),
+          disabled: false,
+        },
+      ],
     },
   ]
 })
@@ -76,35 +96,42 @@ function toggleDark() {
 
     <!-- Nav -->
     <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-      <template v-for="item in navItems" :key="item.label">
-        <UButton
-          :to="item.disabled ? undefined : item.to"
-          :icon="item.icon"
-          :color="item.active ? 'primary' : 'neutral'"
-          :variant="item.active ? 'soft' : 'ghost'"
-          :disabled="item.disabled"
-          block
-          class="justify-start"
+      <template v-for="group in navGroups" :key="group.label || 'global'">
+        <p
+          v-if="group.label"
+          class="px-2 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-(--ui-text-muted)"
         >
-          {{ item.label }}
-        </UButton>
+          {{ group.label }}
+        </p>
+        <div class="space-y-1">
+          <UButton
+            v-for="item in group.items"
+            :key="item.label"
+            :to="item.disabled ? undefined : item.to"
+            :icon="item.icon"
+            :color="item.active ? 'primary' : 'neutral'"
+            :variant="item.active ? 'soft' : 'ghost'"
+            :disabled="item.disabled"
+            block
+            class="justify-start"
+          >
+            {{ item.label }}
+          </UButton>
+        </div>
       </template>
 
       <USeparator class="my-3" />
 
-      <!-- Current job -->
+      <!-- Current workbook -->
       <div v-if="jobStore.currentJob" class="px-2 py-2 space-y-1">
-        <p class="text-[11px] uppercase tracking-wide text-(--ui-text-muted)">選択中のジョブ</p>
+        <p class="text-[11px] uppercase tracking-wide text-(--ui-text-muted)">選択中のExcel</p>
         <p class="text-sm font-medium text-(--ui-text-highlighted) truncate" :title="jobStore.currentJob.filename">
           {{ jobStore.currentJob.filename }}
         </p>
         <JobStatusBadge :status="jobStore.currentJob.status" size="sm" />
-        <p class="text-[10px] font-mono text-(--ui-text-muted) truncate">
-          {{ jobStore.currentJob.job_id.slice(0, 8) }}…
-        </p>
       </div>
       <div v-else class="px-2 py-3 rounded-lg bg-(--ui-bg-muted) text-xs text-(--ui-text-muted) text-center">
-        ジョブ未選択
+        Excel未選択
       </div>
     </nav>
 

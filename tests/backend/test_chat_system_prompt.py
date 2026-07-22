@@ -24,19 +24,25 @@ class TestSystemPromptContainsCoreGuidelines:
         prompt = _build_system_prompt("")
         assert "分からない" in prompt or "判断できません" in prompt or "見つかりません" in prompt
 
-    def test_includes_ask_user_freely(self) -> None:
-        # 質問してよい
+    def test_limits_questions_to_reduce_user_effort(self) -> None:
+        # 質問は必要最小限かつ一度に一問
         prompt = _build_system_prompt("")
-        assert "聞き返" in prompt or "質問" in prompt
+        assert "ユーザーの負荷を最小化" in prompt
+        assert "一度に1問" in prompt
+        assert "推奨案" in prompt
 
-    def test_includes_no_omission(self) -> None:
-        # 回答漏れ防止
+    def test_prioritizes_decision_relevant_points(self) -> None:
+        # 網羅的な列挙ではなく、判断に必要な要点へ絞る
         prompt = _build_system_prompt("")
-        assert "回答漏れ" in prompt or "すべてに答える" in prompt or "網羅" in prompt
+        assert "判断に必要な要点" in prompt
+        assert "詳細を求めた場合だけ列挙" in prompt
 
-    def test_includes_response_format_sections(self) -> None:
+    def test_includes_concise_response_format(self) -> None:
         prompt = _build_system_prompt("")
-        assert "確認できた事実" in prompt
+        assert "結論または変更後の姿を最初" in prompt
+        assert "最大3ブロック" in prompt
+        assert "400文字以内" in prompt
+        assert "箇条書きは4項目以内" in prompt
         assert "改修手順" in prompt
         assert "波及範囲" in prompt
         assert "未解析リスク" in prompt
@@ -49,6 +55,7 @@ class TestSystemPromptContainsCoreGuidelines:
         assert "lookup_references" in prompt
         assert "list_workbook_objects" in prompt
         assert "list_analysis_risks" in prompt
+        assert "propose_vba_procedure_replace" in prompt
 
     def test_includes_reference_analysis_limitations(self) -> None:
         prompt = _build_system_prompt("")

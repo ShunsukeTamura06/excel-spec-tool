@@ -7,7 +7,9 @@ authoritative.
 
 ## Top-level shape
 
-Three layers with a strict one-way dependency:
+Three application layers with a strict one-way dependency. Workbook writers
+sit behind a provider boundary; their output always returns to `core` for
+fresh extraction and verification:
 
 ```
 ┌──────────────────────────┐    HTTP    ┌──────────────────────────┐
@@ -23,6 +25,8 @@ Three layers with a strict one-way dependency:
                                           │  - Extraction        │
                                           │  - Reference index   │
                                           │  - Risk analysis     │
+                                          │  - Mutation plans    │
+                                          │  - Diff policy gate  │
                                           │  - Spec generator    │
                                           │  - Diagrams          │
                                           └──────────────────────┘
@@ -47,6 +51,13 @@ Three layers with a strict one-way dependency:
 | `external_functions/` | Plugin-style registry of vendor Excel add-in functions. Ships with Bloomberg BDH/BDP/BDS |
 | `spec_generator.py` | Render the extracted `Workbook` to Markdown (with Mermaid diagrams), LLM-independent |
 | `diagrams.py` | Build sheet-dependency and VBA call-graph models for the frontend (Vue Flow) |
+| `workbook_diff.py` | Compare normalized workbook structures and compute blast radius |
+| `mutation.py` | Provider-independent mutation plans and the `MutationProvider` contract; includes the existing openpyxl adapter |
+| `officecli_provider.py` | Optional subprocess adapter for OfficeCLI (`.xlsx` named-range updates and fixed-text additions to empty cells in the current contract) |
+| `vba_change.py` | Validate and propose an exact replacement for one existing VBA `Sub` or `Function` |
+| `vba_package.py` | Build a Windows Excel/VBIDE execution ZIP without editing or running macros on macOS |
+| `verification.py` | Exact expected-vs-observed structural-diff policy (`passed` / `needs_review` / `failed`) |
+| `change_record.py` | Auditable execution record containing the plan, provider result, both diffs, and policy verdict |
 | `exceptions.py` | `CoreError`, `ExtractionError`, `UnsupportedFormatError` |
 
 The deliberate scope choice across `reference_index` / `risk_analyzer`:
@@ -86,6 +97,53 @@ guessing.
 | GET | `/system/llm-status` | Whether the server has real LLM credentials |
 | GET | `/health` | Reachability probe |
 | GET, DELETE | `/jobs[/{id}]` | List / delete jobs |
+| GET | `/mutation-providers` | Provider availability, version, extensions, and supported operations |
+| POST | `/jobs/{id}/named-range-fix` | Execute a provider-independent named-range plan and verify its output |
+| POST | `/jobs/{id}/formula-fix` | Execute a deterministic formula-reference plan and verify its output |
+| POST | `/jobs/{id}/change-plan` | Preview a general-user safe change, including empty-cell text additions |
+| POST | `/jobs/{id}/change-plan/execute` | Execute the exact displayed plan, re-extract it, and enforce the diff policy |
+| POST | `/jobs/{id}/vba-change/package` | Download a Windows Excel/VBIDE package for one procedure replacement |
+| POST | `/jobs/{id}/vba-change/verify` | Upload the Windows-generated `.xlsm` and enforce the expected VBA diff |
+| GET | `/jobs/{id}/download` | Download an original or verified revised workbook |
+| GET | `/jobs/{id}/verification` | Read the persisted mutation and verification audit record |
+
+## Verified mutation flow
+
+```text
+intent -> MutationPlan -> expected structural diff
+                 |
+                 +-> MutationProvider (openpyxl / optional OfficeCLI / future COM)
+                                |
+                                v
+                         isolated new job
+                                |
+                 full extraction + observed structural diff
+                                |
+                 exact policy gate + persisted evidence
+```
+
+Provider success is only evidence that an editing tool ran. It is not evidence
+that the workbook is safe. `core.verification` owns that decision and rejects
+missing, unexpected, or mismatched structural changes. A structurally exact
+change with blast radius or unresolved high-risk items is marked
+`needs_review`, not silently accepted as safe. Dynamic Excel behavior remains
+outside this first gate until COM recalculation and macro tests are integrated.
+`existing_risks` merges before/after risk detection so a risk newly introduced
+by the change (not just pre-existing ones) can still trigger `needs_review`.
+
+The server never trusts a plan the client sends back. `/change-plan` and the
+chat `propose_*` tools persist the `SafeChangePlan` keyed by `plan_id`; the
+execute/verify endpoints (`/change-plan/execute`, `/vba-change/verify`) only
+accept a `plan_id` and look up the stored plan, so a tampered or replayed
+request body cannot change what gets applied. Each `plan_id` is consumed on
+first execution. `/jobs/{id}/download` also refuses jobs whose status is
+`failed`, so a workbook that failed verification is never silently served.
+
+VBA writes deliberately use a separate path. OfficeCLI does not expose a VBA/VBProject
+element, and `vbaProject.bin` is not edited directly. xlblueprint prepares an auditable
+procedure-replacement package; Windows Excel applies it through VBIDE to a copy, and the
+result returns to the normal extraction and exact-diff gate. This phase does not compile
+or execute the macro.
 
 ## Frontend shape
 
@@ -133,6 +191,7 @@ JOBS_DIR/
     ├── references.json        # ReferenceIndex
     ├── cells.db               # SQLite of literal cell values
     ├── chat_history.jsonl     # one message per line, append-only
+    ├── verification.json      # mutation plan, expected/actual diff, verdict
     └── meta.json              # JobMeta
 ```
 
@@ -145,8 +204,9 @@ These are **not** failures to implement — they would be the wrong shape
 for a public OSS workbench:
 
 - Auth, RBAC, multi-tenancy
-- Generating modified `.xlsm` files (the tool advises; the user edits)
-- Multi-file diff
+- Treating a writer's successful exit as proof that a workbook is safe
+- Arbitrary formula or VBA generation before dynamic Excel verification exists
+- In-place modification of the uploaded original
 - A managed SaaS
 
 Adopters who want any of those can layer them on top of the FastAPI

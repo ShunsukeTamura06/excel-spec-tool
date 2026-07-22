@@ -25,13 +25,13 @@ interface Step {
 const steps: Step[] = [
   {
     key: 'extract',
-    title: 'ファイル送信・抽出',
-    hint: 'VBA・数式・参照関係・全セルを抽出 (大きなファイルでは数分かかる場合があります)',
+    title: 'ファイルの中身を確認',
+    hint: 'シート、計算、操作、外部とのつながりを確認しています',
   },
   {
     key: 'analyze',
-    title: '設計書生成',
-    hint: 'LLM 注釈 + Markdown 統合設計書を作成 (シート/プロシージャ数によっては数分かかります)',
+    title: 'Excel診断を作成',
+    hint: '用途、機能、入力、出力、注意点を根拠と結び付けています',
   },
 ]
 

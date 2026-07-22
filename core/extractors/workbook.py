@@ -33,6 +33,7 @@ from core.models import (
     SheetInfo,
     Workbook,
 )
+from core.openpyxl_utils import close_workbook
 
 # プレビュー範囲（先頭 N 行 × M 列）. 解釈は加えず literal に出力するだけ.
 PREVIEW_MAX_ROWS = 20
@@ -1446,48 +1447,51 @@ def extract_workbook(file_path: Path) -> Workbook:
     except Exception as e:  # noqa: BLE001
         raise ExtractionError(f"openpyxl failed to open {file_path}: {e}") from e
 
-    sheets: list[SheetInfo] = []
-    sheets_by_name: dict[str, SheetInfo] = {}
-    for sn in wb.sheetnames:
-        ws = wb[sn]
-        preview_rows, preview_origin = _extract_preview(ws)
-        info = SheetInfo(
-            name=sn,
-            rows=ws.max_row or 0,
-            cols=ws.max_column or 0,
-            formulas=_extract_formulas(ws),
-            conditional_formats=_extract_conditional_formats(ws),
-            tables=_extract_excel_tables(ws),
-            merged_ranges=_extract_merged_ranges(ws),
-            data_validations=_extract_data_validations(ws),
-            preview_rows=preview_rows,
-            preview_origin=preview_origin,
+    try:
+        sheets: list[SheetInfo] = []
+        sheets_by_name: dict[str, SheetInfo] = {}
+        for sn in wb.sheetnames:
+            ws = wb[sn]
+            preview_rows, preview_origin = _extract_preview(ws)
+            info = SheetInfo(
+                name=sn,
+                rows=ws.max_row or 0,
+                cols=ws.max_column or 0,
+                formulas=_extract_formulas(ws),
+                conditional_formats=_extract_conditional_formats(ws),
+                tables=_extract_excel_tables(ws),
+                merged_ranges=_extract_merged_ranges(ws),
+                data_validations=_extract_data_validations(ws),
+                preview_rows=preview_rows,
+                preview_origin=preview_origin,
+            )
+            sheets.append(info)
+            sheets_by_name[sn] = info
+
+        _attach_named_ranges(wb, sheets_by_name)
+
+        chart_map = _extract_charts(file_path, list(sheets_by_name.keys()))
+        for sn, charts in chart_map.items():
+            if sn in sheets_by_name and charts:
+                sheets_by_name[sn].charts = charts
+
+        pivot_map = _extract_pivot_tables(file_path, list(sheets_by_name.keys()))
+        for sn, pivot_tables in pivot_map.items():
+            if sn in sheets_by_name and pivot_tables:
+                sheets_by_name[sn].pivot_tables = pivot_tables
+
+        # フォームコントロール (ボタン → マクロ紐付け) は xlsm の VML を直接読む.
+        # openpyxl は VML を解釈しないので zipfile + XML パースで自前抽出.
+        fc_map = _extract_form_controls(file_path, list(sheets_by_name.keys()))
+        for sn, controls in fc_map.items():
+            if sn in sheets_by_name and controls:
+                sheets_by_name[sn].form_controls = controls
+
+        return Workbook(
+            filename=file_path.name,
+            sheets=sheets,
+            external_links=_extract_external_links(wb),
+            power_queries=_extract_power_queries(file_path),
         )
-        sheets.append(info)
-        sheets_by_name[sn] = info
-
-    _attach_named_ranges(wb, sheets_by_name)
-
-    chart_map = _extract_charts(file_path, list(sheets_by_name.keys()))
-    for sn, charts in chart_map.items():
-        if sn in sheets_by_name and charts:
-            sheets_by_name[sn].charts = charts
-
-    pivot_map = _extract_pivot_tables(file_path, list(sheets_by_name.keys()))
-    for sn, pivot_tables in pivot_map.items():
-        if sn in sheets_by_name and pivot_tables:
-            sheets_by_name[sn].pivot_tables = pivot_tables
-
-    # フォームコントロール (ボタン → マクロ紐付け) は xlsm の VML を直接読む.
-    # openpyxl は VML を解釈しないので zipfile + XML パースで自前抽出.
-    fc_map = _extract_form_controls(file_path, list(sheets_by_name.keys()))
-    for sn, controls in fc_map.items():
-        if sn in sheets_by_name and controls:
-            sheets_by_name[sn].form_controls = controls
-
-    return Workbook(
-        filename=file_path.name,
-        sheets=sheets,
-        external_links=_extract_external_links(wb),
-        power_queries=_extract_power_queries(file_path),
-    )
+    finally:
+        close_workbook(wb)

@@ -31,6 +31,7 @@ from core.workbook_diff import (
     _diff_data_validations,
     _diff_pivot_tables,
     _diff_vba_modules,
+    _same_formula_with_cache_only_change,
     build_blast_radius,
     diff_named_ranges,
     diff_workbooks,
@@ -130,6 +131,18 @@ class TestCellDiff:
         _write_xlsx(after, {"A1": 1, "B1": "hello"})
 
         assert _diff_cells(before, after) == []
+
+    def test_same_formula_cache_update_is_not_reported(self) -> None:
+        """OfficeCLIが再計算キャッシュだけを保存しても構造変更に数えない."""
+
+        assert _same_formula_with_cache_only_change(
+            (None, "=SUM(A1:A3)", "#,##0"),
+            ("6", "=SUM(A1:A3)", "#,##0"),
+        )
+        assert not _same_formula_with_cache_only_change(
+            (None, "=SUM(A1:A3)", "#,##0"),
+            ("6", "=SUM(A1:A4)", "#,##0"),
+        )
 
 
 class TestNamedRangeDiff:
@@ -422,6 +435,56 @@ class TestExistingRisksPassthrough:
         wb_after = Workbook(filename="b.xlsx")
 
         diff = diff_workbooks(before, after, wb_before, wb_after, ReferenceIndex())
+        assert diff.existing_risks == [risk]
+
+    def test_new_risk_introduced_by_change_is_also_surfaced(self, tmp_path: Path) -> None:
+        """変更(例: VBA置換)で新たに生じたリスクは、before側になくても診断に残る.
+
+        変更前は無かったリスクが変更後に増えても before_wb.analysis_risks だけを
+        再掲すると見逃す。verify_expected_diff の needs_review 判定にも影響するため、
+        before/after 双方のリスクを統合しておく必要がある。
+        """
+        before = tmp_path / "a.xlsx"
+        after = tmp_path / "b.xlsx"
+        _write_xlsx(before, {})
+        _write_xlsx(after, {})
+
+        new_risk = AnalysisRisk(
+            category="dynamic_vba",
+            severity="high",
+            location="Module1.UpdateReport",
+            evidence="Range(cellRef).Value = 1",
+            description="置換後コードに動的参照が追加された",
+            recommendation="手動確認してください",
+        )
+        wb_before = Workbook(filename="a.xlsx")
+        wb_after = Workbook(filename="b.xlsx", analysis_risks=[new_risk])
+
+        diff = diff_workbooks(before, after, wb_before, wb_after, ReferenceIndex())
+
+        assert diff.existing_risks == [new_risk]
+
+    def test_duplicate_risks_between_before_and_after_are_not_repeated(
+        self, tmp_path: Path
+    ) -> None:
+        before = tmp_path / "a.xlsx"
+        after = tmp_path / "b.xlsx"
+        _write_xlsx(before, {})
+        _write_xlsx(after, {})
+
+        risk = AnalysisRisk(
+            category="external_dependency",
+            severity="low",
+            location="Sheet!A1",
+            evidence="外部接続",
+            description="外部接続あり",
+            recommendation="確認してください",
+        )
+        wb_before = Workbook(filename="a.xlsx", analysis_risks=[risk])
+        wb_after = Workbook(filename="b.xlsx", analysis_risks=[risk])
+
+        diff = diff_workbooks(before, after, wb_before, wb_after, ReferenceIndex())
+
         assert diff.existing_risks == [risk]
 
 

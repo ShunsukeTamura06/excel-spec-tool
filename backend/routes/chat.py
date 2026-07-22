@@ -68,6 +68,8 @@ _TOOL_PROGRESS_MESSAGES = {
     "propose_named_range_fix": "名前定義修正の影響範囲を試算中",
     "propose_fixed_ref_replace": "固定参照置換の影響範囲を試算中",
     "propose_range_expansion": "数式範囲拡張の影響範囲を試算中",
+    "propose_cell_text_edits": "説明テキスト追加の変更内容を準備中",
+    "propose_vba_procedure_replace": "VBA変更パッケージを準備中",
 }
 
 
@@ -287,7 +289,9 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "まず get_cells_range か find_cells で実値を確認する",
         "- 設計書の preview に映っていない領域 (例: 50 行目以降、20 列目以降) の値は"
         "決して推測しない。必ずツールで取得する",
-        "- 波及範囲を述べる前に lookup_references を呼んで実際の参照元を確認する",
+        "- 数式、VBA、セル構造を変更する提案で波及範囲を述べる前に、"
+        "lookup_references を呼んで実際の参照元を確認する。表示形式だけの提案では"
+        "セルごとの参照検索を繰り返さない",
         "- 改修可否や安全性を述べる前に list_analysis_risks を呼び、未解析リスクを確認する",
         "- lookup_references の結果が 0 件でも、動的 VBA 参照まで含めて影響がないとは断定しない",
         "",
@@ -299,16 +303,19 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "静的解析では分からないことは「実行時の動作は確認できません」と明言する",
         "- 推測で穴埋めするくらいなら、ユーザーに聞き返す or 「分かりません」と答える",
         "",
-        "## 4. 不明確な要望は遠慮なく聞き返す",
-        "- 「あの表」「この項目」「いつもの集計」など曖昧な参照は、"
-        "どのシート/行/列/名前のことか必ず聞き返す",
-        "- 「変更したい」「直したい」だけでは何をどう変えるか (追加/修正/削除/移動) を聞く",
-        "- 複数解釈が可能な質問は、回答する前に意図を確認する",
-        "- 質問を遠慮しない。1往復で解決しなくてよい。曖昧なまま回答するより聞き返すのが正しい",
+        "## 4. ユーザーの負荷を最小化する",
+        "- 質問する前に、設計書とツールでアプリ側が判断できることを先に調べる",
+        "- 質問は、回答によって改修内容が大きく変わる場合だけに限定する",
+        "- 質問が必要でも一度に1問だけにする。最大3つの短い選択肢を示し、"
+        "推奨案を先頭に置く。合理的に任せられる場合は「おすすめで任せる」を含める",
+        "- 代表データ、受入条件、影響範囲の列挙を定型的にユーザーへ要求しない。"
+        "必要な調査と草案作成はアプリ側で行う",
+        "- 曖昧さが軽微なら、妥当な仮定を一文で示して改修案を先に提示する",
         "",
-        "## 5. 回答漏れを防ぐ",
-        "- ユーザーの質問に複数の論点が含まれていたら、すべてに答える",
-        "- 波及範囲を聞かれたら参照元を網羅する (件数 + 主要箇所)",
+        "## 5. 判断に必要な要点へ絞る",
+        "- ユーザーの目的達成に影響する論点を優先し、調査過程や重複する根拠は省く",
+        "- 波及範囲を聞かれたら件数と主要箇所を要約する。全セルや全数式は、"
+        "ユーザーが詳細を求めた場合だけ列挙する",
         "- 参照解析で検出できない動的参照の可能性が残る場合は、"
         "「静的解析で確認できた範囲」と「未確認の可能性」を分けて書く",
         "- 未解析リスクがある場合は、回答の最後ではなく波及範囲の直後に明示する",
@@ -334,18 +341,18 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "list_workbook_objects で棚卸しを確認する",
         "- 未解析リスクは list_analysis_risks で確認し、手動確認対象として扱う",
         "",
-        "# 応答フォーマット",
+        "# 応答の見せ方",
         "",
-        "通常の回答には以下のセクションを必ず含めてください:",
-        "",
-        "1. **確認できた事実**: ツールや設計書から直接確認できた情報と根拠",
-        "2. **波及範囲**: 影響を受けるセル / VBA / グラフ / ピボット / 接続を一覧 "
-        "(件数 + 主要箇所、調査根拠としてどのツールを呼んだか)",
-        "3. **未解析リスク**: list_analysis_risks の結果や、静的解析で断定できない点",
-        "4. **改修手順**: ユーザーの操作レベル (どのセル/タブを開き、何を入力するか) を具体的に。"
+        "- 結論または変更後の姿を最初に書く。調査過程から書き始めない",
+        "- 通常は「提案」「変更する場所」「確認が必要なこと」の最大3ブロックに収める",
+        "- 初回の改修案は原則400文字以内、箇条書きは4項目以内にする。"
+        "収まらない詳細は省略し、必要ならユーザーが後から開ける形にする",
+        "- ユーザーが明示的に求めていない数式一覧、セル一覧、ツール名、調査手順は本文に載せない",
+        "- 空のブロックは表示しない。見出し、箇条書き、注意書きを必要以上に増やさない",
+        "- 根拠と未解析リスクは各1〜2行の要点に圧縮する。完全な波及範囲、"
+        "受入条件、手動確認チェックリストは、適用直前またはユーザーが詳細を求めた時だけ示す",
+        "- 改修手順が必要な場合も、ユーザーが次に行う操作を先頭に短く示す。"
         "VBA・数式の書き換えを伴う場合は下記「修正提案の出し方」に従うこと",
-        "5. **手動確認チェックリスト**: 改修後に Excel 上で確認すべき"
-        "操作・再計算・更新・ボタン押下",
         "",
         "禁止表現:",
         "- 「影響ありません」「使われていません」「安全です」と断定しない",
@@ -453,17 +460,33 @@ _SYSTEM_INSTRUCTIONS = "\n".join(
         "    数式が参照している範囲を広げたらどの数式がどう変わるかを試算する"
         "読み取り専用ツール。データ行が増えて集計範囲が足りない、という依頼で使う。"
         "new_range は old_range と同一シートで old_range を包含すること。",
+        "- `propose_cell_text_edits(edits)`:",
+        '    例: propose_cell_text_edits([{"sheet":"Output","coord":"C3","value":"説明"}])',
+        "    現在空欄のセルへ説明、注記、見出し等の固定テキストを追加する計画を作る"
+        "読み取り専用ツール。既存値や数式の上書きは拒否される。",
+        "- `propose_vba_procedure_replace(module_name, procedure_name, new_code)`:",
+        "    既存のSub/Function全体を同名・同種の完全コードへ置換する計画を作る。"
+        "先にget_vba_procedureで現行コードを取得すること。Macでは変更せず、"
+        "Windows Excel/VBIDE用ZIPを作り、戻ってきた.xlsmを静的検証する。",
         "",
-        "# 修正依頼 (名前定義・固定参照・範囲拡張) を受けたとき",
+        "# 自動適用できる修正依頼を受けたとき",
         "",
         "- ユーザーから該当パターンの修正依頼を受けたら、まず対応する propose 系ツール"
-        "(`propose_named_range_fix` / `propose_fixed_ref_replace` / `propose_range_expansion`)"
+        "(`propose_named_range_fix` / `propose_fixed_ref_replace` / `propose_range_expansion` / "
+        "`propose_cell_text_edits` / `propose_vba_procedure_replace`)"
         "を呼び、変更される箇所・波及範囲・既存リスクを試算してから提示すること",
         "- 実際の適用は必ずユーザーが画面上のボタンで明示的に行う。"
         "あなた自身がファイルを書き換えることはできないし、してはいけない",
+        "- propose 系ツールで対応できる依頼に対して、Excelを手作業で編集する手順を"
+        "長々と案内しない。変更カードの「修正版を作る」ボタンを案内すること",
+        "- propose 系ツールを実際に呼んでいない場合は、「修正カードを作った」"
+        "「修正版を作るボタンを押す」など、存在しないUIを絶対に案内しないこと",
         "- 提案した内容と実際の適用結果が食い違わないよう、propose 系ツールに渡す引数は"
         "ユーザーの意図を正確に反映した値にすること",
-        "- 上記3パターンに当てはまらない修正 (VBA 変更・行列の挿入削除・複雑な数式の"
+        "- VBA変更は既存Sub/Functionの完全置換だけWindows実行パッケージを作れる。"
+        "新規モジュール、Property、UserForm、参照設定、署名、複数プロシージャ変更は"
+        "自動変更カードの対象外と明示すること",
+        "- 上記パターンに当てはまらない修正 (行列の挿入削除・複雑な数式の"
         "書き換え等) は自動適用できない。従来どおりコピペ完結の改修手順を提示すること",
         "",
         "確実性を優先して必要な範囲でツールを呼んでください。",
@@ -503,6 +526,124 @@ def _tool_call_to_assistant_message(resp: LLMResponse) -> dict[str, Any]:
     }
 
 
+def _requests_cell_text_change(messages: list[dict[str, Any]]) -> bool:
+    """最新の依頼が空セルへの説明追加として扱える可能性が高いか判定する."""
+
+    user_message = next(
+        (
+            str(message.get("content", ""))
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        ),
+        "",
+    ).lower()
+    text_terms = ("説明", "注記", "見出し", "description", "note", "header")
+    action_terms = ("追加", "入れ", "加え", "書き", "作り", "設け", "add", "insert")
+    return any(term in user_message for term in text_terms) and any(
+        term in user_message for term in action_terms
+    )
+
+
+def _requests_vba_change(messages: list[dict[str, Any]]) -> bool:
+    """最新の依頼がVBAまたはマクロの変更要求か判定する."""
+
+    user_message = next(
+        (
+            str(message.get("content", ""))
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        ),
+        "",
+    ).lower()
+    target_terms = ("vba", "マクロ", "sub", "function")
+    action_terms = ("修正", "変更", "直し", "追加", "置換", "fix", "change", "replace")
+    return any(term in user_message for term in target_terms) and any(
+        term in user_message for term in action_terms
+    )
+
+
+def _needs_cell_text_tool_retry(
+    messages: list[dict[str, Any]],
+    tool_trace: list[dict[str, Any]],
+    retry_count: int,
+) -> bool:
+    """対応可能な説明追加依頼で、変更カード未作成なら最大2回再誘導する."""
+
+    return (
+        retry_count < 2
+        and _requests_cell_text_change(messages)
+        and not any(item.get("name") == "propose_cell_text_edits" for item in tool_trace)
+    )
+
+
+def _needs_vba_tool_retry(
+    messages: list[dict[str, Any]],
+    tool_trace: list[dict[str, Any]],
+    retry_count: int,
+) -> bool:
+    """対応可能性のあるVBA変更で、パッケージカード未作成なら最大2回再誘導する."""
+
+    return (
+        retry_count < 2
+        and _requests_vba_change(messages)
+        and not any(item.get("name") == "propose_vba_procedure_replace" for item in tool_trace)
+    )
+
+
+def _final_reply_for_tool_trace(
+    content: str,
+    tool_trace: list[dict[str, Any]],
+) -> str:
+    """操作カードが主役の応答は、LLMの長文を短い操作案内へ置き換える."""
+
+    actionable_names = {
+        "propose_named_range_fix",
+        "propose_fixed_ref_replace",
+        "propose_range_expansion",
+        "propose_cell_text_edits",
+        "propose_vba_procedure_replace",
+    }
+    vba_item = next(
+        (item for item in tool_trace if item.get("name") == "propose_vba_procedure_replace"),
+        None,
+    )
+    if vba_item is not None:
+        return (
+            "VBAプロシージャの変更計画を作りました。\n\n"
+            "下のカードからWindows用ZIPをダウンロードしてください。"
+            "Windowsで適用後、生成されたrevised.xlsmを同じカードへ戻すと静的検証できます。"
+        )
+    cell_text_item = next(
+        (item for item in tool_trace if item.get("name") == "propose_cell_text_edits"),
+        None,
+    )
+    if cell_text_item is None and any(item.get("name") in actionable_names for item in tool_trace):
+        return content
+    if cell_text_item is not None:
+        result = cell_text_item.get("result")
+        safe_plan = result.get("safe_plan") if isinstance(result, dict) else None
+        summary = safe_plan.get("summary") if isinstance(safe_plan, dict) else None
+        lead = str(summary) if summary else "説明テキストの追加案を作りました。"
+        return (
+            f"{lead}\n\n"
+            "下の「変更内容を確認」で内容を見て、「修正版を作る」を押してください。"
+            "原本は変更されません。"
+        )
+    false_action_markers = ("修正カード", "修正版を作る", "変更カード")
+    if any(marker in content for marker in false_action_markers):
+        detail = (
+            "入力規則やデータ検証の設定は、現在の自動変更範囲外です。"
+            if "入力規則" in content or "データ検証" in content
+            else "依頼内容に対応する安全な自動変更操作がまだありません。"
+        )
+        return (
+            "この依頼では変更カードを作成できませんでした。"
+            "そのため「修正版を作る」ボタンは表示されません。\n\n"
+            f"{detail}"
+        )
+    return content
+
+
 def _run_tool_loop(
     llm: LLMClient,
     storage: Storage,
@@ -529,6 +670,8 @@ def _run_tool_loop(
     total_usage = Usage()
     tool_result_cache: dict[str, str] = {}
     repeat_counts: dict[str, int] = {}
+    cell_text_retry_count = 0
+    vba_retry_count = 0
 
     for iteration in range(MAX_TOOL_ITERATIONS):
         _emit_progress(
@@ -567,18 +710,58 @@ def _run_tool_loop(
             )
 
         if not resp.tool_calls:
+            if _needs_cell_text_tool_retry(messages, tool_trace, cell_text_retry_count):
+                cell_text_retry_count += 1
+                logger.info("retrying supported cell text request with explicit tool guidance")
+                if resp.content:
+                    messages.append({"role": "assistant", "content": resp.content})
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "この依頼は空セルへの説明テキスト追加として自動対応できます。"
+                            "手作業のExcel操作手順を最終回答にしないでください。"
+                            "対象セルをまだ確認していなければ get_cells_range を呼び、"
+                            "確認済みなら既存値や数式を上書きしない edits を組み立てて、"
+                            "必ず propose_cell_text_edits を呼んで変更カードを作成してください。"
+                            "列の挿入や書式変更は提案せず、現在空欄のセルへの値追加だけに限定します。"
+                        ),
+                    }
+                )
+                continue
+            if _needs_vba_tool_retry(messages, tool_trace, vba_retry_count):
+                vba_retry_count += 1
+                logger.info("retrying supported VBA request with explicit tool guidance")
+                if resp.content:
+                    messages.append({"role": "assistant", "content": resp.content})
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "この依頼が既存Sub/Function 1件の完全置換で対応できる場合、"
+                            "手作業手順を最終回答にせず、まずget_vba_procedureで現行コードを"
+                            "取得し、完全な置換後コードを作って必ず"
+                            "propose_vba_procedure_replaceを呼んでください。"
+                            "対象モジュールまたはプロシージャを特定できない場合だけ、"
+                            "一度に1問でユーザーへ確認してください。"
+                            "Property、新規モジュール、複数プロシージャ変更は対応外です。"
+                        ),
+                    }
+                )
+                continue
+            reply = _final_reply_for_tool_trace(resp.content or "", tool_trace)
             logger.info(
                 "llm final response: iterations=%d tool_calls_total=%d reply_chars=%d "
                 "cumulative_prompt=%d completion=%d total=%d cached=%d",
                 iteration + 1,
                 len(tool_trace),
-                len(resp.content or ""),
+                len(reply),
                 total_usage.prompt_tokens,
                 total_usage.completion_tokens,
                 total_usage.total_tokens,
                 total_usage.cached_tokens,
             )
-            return (resp.content or "", tool_trace)
+            return (reply, tool_trace)
 
         # tool 呼び出しを実行し、結果を tool role メッセージで追加
         messages.append(_tool_call_to_assistant_message(resp))

@@ -15,7 +15,9 @@ from backend.logging_config import JobIdLoggingMiddleware, configure_logging
 from backend.routes import (
     analyze,
     cells,
+    change_request,
     chat,
+    diagnosis,
     diagrams,
     diff,
     external_functions,
@@ -26,6 +28,7 @@ from backend.routes import (
     references,
     spec,
     system,
+    vba_change,
     workbook,
 )
 
@@ -53,7 +56,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="xlblueprint Backend",
         version="0.1.0",
-        description="VBA/数式/参照を含むExcelの統合設計書生成 + 改修対話を提供する.",
+        description="Excelの根拠付き診断、安全な改修相談、構造検証を提供する.",
     )
 
     # CORS — Nuxt フロントエンド (別ポート) からのアクセスを許可する.
@@ -71,6 +74,8 @@ def create_app() -> FastAPI:
     app.include_router(extract.router)
     app.include_router(analyze.router)
     app.include_router(spec.router)
+    app.include_router(diagnosis.router)
+    app.include_router(change_request.router)
     app.include_router(references.router)
     app.include_router(chat.router)
     app.include_router(cells.router)
@@ -82,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(feedback.router)
     app.include_router(jobs.router)
     app.include_router(system.router)
+    app.include_router(vba_change.router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
