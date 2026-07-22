@@ -30,7 +30,6 @@ import {
   type JobMeta,
   type NamedRangeFixRequest,
   type NamedRangeFixResponse,
-  type MutationPlanData,
   type SafeChangePlanData,
   type WorkbookDiagnosis,
   type ReferenceItem,
@@ -509,15 +508,18 @@ export function useBackend() {
       })
     },
 
-    /** POST /jobs/{jobId}/change-plan/execute — 画面で確認した同一計画を実行する */
+    /**
+     * POST /jobs/{jobId}/change-plan/execute — 画面で確認した計画を plan_id で実行する.
+     * 計画本体はサーバー側に保存済みのものを使う (改ざん防止のため計画内容は送らない)。
+     */
     async executeSafeChangePlan(
       jobId: string,
-      plan: MutationPlanData,
+      planId: string,
     ): Promise<FormulaFixResponse> {
       return await call<FormulaFixResponse>(
         'executeSafeChangePlan',
         `/jobs/${jobId}/change-plan/execute`,
-        { method: 'POST', body: { plan }, timeout: HEAVY_TIMEOUT_MS },
+        { method: 'POST', body: { plan_id: planId }, timeout: HEAVY_TIMEOUT_MS },
       )
     },
 
@@ -534,17 +536,20 @@ export function useBackend() {
       }
     },
 
-    /** POST /jobs/{jobId}/vba-change/package — Windows Excel/VBIDE用ZIPを取得する */
+    /**
+     * POST /jobs/{jobId}/vba-change/package — Windows Excel/VBIDE用ZIPを取得する.
+     * 計画本体はサーバー側に保存済みのものを plan_id で引き当てる。
+     */
     async downloadVbaChangePackage(
       jobId: string,
-      plan: MutationPlanData,
+      planId: string,
     ): Promise<Blob> {
       try {
         const root = String(baseURL || '').replace(/\/$/, '')
         const response = await fetch(`${root}/jobs/${jobId}/vba-change/package`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ plan }),
+          body: JSON.stringify({ plan_id: planId }),
         })
         if (!response.ok) throw await backendErrorFromResponse(response)
         return await response.blob()
@@ -554,15 +559,18 @@ export function useBackend() {
       }
     },
 
-    /** POST /jobs/{jobId}/vba-change/verify — Windows適用後.xlsmを静的検証する */
+    /**
+     * POST /jobs/{jobId}/vba-change/verify — Windows適用後.xlsmを静的検証する.
+     * plan_id は保存済みの計画を引き当てるためだけに使い、この呼び出しで消費される。
+     */
     async verifyVbaChangedWorkbook(
       jobId: string,
-      plan: MutationPlanData,
+      planId: string,
       file: File,
     ): Promise<FormulaFixResponse> {
       const form = new FormData()
       form.append('file', file)
-      form.append('plan_json', JSON.stringify(plan))
+      form.append('plan_id', planId)
       return await call<FormulaFixResponse>(
         'verifyVbaChangedWorkbook',
         `/jobs/${jobId}/vba-change/verify`,

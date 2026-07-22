@@ -421,6 +421,29 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
   プロバイダーの終了成功だけを安全性の証拠にはしない
 - この判定が保証するのは観測対象の構造一致であり、Excel再計算値・マクロ副作用などの
   動的挙動は保証しない。COM検証が追加されるまでUIにもこの境界を残す
+- propose (`/change-plan`、または chat の `propose_cell_text_edits` /
+  `propose_vba_procedure_replace`) で作った `SafeChangePlan` は plan_id をキーに
+  サーバー側へ保存し、実行系エンドポイント (`/change-plan/execute`,
+  `/vba-change/package`, `/vba-change/verify`) はこの保存内容だけを信頼する。
+  リクエストボディに計画内容そのものを含めさせない (改ざん・すり替え防止)。
+  plan_id は実行 (execute / verify) 時に消費し、同じ計画の再実行 (リプレイ) を防ぐ。
+  `existing_risks` は before/after 双方のリスクを統合し、変更によって新しく生じた
+  リスクも `needs_review` 判定に反映する
+- `/jobs/{job_id}/download` は `status=failed` (検証不合格・処理失敗) のジョブを
+  返さない。安全ゲートを通らなかった成果物を黙って配布しない
+
+**既知の限界 (意図的に未対応、優先度判断込み)**:
+- `WorkbookDiff` はセル・名前定義・条件付き書式・入力規則・グラフ・ピボット・VBA
+  モジュールのみを比較する。シート追加削除・Excelテーブル・結合セル・外部リンク・
+  Power Query・保護設定はまだ構造差分の対象外であり、これらだけが変わった場合でも
+  `passed` になり得る。特に VBA プロシージャ置換 (§4.10) は任意コードを書き込むため
+  影響範囲が広く、この既知の限界の影響を最も受けやすい。抽出層 (`core/extractors`)
+  からの拡張が必要な規模のため、独立した増分として扱う
+- `ChangeExecutionRecord` (監査レコード) には署名・ハッシュチェーンによる改ざん検知が
+  ない。単一の信頼済みバックエンドという前提 (認証はスコープ外、CLAUDE.md §3) では
+  レコード改ざんにはジョブディレクトリへの書き込み権限が必要で、その権限があれば
+  ワークブック自体も直接書き換えられるため、優先度は相対的に低いと判断している。
+  複数ユーザー運用や外部監査要件が入る段階で再検討する
 
 ### 4.9 一般ユーザー向け安全変更フロー
 
@@ -441,7 +464,9 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
     xlblueprintが再抽出・差分照合した後に修正版をダウンロードできる
 - 適用前に `MutationPlan`、期待差分、変更される数式数、影響候補、既存リスク、
   静的検証の限界を表示し、ユーザーの明示承認を要求する
-- 承認後は、表示したものと同じ `MutationPlan.plan_id` を実行・監査記録へ保存する
+- 承認後は、表示したものと同じ `MutationPlan.plan_id` で実行する。この一致は
+  サーバー側の保留計画ストアで強制する (§4.8) — クライアントが計画内容を
+  書き換えて送っても実行には反映されない
 - 原本は変更せず、修正版を新ジョブとして作成する
 - 適用後は期待差分と実差分のpolicy判定を一般ユーザー向けに表示し、修正版を
   ダウンロードできるようにする
@@ -480,7 +505,7 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 | GET | `/diagnosis/{job_id}` | - | `WorkbookDiagnosis` | 根拠付きExcel診断を取得 |
 | POST | `/change-request/{job_id}` | `{"requested_outcome": "...", "feature_id": "F001"}` | `ChangeBrief` | 業務要望を改修依頼書へ整理 |
 | POST | `/jobs/{job_id}/change-plan` | `{"kind": "range_expansion", ...}` または `{"kind": "cell_text_batch", "edits": [...]}` | `SafeChangePlan` | 適用前の期待差分と検証条件を作成 |
-| POST | `/jobs/{job_id}/change-plan/execute` | `{"plan": {...}}` | 修正ジョブ・実差分・検証結果 | 表示済み変更計画を明示承認後に適用 |
+| POST | `/jobs/{job_id}/change-plan/execute` | `{"plan_id": "..."}` | 修正ジョブ・実差分・検証結果 | plan_id で引き当てた表示済み計画を適用 (計画本体はサーバー保存分のみ信頼、1回限り) |
 | GET | `/jobs/{job_id}/download` | - | Excelファイル | 原本または検証済み修正版を取得 |
 | GET | `/spec/{job_id}` | - | `{"spec_md": "...", "meta": {...}}` | 設計書取得 |
 | GET | `/references/{job_id}` | query: `target` | `{"refs": [...]}` | 特定セルへの参照検索 |
@@ -492,8 +517,8 @@ def diff_workbooks(before_path, after_path, before_wb, after_wb, before_index) -
 | POST | `/jobs/{job_id}/formula-fix` | `{"kind": "fixed_ref_replace" \| "range_expansion", "old_ref": "...", "new_ref": "..."}` | `{"new_job_id": "...", "diff": {...}}` | 固定参照置換/範囲拡張の適用+自己検証 (§4.7) |
 | GET | `/mutation-providers` | - | `{"providers": [...]}` | 変更プロバイダーの利用可否・版・対応範囲 |
 | GET | `/jobs/{job_id}/verification` | - | `{"verification_record": {...}}` | 変更計画と検証証拠の監査レコード |
-| POST | `/jobs/{job_id}/vba-change/package` | `{"plan": {...}}` | ZIPファイル | Windows Excel/VBIDE用VBA変更パッケージを取得 |
-| POST | `/jobs/{job_id}/vba-change/verify` | multipart: `file`, `plan_json` | 修正ジョブ・実差分・検証結果 | Windowsで生成した `.xlsm` を静的検証 |
+| POST | `/jobs/{job_id}/vba-change/package` | `{"plan_id": "..."}` | ZIPファイル | plan_id で引き当てた計画のWindows Excel/VBIDE用ZIPを取得 (この段階では計画を消費しない) |
+| POST | `/jobs/{job_id}/vba-change/verify` | multipart: `file`, `plan_id` | 修正ジョブ・実差分・検証結果 | Windowsで生成した `.xlsm` を静的検証 (plan_id はここで消費、1回限り) |
 
 `named-range-fix` / `formula-fix` は任意の `provider` (`openpyxl` / `officecli`) を受け取り、
 レスポンスに従来の `new_job_id` / `diff` に加えて `plan` / `provider` / `verification` を返す。

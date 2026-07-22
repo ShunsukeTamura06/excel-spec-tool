@@ -48,7 +48,7 @@ async function createRevisedWorkbook() {
   pending.value = true
   errorMsg.value = null
   try {
-    execution.value = await backend.executeSafeChangePlan(props.jobId, safePlan.value.plan)
+    execution.value = await backend.executeSafeChangePlan(props.jobId, safePlan.value.plan.plan_id)
     await jobStore.refreshJobs()
   } catch (cause) {
     errorMsg.value = friendlyMessage(cause)

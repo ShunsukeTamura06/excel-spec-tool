@@ -85,9 +85,13 @@ class ChangePlanRequest(BaseModel):
 
 
 class ExecuteChangePlanRequest(BaseModel):
-    """確認済みの変更計画をそのまま実行するリクエストボディ."""
+    """確認済みの変更計画を plan_id で引き当てて実行するリクエストボディ.
 
-    plan: MutationPlan
+    計画本体はサーバー側に保存済みのものを使う (改ざん・すり替え防止のため、
+    クライアントから計画内容そのものは受け取らない)。
+    """
+
+    plan_id: str
 
 
 def _provider_for(name: ProviderName) -> MutationProvider:
@@ -290,22 +294,30 @@ async def create_change_plan(
     body: ChangePlanRequest,
     storage: Storage = Depends(get_storage),
 ) -> SafeChangePlan:
-    """原本を書き換えず、適用前に確認する変更計画を作る."""
+    """原本を書き換えず、適用前に確認する変更計画を作る.
+
+    ここで作った計画は plan_id で保存し、/change-plan/execute はこの保存内容
+    だけを信頼する。リクエストボディの計画をクライアントが改変・すり替えても
+    実行内容には反映されない。
+    """
 
     try:
         if body.kind == "cell_text_batch":
             if not body.edits:
                 raise ValueError("cell text edits must not be empty")
-            return build_cell_text_safe_plan(storage, job_id, body.edits)
-        if not body.old_ref or not body.new_ref:
-            raise ValueError("old_ref and new_ref are required for range expansion")
-        before_wb, _, before_index, _ = _load_before(storage, job_id)
-        plan = MutationPlan(
-            source_job_id=job_id,
-            requested_provider="openpyxl",
-            operation=RangeExpansionOperation(old_ref=body.old_ref, new_ref=body.new_ref),
-        )
-        return build_safe_change_plan(plan, before_wb, before_index)
+            safe_plan = build_cell_text_safe_plan(storage, job_id, body.edits)
+        else:
+            if not body.old_ref or not body.new_ref:
+                raise ValueError("old_ref and new_ref are required for range expansion")
+            before_wb, _, before_index, _ = _load_before(storage, job_id)
+            plan = MutationPlan(
+                source_job_id=job_id,
+                requested_provider="openpyxl",
+                operation=RangeExpansionOperation(old_ref=body.old_ref, new_ref=body.new_ref),
+            )
+            safe_plan = build_safe_change_plan(plan, before_wb, before_index)
+        storage.save_pending_plan(job_id, safe_plan)
+        return safe_plan
     except JobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"job not found: {exc}") from exc
     except FileNotFoundError as exc:
@@ -323,9 +335,27 @@ async def execute_change_plan(
     body: ExecuteChangePlanRequest,
     storage: Storage = Depends(get_storage),
 ) -> dict[str, object]:
-    """画面で確認した同一計画を適用し、新規ファイルとして検証する."""
+    """画面で確認した計画を plan_id で引き当てて適用し、新規ファイルとして検証する.
 
-    plan = body.plan
+    リクエストボディは plan_id のみを受け取る。適用する計画の内容は
+    /change-plan (または chat の propose 系ツール) が保存した計画を
+    plan_id で読み出したものであり、クライアントが送る計画本体は信頼しない
+    (改ざん・すり替え防止)。plan は読み出し直後に消費 (削除) し、
+    同じ plan_id での再実行 (リプレイ) を防ぐ。
+    """
+
+    try:
+        stored_plan = storage.load_pending_plan(job_id, body.plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid plan_id: {exc}") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"pending change plan not found or already used: {exc}",
+        ) from exc
+    storage.consume_pending_plan(job_id, body.plan_id)
+    plan = stored_plan.plan
+
     if plan.source_job_id != job_id:
         raise HTTPException(status_code=400, detail="plan source_job_id does not match URL job_id")
     if isinstance(plan.operation, RangeExpansionOperation):

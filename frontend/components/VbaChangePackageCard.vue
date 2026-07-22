@@ -66,7 +66,7 @@ async function downloadPackage() {
   packagePending.value = true
   errorMsg.value = null
   try {
-    const blob = await backend.downloadVbaChangePackage(props.jobId, safePlan.value.plan)
+    const blob = await backend.downloadVbaChangePackage(props.jobId, safePlan.value.plan.plan_id)
     saveBlob(blob, `${sourceStem()}_vba_change.zip`)
   } catch (cause) {
     errorMsg.value = friendlyMessage(cause)
@@ -89,7 +89,7 @@ async function verifyRevisedFile() {
   try {
     verificationResult.value = await backend.verifyVbaChangedWorkbook(
       props.jobId,
-      safePlan.value.plan,
+      safePlan.value.plan.plan_id,
       selectedFile.value,
     )
     await jobStore.refreshJobs()

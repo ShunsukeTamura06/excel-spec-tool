@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import io
-import json
 import zipfile
 
 from fastapi.testclient import TestClient
 
 from backend.storage import Storage
 from core.models import ReferenceIndex, VbaModule, VbaProcedure, Workbook, WorkbookDiff
-from core.mutation import MutationPlan, VbaProcedureReplaceOperation, propose_mutation
+from core.mutation import (
+    MutationPlan,
+    VbaProcedureReplaceOperation,
+    build_safe_change_plan,
+    propose_mutation,
+)
 
 
 def _seed_vba_job(storage: Storage) -> tuple[str, Workbook]:
@@ -55,16 +59,30 @@ def _plan(job_id: str) -> MutationPlan:
     )
 
 
+def _seed_pending_vba_plan(
+    storage: Storage,
+    job_id: str,
+    workbook: Workbook,
+) -> tuple[MutationPlan, str]:
+    """propose_vba_procedure_replace ツール呼び出しを模し、保留計画を保存する."""
+
+    plan = _plan(job_id)
+    safe_plan = build_safe_change_plan(plan, workbook, ReferenceIndex())
+    storage.save_pending_plan(job_id, safe_plan)
+    return plan, plan.plan_id
+
+
 def test_downloads_windows_vba_package(
     client: TestClient,
     backend_storage: Storage,
 ) -> None:
     """原本を含むWindows用ZIPをダウンロードできる."""
 
-    job_id, _ = _seed_vba_job(backend_storage)
+    job_id, workbook = _seed_vba_job(backend_storage)
+    _, plan_id = _seed_pending_vba_plan(backend_storage, job_id, workbook)
     response = client.post(
         f"/jobs/{job_id}/vba-change/package",
-        json={"plan": _plan(job_id).model_dump(mode="json")},
+        json={"plan_id": plan_id},
     )
 
     assert response.status_code == 200
@@ -82,7 +100,7 @@ def test_verifies_returned_xlsm_against_expected_vba_diff(
     """Windows適用後ファイルの実差分が計画通りなら合格させる."""
 
     job_id, workbook = _seed_vba_job(backend_storage)
-    plan = _plan(job_id)
+    plan, plan_id = _seed_pending_vba_plan(backend_storage, job_id, workbook)
     expected = propose_mutation(plan, workbook, ReferenceIndex())
 
     def fake_extraction(
@@ -105,7 +123,7 @@ def test_verifies_returned_xlsm_against_expected_vba_diff(
     response = client.post(
         f"/jobs/{job_id}/vba-change/verify",
         files={"file": ("revised.xlsm", b"revised-xlsm", "application/octet-stream")},
-        data={"plan_json": plan.model_dump_json()},
+        data={"plan_id": plan_id},
     )
 
     assert response.status_code == 200
@@ -113,6 +131,13 @@ def test_verifies_returned_xlsm_against_expected_vba_diff(
     assert body["verification"]["status"] == "passed"
     assert body["provider"]["provider"] == "windows_vbide"
     assert body["diff"]["vba_modules"][0]["name"] == "Module1"
+
+    replay = client.post(
+        f"/jobs/{job_id}/vba-change/verify",
+        files={"file": ("revised.xlsm", b"revised-xlsm", "application/octet-stream")},
+        data={"plan_id": plan_id},
+    )
+    assert replay.status_code == 404
 
 
 def test_rejects_unexpected_vba_result(
@@ -122,8 +147,8 @@ def test_rejects_unexpected_vba_result(
 ) -> None:
     """期待したVBA差分がない戻りファイルを不合格にする."""
 
-    job_id, _ = _seed_vba_job(backend_storage)
-    plan = _plan(job_id)
+    job_id, workbook = _seed_vba_job(backend_storage)
+    _, plan_id = _seed_pending_vba_plan(backend_storage, job_id, workbook)
 
     def fake_extraction(
         storage: Storage,
@@ -143,7 +168,7 @@ def test_rejects_unexpected_vba_result(
     response = client.post(
         f"/jobs/{job_id}/vba-change/verify",
         files={"file": ("revised.xlsm", b"unchanged-xlsm", "application/octet-stream")},
-        data={"plan_json": json.dumps(plan.model_dump(mode="json"))},
+        data={"plan_id": plan_id},
     )
 
     assert response.status_code == 409

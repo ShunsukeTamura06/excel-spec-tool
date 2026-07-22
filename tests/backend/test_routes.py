@@ -494,6 +494,21 @@ class TestJobs:
 
         assert client.get(f"/jobs/{uuid.uuid4()}/download").status_code == 404
 
+    def test_download_rejects_failed_job(
+        self,
+        client: TestClient,
+        sample_xlsx_bytes: bytes,
+        backend_storage: Storage,
+    ) -> None:
+        """検証等に失敗したジョブ (status=failed) はダウンロードさせない."""
+
+        meta = backend_storage.create_job("tool.xlsx", sample_xlsx_bytes)
+        backend_storage.update_status(meta.job_id, "failed")
+
+        response = client.get(f"/jobs/{meta.job_id}/download")
+
+        assert response.status_code == 409
+
     def test_delete_existing(
         self, client: TestClient, sample_xlsx_bytes: bytes, backend_storage: Storage
     ) -> None:

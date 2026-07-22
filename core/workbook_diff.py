@@ -21,6 +21,7 @@ from pathlib import Path
 from core.exceptions import DiffError, ExtractionError
 from core.extractors.cells import extract_cells_to_sqlite
 from core.models import (
+    AnalysisRisk,
     BlastRadiusEntry,
     CellDiff,
     ChangeType,
@@ -61,7 +62,8 @@ def diff_workbooks(
 
     Returns:
         WorkbookDiff。追加/削除/変更の一覧と、変更箇所ごとの波及範囲、
-        before_wb.analysis_risks の再掲。
+        before/after 双方の analysis_risks を統合したもの
+        (変更によって新しく生じたリスクも含める。§ _merge_risks 参照)。
 
     Raises:
         DiffError: before/after いずれかのセル抽出に失敗した場合.
@@ -86,8 +88,26 @@ def diff_workbooks(
         pivot_tables=pivot_tables,
         vba_modules=vba_modules,
         blast_radius=blast_radius,
-        existing_risks=list(before_wb.analysis_risks),
+        existing_risks=_merge_risks(before_wb.analysis_risks, after_wb.analysis_risks),
     )
+
+
+def _merge_risks(
+    before_risks: list[AnalysisRisk],
+    after_risks: list[AnalysisRisk],
+) -> list[AnalysisRisk]:
+    """before/after のリスク一覧を統合し、変更で新しく生じたリスクも残す.
+
+    before 側だけを再掲すると、変更 (VBA置換等) によって新たに増えた
+    動的参照・イベントマクロ等のリスクが検証時に見えなくなる
+    (verify_expected_diff の needs_review 判定にも影響する)。
+    (category, location, description) が一致するものは重複として1件にまとめる。
+    """
+    merged: dict[tuple[str, str, str], AnalysisRisk] = {}
+    for risk in (*before_risks, *after_risks):
+        key = (risk.category, risk.location, risk.description)
+        merged.setdefault(key, risk)
+    return list(merged.values())
 
 
 def _dump_cells_by_key(file_path: Path, db_path: Path) -> dict[_CellKey, _CellValue]:

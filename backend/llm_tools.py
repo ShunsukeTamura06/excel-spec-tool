@@ -1010,6 +1010,7 @@ def _exec_propose_cell_text_edits(
     try:
         edits = [CellTextEdit.model_validate(item) for item in raw_edits]
         safe_plan = build_cell_text_safe_plan(storage, job_id, edits)
+        storage.save_pending_plan(job_id, safe_plan)
     except (ValueError, FileNotFoundError, JobNotFoundError) as exc:
         raise ToolExecutionError(str(exc)) from exc
     return json.dumps(
@@ -1049,6 +1050,7 @@ def _exec_propose_vba_procedure_replace(
             ),
         )
         safe_plan = build_safe_change_plan(plan, workbook, references)
+        storage.save_pending_plan(job_id, safe_plan)
     except (JobNotFoundError, FileNotFoundError, VbaChangeError, ValueError) as exc:
         raise ToolExecutionError(str(exc)) from exc
     compact_plan = safe_plan.model_dump(

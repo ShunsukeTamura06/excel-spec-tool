@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from backend.dependencies import get_storage
 from backend.routes.extract import MAX_UPLOAD_BYTES, _read_capped, _run_extraction
@@ -18,7 +18,6 @@ from backend.storage import JobNotFoundError, Storage
 from core.change_record import ChangeExecutionRecord
 from core.exceptions import DiffError, ExtractionError, VbaChangeError
 from core.mutation import (
-    MutationPlan,
     MutationResult,
     SafeChangePlan,
     VbaProcedureReplaceOperation,
@@ -33,18 +32,32 @@ router = APIRouter()
 
 
 class VbaPackageRequest(BaseModel):
-    """Windows実行パッケージ生成リクエスト."""
+    """Windows実行パッケージ生成リクエスト.
 
-    plan: MutationPlan
+    計画本体はチャットの propose_vba_procedure_replace が保存した内容を
+    plan_id で引き当てる (クライアントが計画内容を送っても信頼しない)。
+    """
+
+    plan_id: str
 
 
-def _validated_vba_plan(
+def _load_pending_vba_plan(
     storage: Storage,
     job_id: str,
-    plan: MutationPlan,
+    plan_id: str,
 ) -> tuple[Path, SafeChangePlan]:
-    """URLと一致するVBA置換計画を再試算し、原本パスと安全計画を返す."""
+    """保存済みのVBA置換計画を plan_id で読み出し、原本パスと安全計画を返す."""
 
+    try:
+        stored_plan = storage.load_pending_plan(job_id, plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid plan_id: {exc}") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"pending change plan not found or already used: {exc}",
+        ) from exc
+    plan = stored_plan.plan
     if plan.source_job_id != job_id:
         raise HTTPException(status_code=400, detail="plan source_job_id does not match URL job_id")
     if plan.requested_provider != "windows_vbide":
@@ -73,10 +86,14 @@ async def download_vba_change_package(
     body: VbaPackageRequest,
     storage: Storage = Depends(get_storage),
 ) -> StreamingResponse:
-    """原本を変更せず、Windows Excel/VBIDE用ZIPパッケージを返す."""
+    """原本を変更せず、Windows Excel/VBIDE用ZIPパッケージを返す.
+
+    このステップは何も適用・確定しない (ZIPを作るだけ)。計画の消費は
+    後続の /vba-change/verify で行う。
+    """
 
     try:
-        source_path, safe_plan = _validated_vba_plan(storage, job_id, body.plan)
+        source_path, safe_plan = _load_pending_vba_plan(storage, job_id, body.plan_id)
         package = await asyncio.to_thread(
             build_vba_change_package,
             source_path,
@@ -106,18 +123,19 @@ async def download_vba_change_package(
 async def verify_vba_changed_workbook(
     job_id: str,
     file: UploadFile = File(...),
-    plan_json: str = Form(...),
+    plan_id: str = Form(...),
     storage: Storage = Depends(get_storage),
 ) -> dict[str, object]:
-    """Windowsで生成された.xlsmを再抽出し、期待VBA差分と厳密照合する."""
+    """Windowsで生成された.xlsmを再抽出し、期待VBA差分と厳密照合する.
+
+    plan_id は propose 時に保存された計画のみを引き当てる。この呼び出しで
+    計画を消費 (削除) し、同じ計画を使った再照合 (リプレイ) を防ぐ。
+    """
 
     if not file.filename or Path(file.filename).suffix.lower() != ".xlsm":
         raise HTTPException(status_code=422, detail="revised workbook must be an .xlsm file")
-    try:
-        plan = MutationPlan.model_validate_json(plan_json)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=f"invalid VBA change plan: {exc}") from exc
-    _, safe_plan = _validated_vba_plan(storage, job_id, plan)
+    _, safe_plan = _load_pending_vba_plan(storage, job_id, plan_id)
+    storage.consume_pending_plan(job_id, plan_id)
     data = await _read_capped(file, MAX_UPLOAD_BYTES)
     if not data:
         raise HTTPException(status_code=400, detail="empty revised workbook")

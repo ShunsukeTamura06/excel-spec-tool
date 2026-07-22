@@ -40,6 +40,7 @@ from core.models import (
     ReferenceIndex,
     Workbook,
 )
+from core.mutation import SafeChangePlan
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,12 @@ def _validate_job_id(job_id: str) -> None:
     """job_id が UUIDv4 形式か検証する. 不正なら ValueError を投げる."""
     if not isinstance(job_id, str) or not _UUID_V4_RE.match(job_id):
         raise ValueError(f"invalid job_id (must be UUIDv4): {job_id!r}")
+
+
+def _validate_plan_id(plan_id: str) -> None:
+    """plan_id が UUIDv4 形式か検証する. 不正なら ValueError を投げる."""
+    if not isinstance(plan_id, str) or not _UUID_V4_RE.match(plan_id):
+        raise ValueError(f"invalid plan_id (must be UUIDv4): {plan_id!r}")
 
 
 def _validate_chat_session_id(session_id: str) -> None:
@@ -155,6 +162,12 @@ class Storage:
 
         return self._require_job_dir(job_id) / "verification.json"
 
+    def get_pending_plan_path(self, job_id: str, plan_id: str) -> Path:
+        """未実行の変更計画 (SafeChangePlan) のパスを返す."""
+
+        _validate_plan_id(plan_id)
+        return self._require_job_dir(job_id) / "pending_plans" / f"{plan_id}.json"
+
     # --------------------------------------------------------- create / list
 
     def create_job(self, filename: str, data: bytes) -> JobMeta:
@@ -239,6 +252,38 @@ class Storage:
         if not path.is_file():
             raise FileNotFoundError(f"verification record not found: {path}")
         return ChangeExecutionRecord.model_validate_json(path.read_text(encoding="utf-8"))
+
+    # ------------------------------------------------------- pending plans
+
+    def save_pending_plan(self, job_id: str, plan: SafeChangePlan) -> None:
+        """propose段階で画面に表示した計画を、実行時の照合用に保存する.
+
+        plan_id をキーにファイルへ保存する。実行 (execute/verify) 時はこの
+        保存内容だけを信頼し、クライアントが送るリクエストボディの計画は
+        参照しない (改ざん・すり替え防止)。
+        """
+
+        path = self.get_pending_plan_path(job_id, plan.plan.plan_id)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
+        self._write_json(path, plan.model_dump(mode="json"))
+
+    def load_pending_plan(self, job_id: str, plan_id: str) -> SafeChangePlan:
+        """保存済みの未実行計画を読み込む.
+
+        Raises:
+            FileNotFoundError: 該当 plan_id が存在しない、または既に消費済みの場合。
+        """
+
+        path = self.get_pending_plan_path(job_id, plan_id)
+        if not path.is_file():
+            raise FileNotFoundError(f"pending plan not found: {path}")
+        return SafeChangePlan.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def consume_pending_plan(self, job_id: str, plan_id: str) -> None:
+        """計画を使い捨てにする (再実行によるすり替え・リプレイを防ぐ)."""
+
+        path = self.get_pending_plan_path(job_id, plan_id)
+        path.unlink(missing_ok=True)
 
     # ------------------------------------------------------------ meta
 

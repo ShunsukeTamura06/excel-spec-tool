@@ -128,6 +128,16 @@ missing, unexpected, or mismatched structural changes. A structurally exact
 change with blast radius or unresolved high-risk items is marked
 `needs_review`, not silently accepted as safe. Dynamic Excel behavior remains
 outside this first gate until COM recalculation and macro tests are integrated.
+`existing_risks` merges before/after risk detection so a risk newly introduced
+by the change (not just pre-existing ones) can still trigger `needs_review`.
+
+The server never trusts a plan the client sends back. `/change-plan` and the
+chat `propose_*` tools persist the `SafeChangePlan` keyed by `plan_id`; the
+execute/verify endpoints (`/change-plan/execute`, `/vba-change/verify`) only
+accept a `plan_id` and look up the stored plan, so a tampered or replayed
+request body cannot change what gets applied. Each `plan_id` is consumed on
+first execution. `/jobs/{id}/download` also refuses jobs whose status is
+`failed`, so a workbook that failed verification is never silently served.
 
 VBA writes deliberately use a separate path. OfficeCLI does not expose a VBA/VBProject
 element, and `vbaProject.bin` is not edited directly. xlblueprint prepares an auditable

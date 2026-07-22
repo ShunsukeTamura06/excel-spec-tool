@@ -102,6 +102,23 @@ def test_rejects_partial_code() -> None:
         )
 
 
+def test_rejects_replacement_missing_end_statement() -> None:
+    """End Sub/Function を欠いたコードを「完全な1手続き」として通過させない.
+
+    _parse_procedures は抽出用途では End 抜けを寛容に扱う (次の宣言/ファイル末尾で
+    打ち切る) ため、そのままでは宣言+本文だけの断片が「ちょうど1手続き」に
+    見えてしまい、壊れたモジュールを差分一致として提示しかねない。
+    """
+
+    with pytest.raises(VbaChangeError, match="must end with a matching End Sub"):
+        propose_vba_procedure_replace(
+            _workbook(),
+            "Module1",
+            "UpdateReport",
+            ('Public Sub UpdateReport()\n    Range("A1").Value = 2\n    Range("A2").Value = 3'),
+        )
+
+
 def test_normalize_vba_code_ignores_line_ending_noise() -> None:
     """CRLF/LFと行末空白を同一のVBAコードとして正規化する."""
 

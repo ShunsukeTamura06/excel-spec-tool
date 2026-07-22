@@ -410,7 +410,7 @@ class TestSafeChangePlanRoute:
 
         response = client.post(
             f"/jobs/{job_id}/change-plan/execute",
-            json={"plan": plan},
+            json={"plan_id": plan["plan_id"]},
         )
 
         assert response.status_code == 200
@@ -426,7 +426,7 @@ class TestSafeChangePlanRoute:
         client: TestClient,
         backend_storage: Storage,
     ) -> None:
-        """別ジョブ向けに確認した計画の取り違えを拒否する."""
+        """別ジョブ向けに確認した計画のplan_idは、他ジョブでは見つからず拒否される."""
 
         source_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
         other_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
@@ -438,13 +438,91 @@ class TestSafeChangePlanRoute:
                 "new_ref": "Data!A1:A200",
             },
         )
+        plan_id = preview.json()["plan"]["plan_id"]
 
         response = client.post(
             f"/jobs/{other_id}/change-plan/execute",
-            json={"plan": preview.json()["plan"]},
+            json={"plan_id": plan_id},
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 404
+
+    def test_execute_rejects_unknown_plan_id(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+    ) -> None:
+        """存在しない/でっち上げのplan_idは拒否される (計画のすり替え防止)."""
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
+
+        response = client.post(
+            f"/jobs/{job_id}/change-plan/execute",
+            json={"plan_id": str(uuid.uuid4())},
+        )
+
+        assert response.status_code == 404
+
+    def test_execute_ignores_client_supplied_plan_body(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+    ) -> None:
+        """plan_id以外の付随フィールドで計画内容を送っても無視される."""
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
+        preview = client.post(
+            f"/jobs/{job_id}/change-plan",
+            json={
+                "kind": "range_expansion",
+                "old_ref": "Data!A1:A100",
+                "new_ref": "Data!A1:A200",
+            },
+        )
+        plan = preview.json()["plan"]
+        tampered = dict(plan)
+        tampered["operation"] = {
+            **plan["operation"],
+            "new_ref": "Data!A1:A999999",
+        }
+
+        response = client.post(
+            f"/jobs/{job_id}/change-plan/execute",
+            json={"plan_id": plan["plan_id"], "plan": tampered},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["plan"]["operation"]["new_ref"] == "Data!A1:A200"
+
+    def test_execute_is_single_use(
+        self,
+        client: TestClient,
+        backend_storage: Storage,
+    ) -> None:
+        """同じplan_idでの2回目の実行はリプレイとして拒否される."""
+
+        job_id = _seed_extracted_job(backend_storage, _xlsx_bytes_with_formulas())
+        preview = client.post(
+            f"/jobs/{job_id}/change-plan",
+            json={
+                "kind": "range_expansion",
+                "old_ref": "Data!A1:A100",
+                "new_ref": "Data!A1:A200",
+            },
+        )
+        plan_id = preview.json()["plan"]["plan_id"]
+
+        first = client.post(
+            f"/jobs/{job_id}/change-plan/execute",
+            json={"plan_id": plan_id},
+        )
+        second = client.post(
+            f"/jobs/{job_id}/change-plan/execute",
+            json={"plan_id": plan_id},
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 404
 
     def test_rejects_shrinking_range_during_preview(
         self,
@@ -558,7 +636,7 @@ class TestCellTextChangePlanRoute:
 
         response = client.post(
             f"/jobs/{job_id}/change-plan/execute",
-            json={"plan": preview.json()["plan"]},
+            json={"plan_id": preview.json()["plan"]["plan_id"]},
         )
 
         assert response.status_code == 200

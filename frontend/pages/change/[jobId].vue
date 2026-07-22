@@ -185,7 +185,7 @@ async function executePlan() {
   executing.value = true
   planError.value = ''
   try {
-    execution.value = await backend.executeSafeChangePlan(jobId.value, safePlan.value.plan)
+    execution.value = await backend.executeSafeChangePlan(jobId.value, safePlan.value.plan.plan_id)
     await jobStore.refreshJobs()
   } catch (cause) {
     planError.value = friendlyMessage(cause)

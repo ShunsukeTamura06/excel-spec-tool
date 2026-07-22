@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from core.exceptions import VbaChangeError
-from core.extractors.vba import _parse_procedures
+from core.extractors.vba import _PROC_END_RE, _parse_procedures
 from core.models import VbaModuleDiff, Workbook, WorkbookDiff
 
 
@@ -74,6 +74,18 @@ def propose_vba_procedure_replace(
         raise VbaChangeError(f"replacement procedure name must remain {before_procedure.name}")
     if replacement.kind != before_procedure.kind:
         raise VbaChangeError(f"replacement procedure kind must remain {before_procedure.kind}")
+    # _parse_procedures は抽出用途では「End が無ければ次の宣言 or ファイル末尾で
+    # 打ち切る」寛容な挙動をする (End 抜けの実ファイルを読めるようにするため)。
+    # ここでは適用対象そのものを検証しているため、その寛容さは事故のもとになる
+    # (End Sub/Function が無いコードでもここを通過し、壊れたモジュールを
+    # 「差分一致」として提示してしまう)。最終行が対応する End 文であることを
+    # 明示的に確認する。
+    replacement_lines = [line for line in replacement.code.splitlines() if line.strip()]
+    end_match = replacement_lines and _PROC_END_RE.match(replacement_lines[-1])
+    if not end_match or end_match.group("kind").capitalize() != replacement.kind:
+        raise VbaChangeError(
+            f"replacement code must end with a matching End {replacement.kind} statement"
+        )
 
     before_module_code = normalize_vba_code(module.code)
     lines = before_module_code.split("\n")

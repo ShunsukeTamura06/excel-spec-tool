@@ -43,6 +43,15 @@ async def download_job(
     except JobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"job not found: {exc}") from exc
 
+    if meta.status == "failed":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "this job failed processing or verification and cannot be downloaded; "
+                "check /jobs/{job_id}/verification for details"
+            ),
+        )
+
     original_name = Path(meta.filename)
     download_name = f"{original_name.stem}_xlblueprint{original_name.suffix}"
     media_type = (
